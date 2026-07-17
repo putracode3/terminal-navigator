@@ -1,0 +1,83 @@
+/* Base layer — Terminal Navigator (design.md §4–5, §7).
+   Loaded once, globally, after tokens.css. */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+	margin: 0;
+	overflow: hidden; /* design.md §5: only individual panels scroll, never the app shell */
+}
+
+body {
+	font-family: var(--font-family-sans);
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	color: var(--color-text);
+	background-color: var(--color-background);
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3 {
+	margin: 0;
+	font-weight: var(--weight-semibold);
+	color: var(--color-text);
+}
+
+h1 {
+	font-size: var(--text-2xl);
+	line-height: var(--leading-2xl);
+}
+h2 {
+	font-size: var(--text-lg);
+	line-height: var(--leading-lg);
+}
+h3 {
+	font-size: var(--text-base);
+	line-height: var(--leading-base);
+}
+
+p {
+	margin: 0;
+}
+
+button,
+input,
+textarea {
+	font-family: inherit; /* token-exempt: inherits body's var(--font-family-sans), not a raw value */
+	color: inherit;
+}
+
+/* Global focus rule (design.md §7) — no exceptions, no invisible :focus states. */
+:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: 2px;
+}
+
+/* Reduced motion (design.md §7): pulsing/looping states collapse to static;
+   brief hover/enter transitions may remain near-instant. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+	}
+}
+
+.app-shell {
+	height: 100%;
+	width: 100%;
+	display: flex;
+}

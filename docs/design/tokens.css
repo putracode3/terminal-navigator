@@ -1,0 +1,159 @@
+/* Design Tokens — Terminal Navigator — generated 2026-07-17
+   Canonical token layer. tokens.json mirrors this file.
+   Dark-only theme (see design.md §3 — light mode is out of scope for MVP). */
+
+:root {
+  /* ── Tier 1: Primitives — Color ─────────────────────────── */
+  --ink-950: #0D0F14;   /* app background */
+  --ink-900: #15181F;   /* surface (sidebar, panels) */
+  --ink-850: #1C2029;   /* surface elevated (modals, popovers) */
+  --ink-border: #262B36;      /* subtle/decorative dividers */
+  --ink-border-strong: #5A6272; /* meaningful borders: inputs, dividers that convey structure */
+
+  --white-90: #E4E7EC;  /* primary text */
+  --white-60: #8B92A3;  /* secondary/muted text */
+
+  --violet-500: #7C5CFF; /* decorative gradient stop — NEVER carries text */
+  --violet-600: #6845E0; /* solid interactive primary */
+  --violet-700: #5636B8; /* primary hover */
+  --violet-800: #452A93; /* primary active/pressed */
+  --pink-500: #FF6B9D;   /* decorative gradient stop — NEVER carries text */
+
+  --emerald-500: #34D399; /* security/encrypted accent */
+  --emerald-950: #0F2A20; /* security subtle background */
+
+  --amber-500: #FBBF24;  /* warning */
+  --red-500: #F87171;    /* danger/error */
+  --red-950: #2A1414;    /* danger subtle background */
+
+  /* ── Tier 1: Primitives — Typography ────────────────────── */
+  --font-family-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* ── Tier 1: Primitives — Spacing (base unit 4px) ───────── */
+  --space-0: 0;
+  --space-1: 0.25rem;  /* 4px */
+  --space-2: 0.5rem;   /* 8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+  --space-10: 2.5rem;  /* 40px */
+  --space-12: 3rem;    /* 48px */
+  --space-16: 4rem;    /* 64px */
+
+  /* ── Tier 2: Semantic — Color ────────────────────────────── */
+  --color-background: var(--ink-950);
+  --color-surface: var(--ink-900);
+  --color-surface-elevated: var(--ink-850);
+  --color-border: var(--ink-border);
+  --color-border-strong: var(--ink-border-strong);
+
+  --color-text: var(--white-90);
+  --color-text-muted: var(--white-60);
+  --color-on-primary: #FFFFFF;
+  --color-on-security: #FFFFFF;
+
+  --color-primary: var(--violet-600);
+  --color-primary-hover: var(--violet-700);
+  --color-primary-active: var(--violet-800);
+  --color-accent-gradient: linear-gradient(135deg, var(--violet-500), var(--pink-500));
+
+  --color-security: var(--emerald-500);
+  --color-security-bg-subtle: var(--emerald-950);
+
+  --color-warning: var(--amber-500);
+  --color-danger: var(--red-500);
+  --color-danger-bg-subtle: var(--red-950);
+
+  --color-focus: var(--violet-600);
+  --color-backdrop: rgba(13, 15, 20, 0.7); /* composited from --color-background at 70% */
+
+  /* ── Tier 2: Semantic — Typography scale ─────────────────
+     Modular scale, ratio ~1.2, rounded to practical pixel
+     values for UI density (this is a dense developer tool,
+     not a marketing site). */
+  --text-xs: 0.75rem;    /* 12px */
+  --leading-xs: 1rem;         /* 16px */
+  --text-sm: 0.8125rem;  /* 13px — default UI text size */
+  --leading-sm: 1.25rem;      /* 20px */
+  --text-base: 0.875rem; /* 14px */
+  --leading-base: 1.375rem;   /* 22px */
+  --text-lg: 1rem;       /* 16px */
+  --leading-lg: 1.5rem;
+  --text-xl: 1.25rem;    /* 20px */
+  --leading-xl: 1.75rem;
+  --text-2xl: 1.5rem;    /* 24px */
+  --leading-2xl: 2rem;
+  --text-3xl: 1.875rem;  /* 30px */
+  --leading-3xl: 2.25rem;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+
+  /* ── Tier 2: Semantic — Radii ─────────────────────────────
+     Small, restrained radii — minimal personality, not
+     bubbly/playful. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  /* ── Tier 2: Semantic — Borders ───────────────────────────*/
+  --border-width-sm: 1px;
+  --border-width-md: 2px;
+
+  /* ── Tier 2: Semantic — Shadows/elevation ─────────────────
+     Used sparingly — flat surfaces are the default (NFR-7
+     alignment: cheap to render); shadows mark true elevation
+     (modals, popovers) only. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-glow-primary: 0 0 24px rgba(124, 92, 255, 0.25);
+
+  /* ── Tier 2: Semantic — Motion ────────────────────────────*/
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 260ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Tier 2: Semantic — Breakpoints ───────────────────────
+     Desktop app, single resizable window — used only for
+     sidebar collapse behavior, not page layout. */
+  --bp-sidebar-collapse: 720px;
+
+  /* ── Tier 2: Semantic — Z-index ───────────────────────────*/
+  --z-dropdown: 1000;
+  --z-sticky: 1100;
+  --z-modal-backdrop: 1200;
+  --z-modal: 1210;
+  --z-toast: 1300;
+  --z-tooltip: 1400;
+}
+
+/* ── Tier 3: Component tokens (only where a component
+   genuinely deviates from Tier 2) ───────────────────────── */
+:root {
+  --tab-height: 2.25rem;        /* 36px */
+  --control-height-md: 2rem;    /* 32px — buttons, inputs */
+  --control-height-sm: 1.5rem;  /* 24px — compact controls */
+  --pane-divider-width: 1px;
+  --pane-divider-hit-area: 6px; /* invisible extra hit area for resize drag */
+  --pane-min-width: 160px;
+  --pane-min-height: 120px;
+  --sidebar-width: 16.25rem;   /* 260px, design.md §5 */
+  --modal-width-form: 30rem;      /* 480px, components.md Modal Sizes */
+  --modal-width-confirm: 22.5rem; /* 360px, components.md Modal Sizes */
+  --unlock-card-width: 22.5rem;   /* 360px, components.md Patterns: Unlock screen */
+  --unlock-glow-size: 24rem;      /* decorative ambient glow behind the unlock card */
+  --menu-min-width: 8rem;         /* Sidebar Project List Item overflow menu */
+}
