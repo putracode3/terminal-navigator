@@ -4,31 +4,53 @@
 	let {
 		project,
 		active = false,
+		invalid = false,
 		onOpen,
 		onEdit,
 		onDelete,
 	}: {
 		project: ProjectDto;
 		active?: boolean;
+		/** FR-01 edge case: the path no longer exists on disk. */
+		invalid?: boolean;
 		onOpen: () => void;
 		onEdit: () => void;
 		onDelete: () => void;
 	} = $props();
 
 	let menuOpen = $state(false);
+	let showInvalidMessage = $state(false);
 
 	function truncateMiddle(path: string, max = 34): string {
 		if (path.length <= max) return path;
 		const half = Math.floor((max - 1) / 2);
 		return `${path.slice(0, half)}…${path.slice(path.length - half)}`;
 	}
+
+	function handleClick() {
+		if (invalid) {
+			showInvalidMessage = true;
+			setTimeout(() => (showInvalidMessage = false), 4000);
+			return;
+		}
+		onOpen();
+	}
 </script>
 
-<div class="item" class:active role="button" tabindex="0" onclick={onOpen} onkeydown={(e) => e.key === "Enter" && onOpen()}>
-	<span class="dot" aria-hidden="true"></span>
+<div
+	class="item"
+	class:active
+	class:invalid
+	role="button"
+	tabindex="0"
+	onclick={handleClick}
+	onkeydown={(e) => e.key === "Enter" && handleClick()}
+>
+	<span class="dot" class:dot-invalid={invalid} aria-hidden="true"></span>
 	<div class="text">
 		<div class="name">{project.name}</div>
-		<div class="path">{truncateMiddle(project.path)}</div>
+		<div class="path" class:path-invalid={invalid}>{truncateMiddle(project.path)}</div>
+		{#if showInvalidMessage}<div class="invalid-message">This path no longer exists on disk.</div>{/if}
 	</div>
 	<div class="menu-wrap">
 		<button
@@ -119,6 +141,20 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.dot-invalid {
+		background: var(--color-danger);
+	}
+
+	.path-invalid {
+		color: var(--color-danger);
+	}
+
+	.invalid-message {
+		margin-top: var(--space-1);
+		font-size: var(--text-xs);
+		color: var(--color-danger);
 	}
 
 	.menu-wrap {

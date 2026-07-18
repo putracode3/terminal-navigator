@@ -32,6 +32,14 @@
 			notes !== initial.notes,
 	);
 
+	// FR-01 edge case: duplicate paths are allowed but should warn, not block.
+	const duplicateWarning = $derived.by(() => {
+		const trimmed = path.trim();
+		if (!trimmed) return "";
+		const clash = appStore.projects.find((p) => p.path === trimmed && p.id !== project?.id);
+		return clash ? `Another project ("${clash.name}") already uses this path.` : "";
+	});
+
 	$effect(() => {
 		if (open) {
 			initial = {
@@ -98,6 +106,7 @@
 			onBrowse={handleBrowse}
 			error={pathError || undefined}
 		/>
+		{#if duplicateWarning && !pathError}<p class="warning">{duplicateWarning}</p>{/if}
 		<Textarea id="project-commands" label="Setup commands (one per line)" bind:value={commandsText} />
 		<Textarea id="project-notes" label="Notes" bind:value={notes} />
 	{/snippet}
@@ -106,3 +115,11 @@
 		<Button variant="primary" onclick={handleSave} loading={saving}>Save project</Button>
 	{/snippet}
 </Modal>
+
+<style>
+	.warning {
+		margin: calc(var(--space-2) * -1) 0 0;
+		font-size: var(--text-xs);
+		color: var(--color-warning);
+	}
+</style>

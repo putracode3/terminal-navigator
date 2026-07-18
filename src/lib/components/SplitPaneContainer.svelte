@@ -1,29 +1,30 @@
 <script lang="ts">
-	import TerminalPane from "./TerminalPane.svelte";
-	import type { PaneState } from "$lib/stores/terminal.svelte";
+	import PaneNodeView from "./PaneNodeView.svelte";
+	import { paneCount, type PaneNode, type SplitDirection } from "$lib/stores/terminal.svelte";
 
-	// MVP renders the "single" variant only (components.md — no dividers, no
-	// pane header when there's exactly one pane). The prop shape already
-	// supports N panes; split/resize interaction is deferred to a later pass.
+	// Renders the "single" variant when `root` is a leaf (no dividers, no pane
+	// header — components.md) and the "split" variant recursively otherwise.
 	let {
-		panes,
+		root,
 		focusedPaneId,
 		onFocusPane,
+		onSplitPane,
+		onClosePane,
+		onResizeSplit,
 	}: {
-		panes: PaneState[];
+		root: PaneNode;
 		focusedPaneId: string;
 		onFocusPane: (sessionId: string) => void;
+		onSplitPane: (sessionId: string, direction: SplitDirection) => void;
+		onClosePane: (sessionId: string) => void;
+		onResizeSplit: (splitId: string, sizes: number[]) => void;
 	} = $props();
+
+	const multiPane = $derived(paneCount(root) > 1);
 </script>
 
 <div class="grid">
-	{#each panes as pane (pane.sessionId)}
-		<TerminalPane
-			sessionId={pane.sessionId}
-			focused={pane.sessionId === focusedPaneId}
-			onFocus={() => onFocusPane(pane.sessionId)}
-		/>
-	{/each}
+	<PaneNodeView node={root} {focusedPaneId} {multiPane} {onFocusPane} {onSplitPane} {onClosePane} {onResizeSplit} />
 </div>
 
 <style>

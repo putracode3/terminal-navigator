@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 	import Input from "$lib/components/Input.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -6,7 +7,7 @@
 	import ProjectFormModal from "./ProjectFormModal.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
 	import { terminalStore } from "$lib/stores/terminal.svelte";
-	import { deleteProject, errorMessage, type ProjectDto } from "$lib/api";
+	import { deleteProject, exportConfig, importConfig, pathExists, errorMessage, type ProjectDto } from "$lib/api";
 
 	let { onOpenProject }: { onOpenProject: (project: ProjectDto) => void } = $props();
 
@@ -15,6 +16,30 @@
 	let editingProject = $state<ProjectDto | undefined>(undefined);
 	let pendingDelete = $state<ProjectDto | undefined>(undefined);
 	let deleteError = $state("");
+	let invalidProjectIds = $state<Set<string>>(new Set());
+
+	// FR-01 edge case: a project's folder may have moved/been deleted since
+	// it was added. Re-check whenever the project list changes.
+	$effect(() => {
+		const projects = appStore.projects;
+		Promise.all(projects.map((p) => pathExists(p.path).then((exists) => [p.id, exists] as const))).then(
+			(results) => {
+				invalidProjectIds = new Set(results.filter(([, exists]) => !exists).map(([id]) => id));
+			},
+		);
+	});
+
+	let pendingImportSource = $state<string | undefined>(undefined);
+	let syncStatus = $state("");
+	let syncError = $state("");
+	let syncing = $state(false);
+
+	function flashStatus(message: string) {
+		syncStatus = message;
+		setTimeout(() => {
+			if (syncStatus === message) syncStatus = "";
+		}, 3000);
+	}
 
 	const filtered = $derived(
 		search.trim()
@@ -46,6 +71,48 @@
 	function isActive(project: ProjectDto): boolean {
 		return terminalStore.tabs.some((t) => t.id === terminalStore.activeTabId && t.projectId === project.id);
 	}
+
+	// FR-07: export/import the single encrypted data file (ADR-0004/ADR-0008).
+	// Reuses the already-unlocked session's password from appStore — the user
+	// never re-types it, since import validates against that same password.
+	async function handleExport() {
+		const destination = await saveDialog({ defaultPath: "terminal-navigator-export.enc" });
+		if (!destination) return;
+		syncError = "";
+		syncing = true;
+		try {
+			await exportConfig(destination);
+			flashStatus("Exported");
+		} catch (e) {
+			syncError = errorMessage(e);
+		} finally {
+			syncing = false;
+		}
+	}
+
+	async function handleImportPick() {
+		const source = await openDialog({ multiple: false, directory: false });
+		if (typeof source === "string") {
+			syncError = "";
+			pendingImportSource = source;
+		}
+	}
+
+	async function confirmImport() {
+		if (!pendingImportSource) return;
+		syncing = true;
+		try {
+			const projects = await importConfig(pendingImportSource, appStore.password);
+			appStore.setProjects(projects);
+			pendingImportSource = undefined;
+			flashStatus("Imported — project list replaced");
+		} catch (e) {
+			syncError = errorMessage(e);
+			pendingImportSource = undefined;
+		} finally {
+			syncing = false;
+		}
+	}
 </script>
 
 <aside class="sidebar">
@@ -57,6 +124,7 @@
 			<SidebarProjectListItem
 				{project}
 				active={isActive(project)}
+				invalid={invalidProjectIds.has(project.id)}
 				onOpen={() => onOpenProject(project)}
 				onEdit={() => openEditForm(project)}
 				onDelete={() => {
@@ -71,6 +139,12 @@
 	</div>
 	<div class="footer">
 		<Button variant="ghost" onclick={openAddForm}>+ Add project</Button>
+		<div class="sync-row">
+			<Button variant="secondary" size="sm" onclick={handleExport} loading={syncing}>Export</Button>
+			<Button variant="secondary" size="sm" onclick={handleImportPick} loading={syncing}>Import</Button>
+		</div>
+		{#if syncStatus}<p class="sync-status">{syncStatus}</p>{/if}
+		{#if syncError}<p class="error">{syncError}</p>{/if}
 	</div>
 </aside>
 
@@ -92,6 +166,24 @@
 	{#snippet footer()}
 		<Button variant="secondary" onclick={() => (pendingDelete = undefined)}>Cancel</Button>
 		<Button variant="danger" onclick={confirmDelete}>Delete project</Button>
+	{/snippet}
+</Modal>
+
+<Modal
+	open={!!pendingImportSource}
+	title="Import project data"
+	variant="confirm"
+	onClose={() => (pendingImportSource = undefined)}
+>
+	{#snippet children()}
+		<p>
+			This replaces <strong>all</strong> projects currently in Terminal Navigator with the contents
+			of the selected file (ADR-0008 — import is replace, not merge). This cannot be undone.
+		</p>
+	{/snippet}
+	{#snippet footer()}
+		<Button variant="secondary" onclick={() => (pendingImportSource = undefined)}>Cancel</Button>
+		<Button variant="danger" onclick={confirmImport} loading={syncing}>Replace and import</Button>
 	{/snippet}
 </Modal>
 
@@ -127,9 +219,28 @@
 	.footer {
 		padding: var(--space-3);
 		border-top: var(--border-width-sm) solid var(--color-border);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.sync-row {
+		display: flex;
+		gap: var(--space-2);
+	}
+
+	.sync-row > :global(.btn) {
+		flex: 1;
+	}
+
+	.sync-status {
+		margin: 0;
+		font-size: var(--text-xs);
+		color: var(--color-security);
 	}
 
 	.error {
+		margin: 0;
 		color: var(--color-danger);
 		font-size: var(--text-xs);
 	}

@@ -1,0 +1,280 @@
+<script lang="ts">
+	import TerminalPane from "./TerminalPane.svelte";
+	// Self-import for recursion (the modern replacement for the deprecated
+	// <svelte:self>) — Vite/the Svelte compiler resolve this fine since it's
+	// the same module being imported from itself.
+	import PaneNodeView from "./PaneNodeView.svelte";
+	import type { PaneNode, SplitDirection } from "$lib/stores/terminal.svelte";
+
+	let {
+		node,
+		focusedPaneId,
+		multiPane,
+		onFocusPane,
+		onSplitPane,
+		onClosePane,
+		onResizeSplit,
+	}: {
+		node: PaneNode;
+		focusedPaneId: string;
+		/** Whether the *whole tab* has more than one pane — a leaf never knows
+		 *  this from its own subtree alone, so it's threaded down from the top. */
+		multiPane: boolean;
+		onFocusPane: (sessionId: string) => void;
+		onSplitPane: (sessionId: string, direction: SplitDirection) => void;
+		onClosePane: (sessionId: string) => void;
+		onResizeSplit: (splitId: string, sizes: number[]) => void;
+	} = $props();
+
+	let containerEl: HTMLDivElement | undefined = $state();
+
+	function truncateMiddle(path: string, max = 40): string {
+		if (path.length <= max) return path;
+		const half = Math.floor((max - 1) / 2);
+		return `${path.slice(0, half)}…${path.slice(path.length - half)}`;
+	}
+
+	function startDrag(splitNode: Extract<PaneNode, { type: "split" }>, index: number, e: PointerEvent) {
+		e.preventDefault();
+		const container = containerEl;
+		if (!container) return;
+		const isRow = splitNode.direction === "row";
+		const startPos = isRow ? e.clientX : e.clientY;
+		const rect = container.getBoundingClientRect();
+		const totalSize = isRow ? rect.width : rect.height;
+		const startSizes = [...splitNode.sizes];
+		const minFraction = 0.1;
+
+		function onMove(ev: PointerEvent) {
+			const currentPos = isRow ? ev.clientX : ev.clientY;
+			const delta = (currentPos - startPos) / totalSize;
+			const sizes = [...startSizes];
+			let a = sizes[index] + delta;
+			let b = sizes[index + 1] - delta;
+			if (a < minFraction) {
+				b -= minFraction - a;
+				a = minFraction;
+			}
+			if (b < minFraction) {
+				a -= minFraction - b;
+				b = minFraction;
+			}
+			sizes[index] = a;
+			sizes[index + 1] = b;
+			onResizeSplit(splitNode.id, sizes);
+		}
+		function onUp() {
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+		}
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onUp);
+	}
+
+	function handleDividerKeydown(splitNode: Extract<PaneNode, { type: "split" }>, index: number, e: KeyboardEvent) {
+		const step = 0.05;
+		const isRow = splitNode.direction === "row";
+		let delta = 0;
+		if (isRow && e.key === "ArrowLeft") delta = -step;
+		else if (isRow && e.key === "ArrowRight") delta = step;
+		else if (!isRow && e.key === "ArrowUp") delta = -step;
+		else if (!isRow && e.key === "ArrowDown") delta = step;
+		if (delta === 0) return;
+		e.preventDefault();
+		const sizes = [...splitNode.sizes];
+		let a = sizes[index] + delta;
+		let b = sizes[index + 1] - delta;
+		if (a < 0.1 || b < 0.1) return;
+		sizes[index] = a;
+		sizes[index + 1] = b;
+		onResizeSplit(splitNode.id, sizes);
+	}
+</script>
+
+{#if node.type === "leaf"}
+	<div class="leaf">
+		{#if multiPane}
+			<div class="pane-header">
+				<span class="cwd" title={node.cwd}>{truncateMiddle(node.cwd)}</span>
+				<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
+			</div>
+		{/if}
+		<div class="pane-body">
+			<TerminalPane
+				sessionId={node.sessionId}
+				focused={node.sessionId === focusedPaneId}
+				onFocus={() => onFocusPane(node.sessionId)}
+			/>
+			<div class="pane-toolbar">
+				<button aria-label="Split right" onclick={() => onSplitPane(node.sessionId, "row")}>⬌</button>
+				<button aria-label="Split down" onclick={() => onSplitPane(node.sessionId, "column")}>⬍</button>
+				{#if !multiPane}
+					<button aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
+				{/if}
+			</div>
+		</div>
+	</div>
+{:else}
+	<div class="split split-{node.direction}" bind:this={containerEl}>
+		{#each node.children as child, i (child.type === "leaf" ? child.sessionId : child.id)}
+			<div class="split-child" style:flex="{node.sizes[i]} 1 0%">
+				<PaneNodeView
+					node={child}
+					{focusedPaneId}
+					{multiPane}
+					{onFocusPane}
+					{onSplitPane}
+					{onClosePane}
+					{onResizeSplit}
+				/>
+			</div>
+			{#if i < node.children.length - 1}
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex -- WAI-ARIA "window splitter" pattern: a focusable, keyboard-resizable separator is the documented accessible pattern here -->
+				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -- same: pointer/keyboard handlers are required for this pattern -->
+				<div
+					class="divider divider-{node.direction}"
+					role="separator"
+					aria-orientation={node.direction === "row" ? "vertical" : "horizontal"}
+					tabindex="0"
+					onpointerdown={(e) => startDrag(node, i, e)}
+					onkeydown={(e) => handleDividerKeydown(node, i, e)}
+				></div>
+			{/if}
+		{/each}
+	</div>
+{/if}
+
+<style>
+	.leaf {
+		height: 100%;
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.pane-header {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: var(--control-height-sm);
+		padding: 0 var(--space-2);
+		background: var(--color-surface);
+		border-bottom: var(--border-width-sm) solid var(--color-border);
+	}
+
+	.cwd {
+		font-family: var(--font-family-mono);
+		font-size: var(--text-xs);
+		color: var(--color-text-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.pane-close {
+		background: transparent;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font-size: var(--text-xs);
+		padding: var(--space-1);
+		border-radius: var(--radius-sm);
+	}
+	.pane-close:hover {
+		background: var(--color-surface-elevated);
+		color: var(--color-text);
+	}
+
+	.pane-body {
+		position: relative;
+		flex: 1;
+		min-height: 0;
+	}
+
+	.pane-toolbar {
+		position: absolute;
+		top: var(--space-2);
+		right: var(--space-2);
+		z-index: var(--z-sticky);
+		display: flex;
+		gap: var(--space-1);
+		opacity: 0;
+		transition: opacity var(--duration-fast) var(--ease-out);
+	}
+
+	.pane-body:hover .pane-toolbar,
+	.pane-body:focus-within .pane-toolbar {
+		opacity: 1;
+	}
+
+	.pane-toolbar button {
+		background: var(--color-surface-elevated);
+		border: var(--border-width-sm) solid var(--color-border-strong);
+		color: var(--color-text-muted);
+		cursor: pointer;
+		width: var(--control-height-sm);
+		height: var(--control-height-sm);
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs);
+	}
+	.pane-toolbar button:hover {
+		color: var(--color-text);
+		background: var(--color-surface);
+	}
+
+	.split {
+		height: 100%;
+		width: 100%;
+		display: flex;
+	}
+
+	.split-row {
+		flex-direction: row;
+	}
+
+	.split-column {
+		flex-direction: column;
+	}
+
+	.split-child {
+		min-width: var(--pane-min-width);
+		min-height: var(--pane-min-height);
+		overflow: hidden;
+	}
+
+	.divider {
+		flex-shrink: 0;
+		background: var(--color-border);
+		position: relative;
+	}
+
+	.divider:hover,
+	.divider:focus-visible {
+		background: var(--color-border-strong);
+	}
+
+	.divider:active {
+		background: var(--color-primary);
+	}
+
+	.divider-row {
+		width: var(--pane-divider-width);
+		cursor: col-resize;
+	}
+	.divider-row::after {
+		content: "";
+		position: absolute;
+		inset: 0 calc(var(--pane-divider-hit-area) * -1);
+	}
+
+	.divider-column {
+		height: var(--pane-divider-width);
+		cursor: row-resize;
+	}
+	.divider-column::after {
+		content: "";
+		position: absolute;
+		inset: calc(var(--pane-divider-hit-area) * -1) 0;
+	}
+</style>

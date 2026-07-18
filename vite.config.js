@@ -35,6 +35,16 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // SvelteKit's vite plugin restricts dev-server file serving to src/,
+    // .svelte-kit/, and node_modules/ by default. tokens.css lives in
+    // docs/design/ (the design system's single source of truth — never
+    // duplicated into src/, see docs/design/design.md §0), so it must be
+    // explicitly allowed or every `var(--...)` in the app silently resolves
+    // to nothing in `tauri dev` (production `tauri build` bundles it fine;
+    // only the dev server's raw file serving was affected).
+    fs: {
+      allow: ["docs"],
+    },
   },
 
   test: {

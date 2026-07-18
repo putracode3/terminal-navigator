@@ -134,3 +134,39 @@ describe("ProjectFormModal — edit mode", () => {
 		expect(screen.getByText("Edit project")).toBeInTheDocument();
 	});
 });
+
+describe("ProjectFormModal — duplicate path warning (FR-01 edge case: warn, don't block)", () => {
+	it("warns when the entered path matches another existing project", async () => {
+		appStore.projects = [existingProject];
+		render(ProjectFormModal, { open: true, onClose: vi.fn() });
+
+		await fireEvent.input(screen.getByLabelText("Path"), {
+			target: { value: "/home/user/existing-project" },
+		});
+
+		expect(
+			await screen.findByText(/Another project \("existing-project"\) already uses this path\./),
+		).toBeInTheDocument();
+	});
+
+	it("does not warn when editing that same project and leaving its own path unchanged", () => {
+		appStore.projects = [existingProject];
+		render(ProjectFormModal, { open: true, onClose: vi.fn(), project: existingProject });
+
+		expect(screen.queryByText(/already uses this path/)).toBeNull();
+	});
+
+	it("does not block saving despite the warning", async () => {
+		appStore.projects = [existingProject];
+		addProjectMock.mockResolvedValue({ ...existingProject, id: "new-id", name: "dup" });
+		render(ProjectFormModal, { open: true, onClose: vi.fn() });
+
+		await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "dup" } });
+		await fireEvent.input(screen.getByLabelText("Path"), {
+			target: { value: "/home/user/existing-project" },
+		});
+		await fireEvent.click(screen.getByRole("button", { name: "Save project" }));
+
+		expect(addProjectMock).toHaveBeenCalled();
+	});
+});

@@ -1,18 +1,55 @@
 <script lang="ts">
 	import Tab from "$lib/components/Tab.svelte";
 	import SplitPaneContainer from "$lib/components/SplitPaneContainer.svelte";
-	import { terminalStore } from "$lib/stores/terminal.svelte";
-	import { closeTerminal } from "$lib/api";
+	import { terminalStore, type PaneNode, type PaneStatus, type SplitDirection } from "$lib/stores/terminal.svelte";
+	import { closeTerminal, splitPane as splitPaneApi, errorMessage } from "$lib/api";
+
+	/** A tab's tab-bar status dot aggregates its panes: any error wins,
+	 *  otherwise any still-running setup command wins, otherwise ready. */
+	function aggregateStatus(node: PaneNode): PaneStatus {
+		if (node.type === "leaf") return node.status;
+		const statuses = node.children.map(aggregateStatus);
+		if (statuses.includes("error")) return "error";
+		if (statuses.includes("running")) return "running";
+		return "ready";
+	}
 
 	async function handleCloseTab(tabId: string) {
-		const closedPanes = terminalStore.closeTab(tabId);
-		for (const pane of closedPanes) {
+		const closedSessionIds = terminalStore.closeTab(tabId);
+		for (const sessionId of closedSessionIds) {
 			try {
-				await closeTerminal(pane.sessionId);
+				await closeTerminal(sessionId);
 			} catch {
 				// Session may already be gone; closing the tab still proceeds either way.
 			}
 		}
+	}
+
+	async function handleClosePane(tabId: string, sessionId: string) {
+		const { closedSessionIds } = terminalStore.closePane(tabId, sessionId);
+		for (const id of closedSessionIds) {
+			try {
+				await closeTerminal(id);
+			} catch {
+				// Session may already be gone.
+			}
+		}
+	}
+
+	async function handleSplitPane(tabId: string, sessionId: string, direction: SplitDirection) {
+		const cwd = terminalStore.getPaneCwd(tabId, sessionId);
+		if (!cwd) return;
+		const newSessionId = terminalStore.splitPane(tabId, sessionId, direction, cwd);
+		try {
+			await splitPaneApi(newSessionId, cwd);
+			terminalStore.setPaneStatus(newSessionId, "ready");
+		} catch (e) {
+			terminalStore.setPaneStatus(newSessionId, "error", errorMessage(e));
+		}
+	}
+
+	function handleResizeSplit(tabId: string, splitId: string, sizes: number[]) {
+		terminalStore.resizeSplit(tabId, splitId, sizes);
 	}
 </script>
 
@@ -23,7 +60,7 @@
 				<Tab
 					label={tab.projectName}
 					active={tab.id === terminalStore.activeTabId}
-					status={tab.panes[0]?.status ?? "ready"}
+					status={aggregateStatus(tab.root)}
 					onSelect={() => terminalStore.setActiveTab(tab.id)}
 					onClose={() => handleCloseTab(tab.id)}
 				/>
@@ -33,11 +70,12 @@
 			{#if terminalStore.activeTab}
 				{@const tab = terminalStore.activeTab}
 				<SplitPaneContainer
-					panes={tab.panes}
+					root={tab.root}
 					focusedPaneId={tab.focusedPaneId}
-					onFocusPane={(sessionId) => {
-						tab.focusedPaneId = sessionId;
-					}}
+					onFocusPane={(sessionId) => terminalStore.focusPane(tab.id, sessionId)}
+					onSplitPane={(sessionId, direction) => handleSplitPane(tab.id, sessionId, direction)}
+					onClosePane={(sessionId) => handleClosePane(tab.id, sessionId)}
+					onResizeSplit={(splitId, sizes) => handleResizeSplit(tab.id, splitId, sizes)}
 				/>
 			{/if}
 		</div>

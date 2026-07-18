@@ -19,6 +19,7 @@ import {
 	closeTerminal,
 	exportConfig,
 	importConfig,
+	pathExists,
 	isAppError,
 	errorMessage,
 } from "./index";
@@ -102,6 +103,11 @@ describe("api/index — IPC command mapping", () => {
 			source: "/tmp/in.enc",
 			password: "hunter2",
 		});
+	});
+
+	it("pathExists() passes path", () => {
+		pathExists("/tmp/some-project");
+		expect(invokeMock).toHaveBeenCalledWith("path_exists", { path: "/tmp/some-project" });
 	});
 });
 

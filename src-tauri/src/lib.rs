@@ -31,6 +31,28 @@ pub fn run() {
                 pty_manager: PtyManager::new(),
             });
 
+            // tauri.conf.json's `"maximized": true` alone is unreliable on Linux:
+            // the window manager can ignore a maximize request made before the
+            // window is actually mapped. Maximizing explicitly here (after the
+            // window exists, before it's shown — see `"visible": false` in
+            // tauri.conf.json) avoids both the ignored-request race and any
+            // visible flash of the small pre-maximize size.
+            let window = app
+                .get_webview_window("main")
+                .expect("no window with label \"main\" — check tauri.conf.json's window label");
+
+            // Maximize is a cosmetic nicety: if the window manager rejects or
+            // doesn't support it, fall back to the normal windowed size rather
+            // than take the whole app down over it.
+            if let Err(e) = window.maximize() {
+                eprintln!("warning: failed to maximize the main window on startup: {e}");
+            }
+
+            // Becoming visible at all is not optional — tauri.conf.json starts
+            // the window hidden, so if this fails the app would otherwise hang
+            // with no window and no explanation. Fail loudly instead.
+            window.show().expect("failed to show the main window");
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +68,7 @@ pub fn run() {
             commands::close_terminal,
             commands::export_config,
             commands::import_config,
+            commands::path_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

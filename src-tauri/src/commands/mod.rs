@@ -204,6 +204,15 @@ pub fn export_config(destination: String, state: State<AppState>) -> Result<(), 
     Ok(())
 }
 
+/// Checks whether `path` still exists on disk (FR-01 edge case: a project's
+/// folder may have moved/been deleted since it was added). Read-only,
+/// side-effect-free — deliberately the smallest possible surface for this
+/// check rather than exposing broader filesystem access to the frontend.
+#[tauri::command]
+pub fn path_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
 /// Imports `source`, replacing all local project data (ADR-0008 — replace,
 /// not merge). Re-unlocks from the new file afterward so the in-memory list
 /// reflects the import immediately, without requiring an app restart.
@@ -218,4 +227,21 @@ pub fn import_config(
     let projects = store.list().iter().map(ProjectDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(projects)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn path_exists_true_for_a_real_directory() {
+        let dir = tempdir().unwrap();
+        assert!(path_exists(dir.path().to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn path_exists_false_for_a_missing_path() {
+        assert!(!path_exists("/definitely/does/not/exist/xyz".to_string()));
+    }
 }

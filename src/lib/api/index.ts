@@ -81,3 +81,9 @@ export function exportConfig(destination: string): Promise<void> {
 export function importConfig(source: string, password: string): Promise<ProjectDto[]> {
 	return invoke("import_config", { source, password });
 }
+
+/** FR-01 edge case: a project's path may have moved/been deleted since it
+ * was added. Read-only check, no side effects. */
+export function pathExists(path: string): Promise<boolean> {
+	return invoke("path_exists", { path });
+}

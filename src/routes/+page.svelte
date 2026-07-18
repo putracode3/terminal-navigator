@@ -8,7 +8,8 @@
 
 	async function handleOpenProject(project: ProjectDto) {
 		const tab = terminalStore.openTab(project.id, project.name, project.path);
-		const sessionId = tab.panes[0].sessionId;
+		if (tab.root.type !== "leaf") return; // openTab always creates a single-leaf root
+		const sessionId = tab.root.sessionId;
 		try {
 			await openTerminal(project.id, sessionId);
 			terminalStore.setPaneStatus(sessionId, "ready");
