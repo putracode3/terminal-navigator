@@ -33,6 +33,7 @@
 			id="master-password"
 			label="Master password"
 			variant="password"
+			autofocus
 			bind:value={password}
 			onEnter={handleUnlock}
 			error={error || undefined}

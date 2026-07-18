@@ -9,6 +9,7 @@
 		placeholder,
 		error,
 		disabled = false,
+		autofocus = false,
 		onBrowse,
 		onEnter,
 	}: {
@@ -19,6 +20,10 @@
 		placeholder?: string;
 		error?: string;
 		disabled?: boolean;
+		/** Focuses this field as soon as it's mounted — use only for the one
+		 *  field a screen should land on (e.g. the unlock screen's password
+		 *  field), never more than one per view. */
+		autofocus?: boolean;
 		onBrowse?: () => void;
 		onEnter?: () => void;
 	} = $props();
@@ -37,10 +42,12 @@
 		{#if variant === "password"}
 			<span class="affix-icon" aria-hidden="true">🔒</span>
 		{/if}
+		<!-- svelte-ignore a11y_autofocus -- opt-in only, via the `autofocus` prop, and used exactly once per view (e.g. the unlock screen's sole field) — the accepted exception to "avoid autofocus", not indiscriminate use -->
 		<input
 			{id}
 			{placeholder}
 			{disabled}
+			{autofocus}
 			type={isPassword ? "password" : "text"}
 			bind:value
 			onkeydown={handleKeydown}
