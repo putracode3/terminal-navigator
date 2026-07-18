@@ -40,15 +40,29 @@ function mapLeaf(node: PaneNode, sessionId: string, fn: (leaf: LeafPane) => Leaf
 	return { ...node, children: node.children.map((c) => mapLeaf(c, sessionId, fn)) };
 }
 
-function splitLeaf(node: PaneNode, targetId: string, direction: SplitDirection, newLeaf: LeafPane): PaneNode {
+/** Inserts `newNode` (a fresh leaf for a normal split, or an arbitrary
+ *  existing subtree for drag-to-split/graft) next to the leaf `targetId`,
+ *  along `direction`, on the given `placement` side (drop-zone Top/Left →
+ *  "before", Bottom/Right → "after" — components.md's Drop zones table).
+ *  Same-direction parent → flattens into one N-child row/column with equal
+ *  shares (the "auto adjust" behavior). Cross-direction → nests, dividing
+ *  only the target's own share (a genuine grid). */
+function insertNode(
+	node: PaneNode,
+	targetId: string,
+	direction: SplitDirection,
+	newNode: PaneNode,
+	placement: "before" | "after" = "after",
+): PaneNode {
 	if (node.type === "leaf") {
 		// Root-level leaf (the tab's very first split) — nothing to flatten into yet.
 		if (node.sessionId !== targetId) return node;
+		const children = placement === "before" ? [newNode, node] : [node, newNode];
 		return {
 			type: "split",
 			id: crypto.randomUUID(),
 			direction,
-			children: [node, newLeaf],
+			children,
 			sizes: [0.5, 0.5],
 		};
 	}
@@ -60,21 +74,20 @@ function splitLeaf(node: PaneNode, targetId: string, direction: SplitDirection, 
 			// column, rebalancing every existing pane in it — this is the "auto
 			// adjust to optimal size" behavior; splitting must never just halve
 			// the one target pane's share while its siblings stay fixed.
-			const children = [
-				...node.children.slice(0, targetIndex + 1),
-				newLeaf,
-				...node.children.slice(targetIndex + 1),
-			];
+			const insertAt = placement === "before" ? targetIndex : targetIndex + 1;
+			const children = [...node.children.slice(0, insertAt), newNode, ...node.children.slice(insertAt)];
 			const evenShare = 1 / children.length;
 			return { ...node, children, sizes: children.map(() => evenShare) };
 		}
 		// Cross-direction split: only the target pane's own share is divided —
 		// a genuine nested grid (e.g. splitting a row-pane vertically).
+		const targetLeaf = node.children[targetIndex] as LeafPane;
+		const nestedChildren = placement === "before" ? [newNode, targetLeaf] : [targetLeaf, newNode];
 		const nested: PaneNode = {
 			type: "split",
 			id: crypto.randomUUID(),
 			direction,
-			children: [node.children[targetIndex] as LeafPane, newLeaf],
+			children: nestedChildren,
 			sizes: [0.5, 0.5],
 		};
 		const children = [...node.children];
@@ -83,7 +96,10 @@ function splitLeaf(node: PaneNode, targetId: string, direction: SplitDirection, 
 	}
 
 	// Target pane is deeper in the tree — recurse.
-	return { ...node, children: node.children.map((c) => splitLeaf(c, targetId, direction, newLeaf)) };
+	return {
+		...node,
+		children: node.children.map((c) => insertNode(c, targetId, direction, newNode, placement)),
+	};
 }
 
 /** Removes the leaf with `targetId`; collapses a split down to its one
@@ -134,9 +150,31 @@ export function paneCount(node: PaneNode): number {
 	return node.type === "leaf" ? 1 : node.children.reduce((sum, c) => sum + paneCount(c), 0);
 }
 
+/** The four drop-zone triangles from components.md's Split Pane Container
+ *  spec — deliberately no "center" zone (this app has no per-pane tab strip
+ *  for a center-drop to mean anything). */
+export type DropZone = "top" | "bottom" | "left" | "right";
+
+export function dropZoneToSplit(zone: DropZone): { direction: SplitDirection; placement: "before" | "after" } {
+	switch (zone) {
+		case "top":
+			return { direction: "column", placement: "before" };
+		case "bottom":
+			return { direction: "column", placement: "after" };
+		case "left":
+			return { direction: "row", placement: "before" };
+		case "right":
+			return { direction: "row", placement: "after" };
+	}
+}
+
 class TerminalStore {
 	tabs = $state<TabState[]>([]);
 	activeTabId = $state<string | null>(null);
+	/** The tab currently being drag-and-dropped, or null. Ephemeral UI state
+	 *  (not persisted) — read during dragover to reject dropping a tab onto
+	 *  its own pane (components.md: no overlay for an invalid target). */
+	draggingTabId = $state<string | null>(null);
 
 	get activeTab(): TabState | undefined {
 		return this.tabs.find((t) => t.id === this.activeTabId);
@@ -185,7 +223,7 @@ class TerminalStore {
 		const newLeaf: LeafPane = { type: "leaf", sessionId: newSessionId, cwd, status: "running" };
 		this.tabs = this.tabs.map((tab) => {
 			if (tab.id !== tabId) return tab;
-			return { ...tab, root: splitLeaf(tab.root, targetSessionId, direction, newLeaf), focusedPaneId: newSessionId };
+			return { ...tab, root: insertNode(tab.root, targetSessionId, direction, newLeaf), focusedPaneId: newSessionId };
 		});
 		return newSessionId;
 	}
@@ -227,6 +265,46 @@ class TerminalStore {
 			this.activeTabId = this.tabs.at(-1)?.id ?? null;
 		}
 		return sessionIds;
+	}
+
+	startDraggingTab(tabId: string) {
+		this.draggingTabId = tabId;
+	}
+
+	stopDraggingTab() {
+		this.draggingTabId = null;
+	}
+
+	/** A drop is valid only when dragging onto a *different* tab's pane — a
+	 *  tab's tree can never be grafted into itself (components.md: no
+	 *  overlay, "not-allowed" cursor for this case). */
+	canGraftTab(sourceTabId: string, targetTabId: string): boolean {
+		if (sourceTabId === targetTabId) return false;
+		return this.tabs.some((t) => t.id === sourceTabId) && this.tabs.some((t) => t.id === targetTabId);
+	}
+
+	/** Drag-to-split (components.md pattern "Tab drag-to-split"): grafts
+	 *  `sourceTabId`'s entire pane tree into `targetTabId`'s tree at
+	 *  `targetSessionId`'s position, split per `zone`. Reuses every existing
+	 *  session id verbatim — no new PTY sessions, no backend calls needed by
+	 *  this method. The source tab is removed from `tabs`; the target tab
+	 *  becomes active. Returns false (no-op) for an invalid graft. */
+	graftTab(sourceTabId: string, targetTabId: string, targetSessionId: string, zone: DropZone): boolean {
+		if (!this.canGraftTab(sourceTabId, targetTabId)) return false;
+		const sourceTab = this.tabs.find((t) => t.id === sourceTabId);
+		const targetTab = this.tabs.find((t) => t.id === targetTabId);
+		if (!sourceTab || !targetTab) return false;
+
+		const { direction, placement } = dropZoneToSplit(zone);
+		const graftedRoot = insertNode(targetTab.root, targetSessionId, direction, sourceTab.root, placement);
+		const newFocusedPaneId = firstLeafId(sourceTab.root);
+
+		this.tabs = this.tabs
+			.filter((t) => t.id !== sourceTabId)
+			.map((t) => (t.id === targetTabId ? { ...t, root: graftedRoot, focusedPaneId: newFocusedPaneId } : t));
+		this.activeTabId = targetTabId;
+		this.draggingTabId = null;
+		return true;
 	}
 }
 

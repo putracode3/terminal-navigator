@@ -4,29 +4,81 @@
 	// <svelte:self>) — Vite/the Svelte compiler resolve this fine since it's
 	// the same module being imported from itself.
 	import PaneNodeView from "./PaneNodeView.svelte";
-	import type { PaneNode, SplitDirection } from "$lib/stores/terminal.svelte";
+	import type { PaneNode, SplitDirection, DropZone } from "$lib/stores/terminal.svelte";
 
 	let {
 		node,
+		tabId,
 		focusedPaneId,
 		multiPane,
+		draggingSourceTabId,
 		onFocusPane,
 		onSplitPane,
 		onClosePane,
 		onResizeSplit,
+		onDropTab,
 	}: {
 		node: PaneNode;
+		/** The tab this pane tree belongs to — needed only to reject an
+		 *  invalid drop target (components.md: a tab's tree can't be grafted
+		 *  into itself), not for anything else. */
+		tabId: string;
 		focusedPaneId: string;
 		/** Whether the *whole tab* has more than one pane — a leaf never knows
 		 *  this from its own subtree alone, so it's threaded down from the top. */
 		multiPane: boolean;
+		/** The id of the tab currently being drag-and-dropped, or null — see
+		 *  terminalStore.draggingTabId. Threaded as a prop (not read from the
+		 *  store directly) to keep this component prop-driven/testable. */
+		draggingSourceTabId: string | null;
 		onFocusPane: (sessionId: string) => void;
 		onSplitPane: (sessionId: string, direction: SplitDirection) => void;
 		onClosePane: (sessionId: string) => void;
 		onResizeSplit: (splitId: string, sizes: number[]) => void;
+		onDropTab: (targetSessionId: string, zone: DropZone) => void;
 	} = $props();
 
 	let containerEl: HTMLDivElement | undefined = $state();
+	let dropZone = $state<DropZone | null>(null);
+
+	/** Divides the pane by its two diagonals into 4 triangles (components.md's
+	 *  Drop zones table — deliberately no center zone). */
+	function computeDropZone(rect: DOMRect, clientX: number, clientY: number): DropZone {
+		const x = clientX - rect.left;
+		const y = clientY - rect.top;
+		const w = rect.width;
+		const h = rect.height;
+		const d1 = y * w - x * h; // side of the top-left → bottom-right diagonal
+		const d2 = y * w - (w - x) * h; // side of the top-right → bottom-left diagonal
+		if (d1 <= 0 && d2 <= 0) return "top";
+		if (d1 >= 0 && d2 >= 0) return "bottom";
+		if (d1 >= 0 && d2 <= 0) return "left";
+		return "right";
+	}
+
+	function handleDragOver(e: DragEvent) {
+		// No preventDefault() → browser shows its native "not-allowed" cursor
+		// and disallows the drop, satisfying the invalid-target spec with zero
+		// extra styling (no drag in progress, or hovering the dragged tab's
+		// own pane).
+		if (draggingSourceTabId === null || draggingSourceTabId === tabId) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		dropZone = computeDropZone(rect, e.clientX, e.clientY);
+	}
+
+	function handleDragLeave() {
+		dropZone = null;
+	}
+
+	function handleDrop(e: DragEvent, sessionId: string) {
+		e.preventDefault();
+		if (dropZone && draggingSourceTabId !== null && draggingSourceTabId !== tabId) {
+			onDropTab(sessionId, dropZone);
+		}
+		dropZone = null;
+	}
 
 	function truncateMiddle(path: string, max = 40): string {
 		if (path.length <= max) return path;
@@ -99,7 +151,13 @@
 				<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
 			</div>
 		{/if}
-		<div class="pane-body">
+		<div
+			class="pane-body"
+			role="group"
+			ondragover={handleDragOver}
+			ondragleave={handleDragLeave}
+			ondrop={(e) => handleDrop(e, node.sessionId)}
+		>
 			<TerminalPane
 				sessionId={node.sessionId}
 				focused={node.sessionId === focusedPaneId}
@@ -112,6 +170,9 @@
 					<button aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
 				{/if}
 			</div>
+			{#if dropZone}
+				<div class="drop-zone-overlay drop-zone-{dropZone}" aria-hidden="true"></div>
+			{/if}
 		</div>
 	</div>
 {:else}
@@ -120,12 +181,15 @@
 			<div class="split-child" style:flex="{node.sizes[i]} 1 0%">
 				<PaneNodeView
 					node={child}
+					{tabId}
 					{focusedPaneId}
 					{multiPane}
+					{draggingSourceTabId}
 					{onFocusPane}
 					{onSplitPane}
 					{onClosePane}
 					{onResizeSplit}
+					{onDropTab}
 				/>
 			</div>
 			{#if i < node.children.length - 1}
@@ -221,6 +285,38 @@
 	.pane-toolbar button:hover {
 		color: var(--color-text);
 		background: var(--color-surface);
+	}
+
+	/* Drag-to-split drop-zone overlay (components.md — Split Pane Container,
+	   Drop zones). pointer-events:none so dragover/dragleave/drop keep firing
+	   on .pane-body, not this overlay, avoiding flicker as the cursor crosses
+	   the overlay's own edges. */
+	.drop-zone-overlay {
+		position: absolute;
+		inset: 0;
+		background: var(--color-primary-bg-subtle);
+		pointer-events: none;
+		z-index: var(--z-sticky);
+	}
+
+	.drop-zone-top {
+		bottom: 50%;
+		border-bottom: var(--border-width-md) solid var(--color-primary);
+	}
+
+	.drop-zone-bottom {
+		top: 50%;
+		border-top: var(--border-width-md) solid var(--color-primary);
+	}
+
+	.drop-zone-left {
+		right: 50%;
+		border-right: var(--border-width-md) solid var(--color-primary);
+	}
+
+	.drop-zone-right {
+		left: 50%;
+		border-left: var(--border-width-md) solid var(--color-primary);
 	}
 
 	.split {

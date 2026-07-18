@@ -1,6 +1,6 @@
 # Design System — Terminal Navigator
 
-> Version 1.0 · 2026-07-17 · Status: approved
+> Version 1.1 · 2026-07-18 · Status: approved
 > Files: design.md (this file, rules & rationale) · tokens.css / tokens.json (values) · components.md (component specs)
 > Source docs: docs/prd-terminal-navigator.md (v1.2) · docs/backend/architecture.md (v1.0)
 
@@ -48,6 +48,7 @@ Full values live in `tokens.css` / `tokens.json`. Dark-only theme — there is n
 | `--color-primary` | `#6845E0` | Solid interactive fills (buttons, focus ring source) |
 | `--color-primary-hover` / `-active` | `#5636B8` / `#452A93` | Button hover/press |
 | `--color-accent-gradient` | `#7C5CFF → #FF6B9D` | Decorative only — active tab underline, unlock glow |
+| `--color-primary-bg-subtle` | `rgba(104, 69, 224, 0.18)` | Translucent overlay fill — drag-and-drop drop zones |
 | `--color-security` | `#34D399` | Encryption/trust signal (badge, valid-path dot) |
 | `--color-warning` | `#FBBF24` | Warnings |
 | `--color-danger` | `#F87171` | Errors, destructive actions |
@@ -153,3 +154,4 @@ You are implementing UI for this project. Follow these rules:
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-07-17 | Initial design system: brief, "Warp Modern" direction, full token set (verified contrast), 8 core components + 4 patterns. |
+| 1.1 | 2026-07-18 | EVOLVE: added Tab drag-to-split interaction — new `dragging` Tab state, Split Pane Container drop-zone system (4-triangle targeting, no center zone — this app has no per-pane tab strips, unlike VS Code), new `--color-primary-bg-subtle` token, new "Tab drag-to-split" pattern. No visual direction change. |

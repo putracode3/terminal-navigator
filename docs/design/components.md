@@ -201,7 +201,7 @@
 **Purpose:** Represents one open project session in the main terminal area (FR-08); switches which tab's split-pane grid is visible.
 
 ### Anatomy
-1. Container
+1. Container — `draggable` (see Behavior — Drag to split)
 2. Project name label
 3. Status indicator (leading, small dot) — reflects the tab's auto-run/setup command state
 4. Close button (trailing, appears on hover/focus)
@@ -225,19 +225,23 @@
 | focus-visible | outline 2px `--color-focus`, offset -2px |
 | running (setup command executing) | status dot pulses using `--color-primary` at reduced opacity, `--duration-slow` pulse cycle; respects `prefers-reduced-motion` (pulse becomes a static dot, no animation) |
 | error (PTY failed to spawn) | status dot `--color-danger`; hovering/focusing the dot shows the error reason in a tooltip |
+| dragging | opacity 0.4 on the tab itself while a drag is in progress; the browser's native drag image (a translucent copy of the tab) follows the cursor — see Behavior — Drag to split |
 
 ### Behavior
 - Clicking a Sidebar Project List Item always creates a new Tab (never reuses an existing one for a different project) — see FR-08.
 - Clicking the close button (or a global "close tab" shortcut) closes the tab; if any pane inside has a foreground process running, show a confirmation before closing (PRD FR-08 edge case, exact confirmation copy is a `⚠️ TBD` in the PRD — implement a generic confirm dialog using the Modal spec below until that copy is finalized).
 - Tabs scroll horizontally (do not wrap) when there are more tabs than fit; no tab overflow menu in MVP.
+- **Drag to split** (see Split Pane Container's matching section and the "Tab drag-to-split" pattern below for the full flow): pressing and moving a tab past the platform's native drag threshold picks it up; dropping it on a pane elsewhere absorbs that tab's entire pane tree into the target tab as a new split, and removes the dragged tab from the tab bar. Dragging is available regardless of which project the source and target tabs belong to — there is no same-project restriction.
 
 ### Accessibility
 - Tab list uses the standard tab/tablist/tabpanel pattern: `Arrow Left/Right` moves focus between tabs, `Enter`/`Space` activates, the corresponding pane grid is the tabpanel.
 - Close button has an accessible label ("Close {project name}").
+- Drag-to-split is a mouse/pointer-only affordance (matching the native HTML drag-and-drop it's built on) — it must never be the *only* way to reach a piece of functionality. It isn't: every split it can produce is also reachable via the Split Pane Container's existing toolbar split buttons, so keyboard-only users lose no capability.
 
 ### Do / Don't
 - ✅ Do: keep the active-tab gradient underline as the *only* place in the whole app (besides the unlock screen glow) that uses the raw gradient — this is what makes it a signature element instead of visual noise (design principle in design.md §2).
 - ❌ Don't: animate the gradient (e.g. shifting hue) — it stays a static two-stop gradient; motion is reserved for state changes, not decoration.
+- ❌ Don't: give the drag ghost/preview the gradient treatment either — dragging is a manipulation state, not the signature "this is active" moment; opacity-0.4 is enough.
 
 ---
 
@@ -250,6 +254,7 @@
 2. Pane(s) — each wraps exactly one terminal instance (rendered by the `xterm.js` component, out of design-system scope beyond its container)
 3. Divider(s) — draggable resize handles between sibling panes
 4. Pane header (thin, appears only when 2+ panes exist) — shows the pane's working directory (mono, truncated) and a small close-pane button
+5. Drop-zone overlay (transient — only exists while a tab is being dragged over a pane, see Behavior — Drag to split)
 
 ### Variants
 | Variant | When to use |
@@ -268,9 +273,25 @@ N/A — panes fill available space; minimum pane size is `--pane-min-width` × `
 | divider default | 1px `--color-border`, invisible extra hit area `--pane-divider-hit-area` for easier grabbing |
 | divider hover | divider color `--color-border-strong`; cursor becomes resize (row/col-resize per orientation) |
 | divider dragging | divider color `--color-primary` while actively dragged |
+| drop-zone active (a dragged tab is hovering this pane) | see the dedicated drop-zone table below |
+
+### Drop zones (drag-to-split targeting)
+
+While a Tab is being dragged over a pane, that pane is divided by its two diagonals into **four triangular zones** — top, right, bottom, left — with no separate "center" zone. This is a deliberate simplification, not an oversight: VS Code's center-drop ("add as a tab in this group") has no equivalent here, because panes don't have their own per-pane tab strips in this app — every tab lives in the single global tab bar (Tab spec, Anatomy). Covering the whole pane with exactly four directional zones removes the ambiguous case by construction instead of specifying a dead zone.
+
+| Zone | Trigger region | Visual feedback | Result on drop |
+|---|---|---|---|
+| Top | Upper triangle (between the two diagonals) | Overlay covers the top half: bg `--color-primary-bg-subtle`, `--border-width-md` solid `--color-primary` on the inner edge | Pane splits `column`; dragged tab's pane tree becomes the new top sibling |
+| Bottom | Lower triangle | Overlay covers the bottom half, same treatment | Pane splits `column`; dragged tab's pane tree becomes the new bottom sibling |
+| Left | Left triangle | Overlay covers the left half, same treatment | Pane splits `row`; dragged tab's pane tree becomes the new left sibling |
+| Right | Right triangle | Overlay covers the right half, same treatment | Pane splits `row`; dragged tab's pane tree becomes the new right sibling |
+| Invalid target (hovering the pane that belongs to the tab being dragged) | — | No overlay appears at all; cursor shows the platform's "not-allowed" affordance | Drop is rejected; dragged tab returns to its original tab-bar position |
+
+The overlay's highlighted half previews the *resulting* pane's approximate bounds (half of the target pane), not the whole tab area — this stays accurate for a fresh split; when the drop lands on a pane that's already part of a same-direction split (auto-flatten, per `terminal.svelte.ts`'s `splitPane`), the preview still communicates "roughly here," which is sufficient given the actual final share is visible immediately after drop.
 
 ### Behavior
-- Splitting a pane (via toolbar button or shortcut) divides it in half along the chosen axis; each resulting pane spawns its own independent PTY session (one project's shell duplicated, or a plain shell at the same path — exact trigger UX is a design-implementer detail, not fixed here).
+- Splitting a pane (via toolbar button, shortcut, or drag-to-split) divides it along the chosen axis; each resulting pane spawns its own independent PTY session — **except** drag-to-split, which reuses the dragged tab's existing session(s) verbatim (nothing reconnects or flickers; the terminal content that moves is exactly the terminal content that was already running).
+- **Drag to split**: dragging a Tab and dropping it on a pane grafts that tab's entire pane tree into the target tab's tree at the drop position (see the drop-zone table above for which edge maps to which split direction), then removes the dragged tab from the tab bar entirely — its content now lives inside the target tab. The target tab becomes active. If the dragged tab itself had multiple panes, the whole subtree moves together, not just one pane. Dropping outside any pane (e.g. back onto the tab bar, or anywhere that isn't a pane) is a no-op — the tab returns to its original position, no confirmation needed since nothing changed.
 - Dragging a divider resizes its two adjacent panes proportionally; other panes in the grid are unaffected.
 - Closing a pane with a live foreground process shows the same confirmation pattern as closing a Tab (see Tab's Behavior section).
 - Only one pane can be "focused" at a time; clicking anywhere in a pane (including its terminal content) focuses it.
@@ -278,10 +299,13 @@ N/A — panes fill available space; minimum pane size is `--pane-min-width` × `
 ### Accessibility
 - Pane focus state must be visually unambiguous even for a user glancing quickly — this is a UI component conveying essential information (which pane receives keystrokes), so its 3:1 non-text contrast requirement is verified in design.md §7.
 - Dividers are keyboard-operable: focus a divider (`Tab`), resize with `Arrow` keys in fixed increments.
+- Drag-to-split has no keyboard equivalent (see Tab's Accessibility note) — this is acceptable only because every outcome it can produce is also reachable via the toolbar split buttons, which remain the accessible path.
 
 ### Do / Don't
 - ✅ Do: always show which pane is focused, even with only one pane in the tab (subtle is fine, but never absent) — consistency prevents the user from having to "hunt" for focus when they do split later.
 - ❌ Don't: let a pane shrink below its minimum size via drag — clamp the drag instead of allowing a pane to become unusably small.
+- ❌ Don't: show a drop-zone overlay when the hovered pane belongs to the tab currently being dragged — that operation is invalid (a tree can't be grafted into itself) and must look unavailable, not just fail silently on drop.
+- ❌ Don't: invent a fifth "center = move without splitting" zone — that reintroduces the per-pane-tab-strip concept this app doesn't have. If that capability is ever wanted, it's a new pattern to design deliberately, not a corner case to bolt on here.
 
 ---
 
@@ -380,3 +404,12 @@ Tab bar (`--tab-height`) pinned to the top of the main content area, horizontall
 
 ### Sidebar layout
 Fixed width 260px (collapses to a 56px icon-only rail below `--bp-sidebar-collapse`). Top-to-bottom: search input (compact `Input`, sm size), scrollable list of `Sidebar Project List Item`s, pinned footer with a ghost `Button` ("+ Add project").
+
+### Tab drag-to-split
+1. User presses and moves a `Tab` past the browser's native drag threshold → that Tab enters its `dragging` state (opacity 0.4); a translucent drag image follows the cursor.
+2. As the cursor moves over any `Split Pane Container`, the pane directly under the cursor computes which of its four triangular zones (Tab spec / Split Pane Container's Drop zones table) the cursor is in, and shows that zone's overlay. Moving between panes, or between zones within one pane, updates the overlay live — only one overlay is ever visible at a time.
+3. Hovering the pane belonging to the dragged tab itself shows no overlay (invalid target, "not-allowed" cursor).
+4. On drop over a valid zone: the dragged tab's entire pane tree grafts into the target pane's position, split along that zone's direction (Split Pane Container Behavior); the dragged tab is removed from the tab bar; the target tab becomes active; the overlay clears.
+5. On drop anywhere invalid (outside a pane, or on the source tab's own pane): no-op, the tab returns to the tab bar exactly where it was — this is the browser's native drag-cancel behavior, not a custom animation to build.
+
+This pattern has no dedicated component of its own — it's existing `Tab` and `Split Pane Container` states composed into one interaction, which is why it's documented here rather than as a new spec entry.

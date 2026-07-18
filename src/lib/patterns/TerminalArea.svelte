@@ -1,7 +1,13 @@
 <script lang="ts">
 	import Tab from "$lib/components/Tab.svelte";
 	import SplitPaneContainer from "$lib/components/SplitPaneContainer.svelte";
-	import { terminalStore, type PaneNode, type PaneStatus, type SplitDirection } from "$lib/stores/terminal.svelte";
+	import {
+		terminalStore,
+		type PaneNode,
+		type PaneStatus,
+		type SplitDirection,
+		type DropZone,
+	} from "$lib/stores/terminal.svelte";
 	import { closeTerminal, splitPane as splitPaneApi, errorMessage } from "$lib/api";
 
 	/** A tab's tab-bar status dot aggregates its panes: any error wins,
@@ -51,6 +57,17 @@
 	function handleResizeSplit(tabId: string, splitId: string, sizes: number[]) {
 		terminalStore.resizeSplit(tabId, splitId, sizes);
 	}
+
+	/** components.md pattern "Tab drag-to-split". Only the active tab's pane
+	 *  tree is ever mounted (see the {#if terminalStore.activeTab} below), so
+	 *  a drop can only ever target the active tab — that's the tab id used
+	 *  here, not something passed in from the drop event itself. */
+	function handleDropTab(targetSessionId: string, zone: DropZone) {
+		const sourceTabId = terminalStore.draggingTabId;
+		const targetTabId = terminalStore.activeTabId;
+		if (!sourceTabId || !targetTabId) return;
+		terminalStore.graftTab(sourceTabId, targetTabId, targetSessionId, zone);
+	}
 </script>
 
 <div class="terminal-area">
@@ -58,11 +75,14 @@
 		<div class="tab-bar" role="tablist">
 			{#each terminalStore.tabs as tab (tab.id)}
 				<Tab
+					tabId={tab.id}
 					label={tab.projectName}
 					active={tab.id === terminalStore.activeTabId}
 					status={aggregateStatus(tab.root)}
 					onSelect={() => terminalStore.setActiveTab(tab.id)}
 					onClose={() => handleCloseTab(tab.id)}
+					onDragStart={() => terminalStore.startDraggingTab(tab.id)}
+					onDragEnd={() => terminalStore.stopDraggingTab()}
 				/>
 			{/each}
 		</div>
@@ -70,12 +90,15 @@
 			{#if terminalStore.activeTab}
 				{@const tab = terminalStore.activeTab}
 				<SplitPaneContainer
+					tabId={tab.id}
 					root={tab.root}
 					focusedPaneId={tab.focusedPaneId}
+					draggingSourceTabId={terminalStore.draggingTabId}
 					onFocusPane={(sessionId) => terminalStore.focusPane(tab.id, sessionId)}
 					onSplitPane={(sessionId, direction) => handleSplitPane(tab.id, sessionId, direction)}
 					onClosePane={(sessionId) => handleClosePane(tab.id, sessionId)}
 					onResizeSplit={(splitId, sizes) => handleResizeSplit(tab.id, splitId, sizes)}
+					onDropTab={handleDropTab}
 				/>
 			{/if}
 		</div>

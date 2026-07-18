@@ -52,8 +52,26 @@
 		}
 
 		if (containerEl) term.open(containerEl);
-		fitAddon.fit();
-		void resizeTerminal(sessionId, term.rows, term.cols);
+
+		// Do NOT call fitAddon.fit() synchronously here: term.open() just
+		// inserted the terminal's DOM into a freshly-mounted container whose
+		// flex-computed size may not have been laid out by the browser yet
+		// (this is a well-documented xterm.js FitAddon race, independent of
+		// any font-loading concern). Measuring too early yields an
+		// under-sized cols/rows that then never gets corrected — the visible
+		// symptom is a terminal that renders smaller than its pane, with
+		// empty space around it. A double requestAnimationFrame guarantees at
+		// least one full layout+paint pass has completed first: the browser
+		// always recalculates layout before running rAF callbacks, and a
+		// callback scheduled from inside one rAF is guaranteed to run in the
+		// *next* frame, after that frame's own layout is done.
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				if (!fitAddon || !term) return;
+				fitAddon.fit();
+				void resizeTerminal(sessionId, term.rows, term.cols);
+			});
+		});
 
 		term.onData((data) => {
 			void writeTerminal(sessionId, data);

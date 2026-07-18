@@ -267,3 +267,167 @@ describe("terminalStore — resizeSplit", () => {
 		}
 	});
 });
+
+describe("terminalStore — graftTab (Tab drag-to-split)", () => {
+	function leafId(tab: (typeof terminalStore.tabs)[number]): string {
+		return (tab.root as { sessionId: string }).sessionId;
+	}
+
+	it("rejects grafting a tab onto its own pane — no-op, returns false", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const ok = terminalStore.graftTab(tab.id, tab.id, leafId(tab), "right");
+
+		expect(ok).toBe(false);
+		expect(terminalStore.tabs).toHaveLength(1);
+		expect(terminalStore.tabs[0].root).toEqual(tab.root);
+	});
+
+	it("rejects grafting an unknown source or target tab id", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		expect(terminalStore.graftTab("does-not-exist", tab.id, leafId(tab), "right")).toBe(false);
+		expect(terminalStore.graftTab(tab.id, "does-not-exist", leafId(tab), "right")).toBe(false);
+	});
+
+	it("dropping RIGHT splits row, source becomes the second (right) child", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+		const sourceSessionId = leafId(source);
+		const targetSessionId = leafId(target);
+
+		const ok = terminalStore.graftTab(source.id, target.id, targetSessionId, "right");
+
+		expect(ok).toBe(true);
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "row" });
+		if (refreshed.root.type === "split") {
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([
+				targetSessionId,
+				sourceSessionId,
+			]);
+		}
+	});
+
+	it("dropping LEFT splits row, source becomes the first (left) child", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+		const sourceSessionId = leafId(source);
+		const targetSessionId = leafId(target);
+
+		terminalStore.graftTab(source.id, target.id, targetSessionId, "left");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "row" });
+		if (refreshed.root.type === "split") {
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([
+				sourceSessionId,
+				targetSessionId,
+			]);
+		}
+	});
+
+	it("dropping TOP splits column, source becomes the first (top) child", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+		const sourceSessionId = leafId(source);
+		const targetSessionId = leafId(target);
+
+		terminalStore.graftTab(source.id, target.id, targetSessionId, "top");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "column" });
+		if (refreshed.root.type === "split") {
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([
+				sourceSessionId,
+				targetSessionId,
+			]);
+		}
+	});
+
+	it("dropping BOTTOM splits column, source becomes the second (bottom) child", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+		const sourceSessionId = leafId(source);
+		const targetSessionId = leafId(target);
+
+		terminalStore.graftTab(source.id, target.id, targetSessionId, "bottom");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "column" });
+		if (refreshed.root.type === "split") {
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([
+				targetSessionId,
+				sourceSessionId,
+			]);
+		}
+	});
+
+	it("removes the source tab from the tab bar and activates the target tab", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+		terminalStore.setActiveTab(source.id);
+
+		terminalStore.graftTab(source.id, target.id, leafId(target), "right");
+
+		expect(terminalStore.tabs.map((t) => t.id)).toEqual([target.id]);
+		expect(terminalStore.activeTabId).toBe(target.id);
+	});
+
+	it("moves the source tab's ENTIRE subtree when it has multiple panes of its own", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const sourceRootId = leafId(source);
+		const sourceSecondId = terminalStore.splitPane(source.id, sourceRootId, "row", "/src");
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+		const targetSessionId = leafId(target);
+
+		terminalStore.graftTab(source.id, target.id, targetSessionId, "right");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(paneCount(refreshed.root)).toBe(3); // target's own pane + source's 2 panes
+		if (refreshed.root.type === "split") {
+			const graftedSubtree = refreshed.root.children.find((c) => c.type === "split");
+			expect(graftedSubtree).toBeDefined();
+			expect(paneCount(graftedSubtree!)).toBe(2);
+		}
+		// Session ids are reused verbatim — no new PTY sessions were spawned by the graft itself.
+		const allIds = collectLeafIdsForTest(refreshed.root);
+		expect(allIds).toEqual(expect.arrayContaining([targetSessionId, sourceRootId, sourceSecondId]));
+		expect(allIds).toHaveLength(3);
+	});
+
+	it("focuses a pane from the grafted (source) subtree after the drop", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const sourceRootId = leafId(source);
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+
+		terminalStore.graftTab(source.id, target.id, leafId(target), "right");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(refreshed.focusedPaneId).toBe(sourceRootId);
+	});
+
+	it("startDraggingTab/stopDraggingTab track ephemeral drag state", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		expect(terminalStore.draggingTabId).toBeNull();
+
+		terminalStore.startDraggingTab(tab.id);
+		expect(terminalStore.draggingTabId).toBe(tab.id);
+
+		terminalStore.stopDraggingTab();
+		expect(terminalStore.draggingTabId).toBeNull();
+	});
+
+	it("a successful graft also clears draggingTabId", () => {
+		const source = terminalStore.openTab("proj-1", "src", "/src");
+		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
+		terminalStore.startDraggingTab(source.id);
+
+		terminalStore.graftTab(source.id, target.id, leafId(target), "right");
+
+		expect(terminalStore.draggingTabId).toBeNull();
+	});
+});
+
+function collectLeafIdsForTest(node: { type: string; sessionId?: string; children?: unknown[] }): string[] {
+	if (node.type === "leaf") return [node.sessionId as string];
+	return (node.children as Parameters<typeof collectLeafIdsForTest>[0][]).flatMap(collectLeafIdsForTest);
+}

@@ -69,6 +69,7 @@
 
   --color-focus: var(--violet-600);
   --color-backdrop: rgba(13, 15, 20, 0.7); /* composited from --color-background at 70% */
+  --color-primary-bg-subtle: rgba(104, 69, 224, 0.18); /* violet-600 at 18% — drop-zone fill, drag affordances */
 
   /* ── Tier 2: Semantic — Typography scale ─────────────────
      Modular scale, ratio ~1.2, rounded to practical pixel

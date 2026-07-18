@@ -1,27 +1,55 @@
 <script lang="ts">
 	let {
+		tabId,
 		label,
 		active = false,
 		status = "ready",
 		onSelect,
 		onClose,
+		onDragStart,
+		onDragEnd,
 	}: {
+		tabId: string;
 		label: string;
 		active?: boolean;
 		status?: "ready" | "running" | "error";
 		onSelect: () => void;
 		onClose: () => void;
+		onDragStart: () => void;
+		onDragEnd: () => void;
 	} = $props();
+
+	let dragging = $state(false);
+
+	function handleDragStart(e: DragEvent) {
+		// Firefox refuses to start a drag unless setData() is called at least
+		// once; the actual payload is terminalStore.draggingTabId (set by
+		// onDragStart below), not this — `drop` always fires before `dragend`,
+		// so the store field is still valid at drop time.
+		e.dataTransfer?.setData("text/plain", tabId);
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+		dragging = true;
+		onDragStart();
+	}
+
+	function handleDragEnd() {
+		dragging = false;
+		onDragEnd();
+	}
 </script>
 
 <div
 	class="tab"
 	class:active
+	class:dragging
 	role="tab"
 	aria-selected={active}
 	tabindex="0"
+	draggable="true"
 	onclick={onSelect}
 	onkeydown={(e) => e.key === "Enter" && onSelect()}
+	ondragstart={handleDragStart}
+	ondragend={handleDragEnd}
 >
 	<span class="status-dot status-{status}" aria-hidden="true"></span>
 	<span class="label">{label}</span>
@@ -65,6 +93,10 @@
 		color: var(--color-text);
 		border-bottom: var(--border-width-md) solid;
 		border-image: var(--color-accent-gradient) 1;
+	}
+
+	.tab.dragging {
+		opacity: 0.4;
 	}
 
 	.label {
