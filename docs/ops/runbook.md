@@ -1,7 +1,7 @@
 # Runbook — Terminal Navigator
 
 > Version 1.0 · 2026-07-20 · Infra: none — local desktop app (Tauri), installed manually as a `.deb` on the author's own Debian 12 machine. No server, no CI, no remote users.
-> Rehearsal log: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–5) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · rollback — not yet rehearsed · restore (config export/import) — not yet rehearsed
+> Rehearsal log: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–5) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · restore (config export/import) ✅ 2026-07-20 · rollback — not yet rehearsed
 
 This app has no server-side deployment. "Deploy" here means: build a `.deb` locally, verify it, and install it to replace the copy you use every day. Sections below are scoped to that reality — see §9 for what a normal server runbook would have that doesn't apply here, and why.
 
@@ -99,7 +99,7 @@ This app has a built-in export feature (FR-07) — that *is* the backup mechanis
 4. Confirm the replace-and-import dialog (import **replaces** the current project list wholesale — it does not merge, per ADR-0008).
 5. Verify: the project list matches what you expect; open one project's terminal to confirm setup commands still run correctly.
 
-**Rehearsal status:** not yet rehearsed. Do this once (export now, then import into a throwaway/test scenario) to prove the round-trip actually works, and record the date/result here.
+**Rehearsal status:** ✅ rehearsed 2026-07-20 — export/import round-trip confirmed working by the author.
 
 ## 6. Incident first moves
 

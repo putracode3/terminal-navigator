@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** Draft | **Version:** 1.4 | **Date:** 2026-07-19 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** In Development — MVP implemented (all FR-01–FR-08), undergoing real-world daily-driver testing | **Version:** 1.4 | **Date:** 2026-07-19 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 
