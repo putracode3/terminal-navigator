@@ -73,6 +73,18 @@ impl PtyManager {
 
         let mut cmd = CommandBuilder::new(default_shell());
         cmd.cwd(cwd);
+        // Root cause of the "garbled input after Backspace" report: this
+        // process's own environment doesn't always carry TERM (e.g. when
+        // launched from a desktop/.desktop-file launcher rather than a
+        // terminal — there's no parent terminal to have ever set it), and
+        // without it the spawned shell's line editor (zsh's ZLE, driving
+        // autosuggestions/syntax-highlighting) falls back to a limited/
+        // wrong terminfo capability profile and emits cursor-movement
+        // sequences that don't match what xterm.js (an xterm-256color-
+        // compatible terminal) expects. Set it explicitly so the child
+        // shell's terminal capability detection is correct regardless of
+        // how this app itself was launched.
+        cmd.env("TERM", "xterm-256color");
 
         let child = pair.slave.spawn_command(cmd).map_err(|_| PtyError::SpawnFailed)?;
         drop(pair.slave);
@@ -162,6 +174,45 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn spawned_shell_always_sees_term_xterm_256color_regardless_of_this_processs_own_env() {
+        // Regression test: this app is not always launched from a terminal
+        // (e.g. a desktop launcher's .desktop file has no parent terminal at
+        // all, so nothing has ever set TERM) — the spawned shell must not
+        // silently inherit whatever (possibly absent/wrong) TERM this
+        // process happens to have, or its line editor falls back to a
+        // wrong/limited terminfo capability profile and misrenders cursor
+        // movement (the "garbled input after Backspace" report's real
+        // cause). Deliberately set this test process's own TERM to
+        // something else first, proving the child gets an explicit
+        // override rather than an inherited value that happens to match.
+        // SAFETY: this test binary doesn't run other tests that read TERM
+        // concurrently, so this process-wide mutation doesn't race.
+        unsafe {
+            std::env::set_var("TERM", "not-the-right-value");
+        }
+
+        let manager = PtyManager::new();
+        let dir = tempdir().unwrap();
+        let session_id = Uuid::new_v4();
+        let (tx, rx) = mpsc::channel::<String>();
+
+        manager
+            .spawn(session_id, dir.path(), move |chunk| {
+                let _ = tx.send(chunk.to_string());
+            })
+            .unwrap();
+
+        manager.write(session_id, "echo TERM-IS-[$TERM]\n").unwrap();
+
+        assert!(
+            wait_for_output(&rx, "TERM-IS-[xterm-256color]", Duration::from_secs(5)),
+            "expected the spawned shell to see TERM=xterm-256color regardless of this process's own TERM"
+        );
+
+        manager.close(session_id).unwrap();
     }
 
     #[test]

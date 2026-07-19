@@ -14,7 +14,10 @@ vi.mock("@xterm/xterm", () => ({
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return { fit: vi.fn() }; }) }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: vi.fn(function WebglAddon() { return {}; }) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: (...args: unknown[]) => listenMock(...args) }));
-vi.mock("$lib/api", () => ({ resizeTerminal: vi.fn(), writeTerminal: vi.fn() }));
+vi.mock("$lib/api", () => ({
+	resizeTerminal: vi.fn().mockResolvedValue(undefined),
+	writeTerminal: vi.fn().mockResolvedValue(undefined),
+}));
 
 import PaneNodeView from "./PaneNodeView.svelte";
 import type { PaneNode, DragSource } from "$lib/stores/terminal.svelte";

@@ -10,10 +10,13 @@ import { render } from "@testing-library/svelte";
 const fitMock = vi.fn();
 const openMock = vi.fn();
 const disposeMock = vi.fn();
+let onDataCallback: ((data: string) => void) | undefined;
 const termInstance = {
 	loadAddon: vi.fn(),
 	open: openMock,
-	onData: vi.fn(),
+	onData: vi.fn((cb: (data: string) => void) => {
+		onDataCallback = cb;
+	}),
 	dispose: disposeMock,
 	focus: vi.fn(),
 	write: vi.fn(),
@@ -57,6 +60,12 @@ beforeEach(() => {
 	fitMock.mockClear();
 	openMock.mockClear();
 	resizeTerminalMock.mockClear();
+	resizeTerminalMock.mockReset();
+	resizeTerminalMock.mockResolvedValue(undefined);
+	writeTerminalMock.mockClear();
+	writeTerminalMock.mockReset();
+	writeTerminalMock.mockResolvedValue(undefined);
+	onDataCallback = undefined;
 	// Reduce requestAnimationFrame to a fake-timer-controllable primitive
 	// rather than relying on sinon's rAF-specific fake-timer support.
 	vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
@@ -91,5 +100,73 @@ describe("TerminalPane — initial fit timing (see the code comment above the fi
 		await vi.runAllTimersAsync();
 		expect(fitMock).toHaveBeenCalledOnce();
 		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
+	});
+});
+
+describe("TerminalPane — keystroke write ordering (regression: typed characters arrived at the PTY out of order, showing up as scrambled/garbled input)", () => {
+	// Each keystroke's writeTerminal() call is an independent Tauri IPC
+	// round-trip with no ordering guarantee relative to other in-flight
+	// calls (sync commands are dispatched onto a thread pool on the Rust
+	// side). Firing one call per keystroke without sequencing let fast
+	// typing reach the PTY in whatever order the backend happened to
+	// schedule them, not the order the user typed them.
+	it("does not send the next keystroke's write until the previous one has resolved", async () => {
+		let resolveFirst: () => void = () => {};
+		writeTerminalMock.mockImplementation((_sessionId: string, data: string) => {
+			if (data === "a") return new Promise<void>((res) => { resolveFirst = res; });
+			return Promise.resolve();
+		});
+
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		await vi.runAllTimersAsync(); // let the initial resize resolve so the write queue opens
+		expect(onDataCallback).toBeDefined();
+
+		onDataCallback!("a");
+		onDataCallback!("b");
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// "b" must still be queued behind "a" — sending it early is exactly
+		// what let the backend interleave/reorder the two writes.
+		expect(writeTerminalMock).toHaveBeenCalledTimes(1);
+		expect(writeTerminalMock).toHaveBeenNthCalledWith(1, "s1", "a");
+
+		resolveFirst();
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(writeTerminalMock).toHaveBeenCalledTimes(2);
+		expect(writeTerminalMock).toHaveBeenNthCalledWith(2, "s1", "b");
+	});
+});
+
+describe("TerminalPane — initial-resize gating (regression: keystrokes typed right after mount, in a fast/release build, reached the PTY before it was resized from its hardcoded 80x24 default, desyncing the shell's own cursor math)", () => {
+	it("does not relay a keystroke to the backend until the first resize has been confirmed applied", async () => {
+		let resolveResize: () => void = () => {};
+		resizeTerminalMock.mockImplementation(
+			() => new Promise<void>((res) => { resolveResize = res; }),
+		);
+
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		await vi.runAllTimersAsync(); // let the double-rAF fire, triggering the initial resize call
+		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
+		expect(onDataCallback).toBeDefined();
+
+		// User types immediately, before the resize round-trip has resolved —
+		// exactly what a snappy release build makes possible.
+		onDataCallback!("t");
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(writeTerminalMock).not.toHaveBeenCalled();
+
+		resolveResize();
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(writeTerminalMock).toHaveBeenCalledWith("s1", "t");
 	});
 });

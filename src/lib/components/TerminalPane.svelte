@@ -22,6 +22,33 @@
 	let fitAddon: FitAddon | undefined;
 	let unlisten: (() => void) | undefined;
 	let resizeObserver: ResizeObserver | undefined;
+	/** Serializes this pane's writes to the backend: `invoke()` calls are
+	 *  independent, concurrent IPC round-trips with no ordering guarantee
+	 *  between them (Tauri dispatches sync commands onto a thread pool), so
+	 *  firing one per keystroke without sequencing lets fast typing arrive at
+	 *  the PTY out of order — the root cause of the "garbled input" bug.
+	 *  Chaining every write onto this promise ensures at most one
+	 *  `writeTerminal` call for this pane is ever in flight, so the next
+	 *  keystroke's write only starts once the previous one has actually
+	 *  completed, preserving keystroke order.
+	 *
+	 *  It starts unresolved, not `Promise.resolve()`: the PTY is opened at a
+	 *  hardcoded default size (80x24, pty_manager::spawn) and only resized to
+	 *  this pane's real dimensions by an async `resizeTerminal` call after the
+	 *  first fit(). In a fast (release) build the terminal can already be
+	 *  focused and accepting keystrokes before that resize round-trip lands,
+	 *  so the shell edits its input line believing a column width that
+	 *  doesn't match what xterm.js is actually rendering — every subsequent
+	 *  cursor-position escape sequence the shell sends (e.g.
+	 *  zsh-autosuggestions' redraw-on-keystroke) then lands in the wrong
+	 *  place. This queue holds every keystroke until the first resize is
+	 *  confirmed applied, closing that window without delaying how soon the
+	 *  pane visually looks focused/ready. */
+	let writeQueue: Promise<void>;
+	let markInitialResizeDone: () => void;
+	writeQueue = new Promise((resolve) => {
+		markInitialResizeDone = resolve;
+	});
 
 	function cssVar(name: string): string {
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -65,16 +92,20 @@
 		// always recalculates layout before running rAF callbacks, and a
 		// callback scheduled from inside one rAF is guaranteed to run in the
 		// *next* frame, after that frame's own layout is done.
+		function reportResize() {
+			if (!fitAddon || !term) return;
+			fitAddon.fit();
+			resizeTerminal(sessionId, term.rows, term.cols)
+				.then(markInitialResizeDone)
+				.catch(markInitialResizeDone);
+		}
+
 		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				if (!fitAddon || !term) return;
-				fitAddon.fit();
-				void resizeTerminal(sessionId, term.rows, term.cols);
-			});
+			requestAnimationFrame(reportResize);
 		});
 
 		term.onData((data) => {
-			void writeTerminal(sessionId, data);
+			writeQueue = writeQueue.then(() => writeTerminal(sessionId, data)).catch(() => {});
 		});
 
 		listen<string>(`pty://output/${sessionId}`, (event) => {
@@ -83,11 +114,7 @@
 			unlisten = fn;
 		});
 
-		resizeObserver = new ResizeObserver(() => {
-			if (!fitAddon || !term) return;
-			fitAddon.fit();
-			void resizeTerminal(sessionId, term.rows, term.cols);
-		});
+		resizeObserver = new ResizeObserver(reportResize);
 		if (containerEl) resizeObserver.observe(containerEl);
 	});
 
