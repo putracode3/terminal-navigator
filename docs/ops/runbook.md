@@ -113,7 +113,7 @@ There's no "site down" here — the closest equivalents:
 ## 7. Routine operations
 
 - **Dependency updates:** no fixed cadence yet (personal project, casual pace per the PRD). When you do update (`cargo update`, `npm update`), re-run the full pre-flight gate before trusting the result.
-- **Log locations:** none configured — the app doesn't currently write logs to a file. Errors surface in-app (pane status → `error`, with a message) or, if devtools are open (enabled in this build, see `src-tauri/Cargo.toml`'s `devtools` feature), in the WebKitGTK console. There's no persistent log to grep after the fact — a gap, see §9.
+- **Log locations:** none configured — the app doesn't currently write logs to a file. Errors surface in-app (pane status → `error`, with a message), or via `console.error` calls in the terminal-pane code visible in the WebKitGTK inspector — but the `devtools` Tauri feature is intentionally **not** enabled for release builds: this app keeps the unlock password in a plain reactive store for the session (`appStore.password`), and an always-available inspector would let anyone with local access to a running unlocked instance read it straight out of memory, defeating FR-06's encryption-at-rest guarantee. Use `npm run tauri dev` (which has devtools by default) when you need to inspect the console. There's no persistent log to grep after the fact either way — a gap, see §9.
 - **Version check:** `dpkg -s terminal-navigator | grep Version` shows what's currently installed.
 
 ## 8. Monitoring & alerts

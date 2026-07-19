@@ -96,8 +96,8 @@
 			if (!fitAddon || !term) return;
 			fitAddon.fit();
 			resizeTerminal(sessionId, term.rows, term.cols)
-				.then(markInitialResizeDone)
-				.catch(markInitialResizeDone);
+				.catch((err) => console.error(`resizeTerminal(${sessionId}) failed:`, err))
+				.finally(markInitialResizeDone);
 		}
 
 		requestAnimationFrame(() => {
@@ -105,7 +105,9 @@
 		});
 
 		term.onData((data) => {
-			writeQueue = writeQueue.then(() => writeTerminal(sessionId, data)).catch(() => {});
+			writeQueue = writeQueue
+				.then(() => writeTerminal(sessionId, data))
+				.catch((err) => console.error(`writeTerminal(${sessionId}) failed:`, err));
 		});
 
 		listen<string>(`pty://output/${sessionId}`, (event) => {

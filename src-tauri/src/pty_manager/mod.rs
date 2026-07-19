@@ -189,7 +189,11 @@ mod tests {
         // something else first, proving the child gets an explicit
         // override rather than an inherited value that happens to match.
         // SAFETY: this test binary doesn't run other tests that read TERM
-        // concurrently, so this process-wide mutation doesn't race.
+        // concurrently, so this process-wide mutation doesn't race. If a
+        // future test also needs to read/assert on $TERM, serialize it
+        // against this one (e.g. the `serial_test` crate's #[serial]) —
+        // cargo test runs this file's tests in parallel by default, and
+        // this mutation is process-wide, not thread-local.
         unsafe {
             std::env::set_var("TERM", "not-the-right-value");
         }
