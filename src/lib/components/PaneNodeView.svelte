@@ -4,38 +4,34 @@
 	// <svelte:self>) — Vite/the Svelte compiler resolve this fine since it's
 	// the same module being imported from itself.
 	import PaneNodeView from "./PaneNodeView.svelte";
-	import type { PaneNode, SplitDirection, DropZone } from "$lib/stores/terminal.svelte";
+	import type { PaneNode, SplitDirection, DropZone, DragSource } from "$lib/stores/terminal.svelte";
 
 	let {
 		node,
 		tabId,
 		focusedPaneId,
-		multiPane,
-		draggingSourceTabId,
+		dragSource,
 		onFocusPane,
 		onSplitPane,
 		onClosePane,
 		onResizeSplit,
-		onDropTab,
+		onDrop,
 	}: {
 		node: PaneNode;
 		/** The tab this pane tree belongs to — needed only to reject an
-		 *  invalid drop target (components.md: a tab's tree can't be grafted
-		 *  into itself), not for anything else. */
+		 *  invalid drop target for a `graft` source (components.md: a tab's
+		 *  tree can't be grafted into itself), not for anything else. */
 		tabId: string;
 		focusedPaneId: string;
-		/** Whether the *whole tab* has more than one pane — a leaf never knows
-		 *  this from its own subtree alone, so it's threaded down from the top. */
-		multiPane: boolean;
-		/** The id of the tab currently being drag-and-dropped, or null — see
-		 *  terminalStore.draggingTabId. Threaded as a prop (not read from the
+		/** The sidebar drag currently in progress, or null — see
+		 *  terminalStore.dragSource. Threaded as a prop (not read from the
 		 *  store directly) to keep this component prop-driven/testable. */
-		draggingSourceTabId: string | null;
+		dragSource: DragSource | null;
 		onFocusPane: (sessionId: string) => void;
 		onSplitPane: (sessionId: string, direction: SplitDirection) => void;
 		onClosePane: (sessionId: string) => void;
 		onResizeSplit: (splitId: string, sizes: number[]) => void;
-		onDropTab: (targetSessionId: string, zone: DropZone) => void;
+		onDrop: (targetSessionId: string, zone: DropZone) => void;
 	} = $props();
 
 	let containerEl: HTMLDivElement | undefined = $state();
@@ -56,12 +52,21 @@
 		return "right";
 	}
 
+	/** `graft` sources are invalid over their own tab's panes (a tree can't
+	 *  be grafted into itself); `spawn` sources have no "self" to collide
+	 *  with, so every pane is a valid target for them (components.md's
+	 *  Drop zones table). */
+	function isValidDropTarget(): boolean {
+		if (!dragSource) return false;
+		return dragSource.kind === "spawn" || dragSource.tabId !== tabId;
+	}
+
 	function handleDragOver(e: DragEvent) {
 		// No preventDefault() → browser shows its native "not-allowed" cursor
 		// and disallows the drop, satisfying the invalid-target spec with zero
 		// extra styling (no drag in progress, or hovering the dragged tab's
 		// own pane).
-		if (draggingSourceTabId === null || draggingSourceTabId === tabId) return;
+		if (!isValidDropTarget()) return;
 		e.preventDefault();
 		if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -74,8 +79,8 @@
 
 	function handleDrop(e: DragEvent, sessionId: string) {
 		e.preventDefault();
-		if (dropZone && draggingSourceTabId !== null && draggingSourceTabId !== tabId) {
-			onDropTab(sessionId, dropZone);
+		if (dropZone && isValidDropTarget()) {
+			onDrop(sessionId, dropZone);
 		}
 		dropZone = null;
 	}
@@ -145,12 +150,10 @@
 
 {#if node.type === "leaf"}
 	<div class="leaf">
-		{#if multiPane}
-			<div class="pane-header">
-				<span class="cwd" title={node.cwd}>{truncateMiddle(node.cwd)}</span>
-				<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
-			</div>
-		{/if}
+		<div class="pane-header">
+			<span class="cwd" title={node.cwd}>{truncateMiddle(node.cwd)}</span>
+			<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
+		</div>
 		<div
 			class="pane-body"
 			role="group"
@@ -166,9 +169,6 @@
 			<div class="pane-toolbar">
 				<button aria-label="Split right" onclick={() => onSplitPane(node.sessionId, "row")}>⬌</button>
 				<button aria-label="Split down" onclick={() => onSplitPane(node.sessionId, "column")}>⬍</button>
-				{#if !multiPane}
-					<button aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
-				{/if}
 			</div>
 			{#if dropZone}
 				<div class="drop-zone-overlay drop-zone-{dropZone}" aria-hidden="true"></div>
@@ -183,13 +183,12 @@
 					node={child}
 					{tabId}
 					{focusedPaneId}
-					{multiPane}
-					{draggingSourceTabId}
+					{dragSource}
 					{onFocusPane}
 					{onSplitPane}
 					{onClosePane}
 					{onResizeSplit}
-					{onDropTab}
+					{onDrop}
 				/>
 			</div>
 			{#if i < node.children.length - 1}

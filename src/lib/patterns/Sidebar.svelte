@@ -6,10 +6,26 @@
 	import SidebarProjectListItem from "$lib/components/SidebarProjectListItem.svelte";
 	import ProjectFormModal from "./ProjectFormModal.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
-	import { terminalStore } from "$lib/stores/terminal.svelte";
-	import { deleteProject, exportConfig, importConfig, pathExists, errorMessage, type ProjectDto } from "$lib/api";
+	import { terminalStore, type TabState } from "$lib/stores/terminal.svelte";
+	import {
+		deleteProject,
+		exportConfig,
+		importConfig,
+		pathExists,
+		closeTerminal,
+		errorMessage,
+		type ProjectDto,
+	} from "$lib/api";
 
-	let { onOpenProject }: { onOpenProject: (project: ProjectDto) => void } = $props();
+	let {
+		onOpenProject,
+		onForceNewTab,
+	}: {
+		onOpenProject: (project: ProjectDto) => void;
+		/** FR-08 v1.3: Menu's "Open in new tab" — always opens an additional
+		 *  tab, bypassing onOpenProject's switch-to-existing-tab behavior. */
+		onForceNewTab: (project: ProjectDto) => void;
+	} = $props();
 
 	let search = $state("");
 	let formOpen = $state(false);
@@ -57,19 +73,39 @@
 		formOpen = true;
 	}
 
+	/** Closes exactly one session: tears down its PTY(s) via the backend,
+	 *  then removes it from the store. Shared by Menu's "Close terminal"
+	 *  (single-session mode) and a Sidebar Session Sub-item's close button —
+	 *  both just need the tab id. */
+	async function closeSession(tabId: string) {
+		const closedSessionIds = terminalStore.closeTab(tabId);
+		for (const sessionId of closedSessionIds) {
+			try {
+				await closeTerminal(sessionId);
+			} catch {
+				// Session may already be gone; closing still proceeds either way.
+			}
+		}
+	}
+
+	function sessionsFor(project: ProjectDto): TabState[] {
+		return terminalStore.sessionsForProject(project.id);
+	}
+
+	/** PRD FR-08 v1.4 edge case: a project with open sessions must have all
+	 *  of them closed before it can be deleted. */
 	async function confirmDelete() {
 		if (!pendingDelete) return;
 		try {
+			for (const session of sessionsFor(pendingDelete)) {
+				await closeSession(session.id);
+			}
 			await deleteProject(pendingDelete.id);
 			appStore.removeProject(pendingDelete.id);
 			pendingDelete = undefined;
 		} catch (e) {
 			deleteError = errorMessage(e);
 		}
-	}
-
-	function isActive(project: ProjectDto): boolean {
-		return terminalStore.tabs.some((t) => t.id === terminalStore.activeTabId && t.projectId === project.id);
 	}
 
 	// FR-07: export/import the single encrypted data file (ADR-0004/ADR-0008).
@@ -121,16 +157,28 @@
 	</div>
 	<div class="list">
 		{#each filtered as project (project.id)}
+			{@const sessions = sessionsFor(project)}
 			<SidebarProjectListItem
 				{project}
-				active={isActive(project)}
+				{sessions}
+				activeTabId={terminalStore.activeTabId}
 				invalid={invalidProjectIds.has(project.id)}
 				onOpen={() => onOpenProject(project)}
+				onForceNewTab={() => onForceNewTab(project)}
+				onSwitchSession={(tabId) => terminalStore.setActiveTab(tabId)}
+				onCloseTerminal={() => sessions[0] && closeSession(sessions[0].id)}
+				onCloseSession={(tabId) => closeSession(tabId)}
 				onEdit={() => openEditForm(project)}
 				onDelete={() => {
 					pendingDelete = project;
 					deleteError = "";
 				}}
+				onDragStart={() =>
+					sessions.length === 0
+						? terminalStore.startDraggingSpawn(project.id, project.name, project.path)
+						: terminalStore.startDraggingTab(sessions[0].id)}
+				onSessionDragStart={(tabId) => terminalStore.startDraggingTab(tabId)}
+				onDragEnd={() => terminalStore.stopDragging()}
 			/>
 		{/each}
 		{#if filtered.length === 0}

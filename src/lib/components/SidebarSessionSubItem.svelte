@@ -1,18 +1,20 @@
 <script lang="ts">
+	// components.md — "Sidebar Session Sub-item": one row per open session,
+	// rendered only beneath a `Sidebar Project List Item` that has 2+
+	// sessions open. Never rendered alone.
+	import { aggregateStatus, type TabState } from "$lib/stores/terminal.svelte";
+
 	let {
-		tabId,
-		label,
+		session,
 		active = false,
-		status = "ready",
 		onSelect,
 		onClose,
 		onDragStart,
 		onDragEnd,
 	}: {
-		tabId: string;
-		label: string;
+		session: TabState;
+		/** This is the currently active tab. */
 		active?: boolean;
-		status?: "ready" | "running" | "error";
 		onSelect: () => void;
 		onClose: () => void;
 		onDragStart: () => void;
@@ -20,13 +22,15 @@
 	} = $props();
 
 	let dragging = $state(false);
+	const status = $derived(aggregateStatus(session.root));
+	const label = $derived(`Session ${session.sessionOrdinal}`);
 
 	function handleDragStart(e: DragEvent) {
 		// Firefox refuses to start a drag unless setData() is called at least
-		// once; the actual payload is terminalStore.draggingTabId (set by
-		// onDragStart below), not this — `drop` always fires before `dragend`,
-		// so the store field is still valid at drop time.
-		e.dataTransfer?.setData("text/plain", tabId);
+		// once; the actual payload is terminalStore.dragSource (set by
+		// onDragStart below), not this — `drop` always fires before
+		// `dragend`, so the store field is still valid at drop time.
+		e.dataTransfer?.setData("text/plain", session.id);
 		if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
 		dragging = true;
 		onDragStart();
@@ -39,11 +43,10 @@
 </script>
 
 <div
-	class="tab"
+	class="sub-item"
 	class:active
 	class:dragging
-	role="tab"
-	aria-selected={active}
+	role="button"
 	tabindex="0"
 	draggable="true"
 	onclick={onSelect}
@@ -66,42 +69,42 @@
 </div>
 
 <style>
-	.tab {
+	.sub-item {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		height: var(--tab-height);
+		height: var(--control-height-sm);
 		padding: 0 var(--space-3);
-		border-bottom: var(--border-width-md) solid transparent;
+		margin-left: var(--space-4);
+		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
+		font-size: var(--text-xs);
 		cursor: pointer;
-		flex-shrink: 0;
-		transition: background-color var(--duration-fast) var(--ease-out);
 	}
 
-	.tab:hover {
+	.sub-item:hover {
 		background: var(--color-surface-elevated);
 	}
 
-	.tab:focus-visible {
+	.sub-item:focus-visible {
 		outline: 2px solid var(--color-focus);
 		outline-offset: -2px;
 	}
 
-	.tab.active {
-		background: var(--color-surface-elevated);
+	.sub-item.active {
 		color: var(--color-text);
-		border-bottom: var(--border-width-md) solid;
-		border-image: var(--color-accent-gradient) 1;
+		box-shadow: inset var(--border-width-md) 0 0 var(--color-primary);
 	}
 
-	.tab.dragging {
+	.sub-item.dragging {
 		opacity: 0.4;
 	}
 
 	.label {
-		font-size: var(--text-sm);
+		flex: 1;
 		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.status-dot {
@@ -135,8 +138,8 @@
 		font-size: var(--text-xs);
 	}
 
-	.tab:hover .close,
-	.tab:focus-within .close {
+	.sub-item:hover .close,
+	.sub-item:focus-within .close {
 		opacity: 1;
 	}
 

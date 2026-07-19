@@ -144,7 +144,7 @@
 /* ── Tier 3: Component tokens (only where a component
    genuinely deviates from Tier 2) ───────────────────────── */
 :root {
-  --tab-height: 2.25rem;        /* 36px */
+  --tab-height: 2.25rem;        /* 36px — orphaned as of v1.3 (design.md): its only consumer, the Tab component, was removed. Kept defined rather than deleted in case a future spec needs it; do not reintroduce a tab bar without updating design.md first. */
   --control-height-md: 2rem;    /* 32px — buttons, inputs */
   --control-height-sm: 1.5rem;  /* 24px — compact controls */
   --pane-divider-width: 1px;

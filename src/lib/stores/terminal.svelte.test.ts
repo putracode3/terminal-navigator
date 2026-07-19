@@ -268,7 +268,7 @@ describe("terminalStore — resizeSplit", () => {
 	});
 });
 
-describe("terminalStore — graftTab (Tab drag-to-split)", () => {
+describe("terminalStore — graftTab (Sidebar drag-to-split)", () => {
 	function leafId(tab: (typeof terminalStore.tabs)[number]): string {
 		return (tab.root as { sessionId: string }).sessionId;
 	}
@@ -361,7 +361,7 @@ describe("terminalStore — graftTab (Tab drag-to-split)", () => {
 		}
 	});
 
-	it("removes the source tab from the tab bar and activates the target tab", () => {
+	it("removes the source tab from the tab list and activates the target tab", () => {
 		const source = terminalStore.openTab("proj-1", "src", "/src");
 		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
 		terminalStore.setActiveTab(source.id);
@@ -405,25 +405,163 @@ describe("terminalStore — graftTab (Tab drag-to-split)", () => {
 		expect(refreshed.focusedPaneId).toBe(sourceRootId);
 	});
 
-	it("startDraggingTab/stopDraggingTab track ephemeral drag state", () => {
+	it("startDraggingTab/stopDragging track ephemeral drag state as a 'graft' source", () => {
 		const tab = terminalStore.openTab("proj-1", "a", "/a");
-		expect(terminalStore.draggingTabId).toBeNull();
+		expect(terminalStore.dragSource).toBeNull();
 
 		terminalStore.startDraggingTab(tab.id);
-		expect(terminalStore.draggingTabId).toBe(tab.id);
+		expect(terminalStore.dragSource).toEqual({ kind: "graft", tabId: tab.id });
 
-		terminalStore.stopDraggingTab();
-		expect(terminalStore.draggingTabId).toBeNull();
+		terminalStore.stopDragging();
+		expect(terminalStore.dragSource).toBeNull();
 	});
 
-	it("a successful graft also clears draggingTabId", () => {
+	it("startDraggingSpawn tracks ephemeral drag state as a 'spawn' source (FR-08 v1.4: 0-session drag)", () => {
+		terminalStore.startDraggingSpawn("proj-1", "a", "/a");
+		expect(terminalStore.dragSource).toEqual({ kind: "spawn", projectId: "proj-1", projectName: "a", cwd: "/a" });
+
+		terminalStore.stopDragging();
+		expect(terminalStore.dragSource).toBeNull();
+	});
+
+	it("a successful graft also clears dragSource", () => {
 		const source = terminalStore.openTab("proj-1", "src", "/src");
 		const target = terminalStore.openTab("proj-2", "tgt", "/tgt");
 		terminalStore.startDraggingTab(source.id);
 
 		terminalStore.graftTab(source.id, target.id, leafId(target), "right");
 
-		expect(terminalStore.draggingTabId).toBeNull();
+		expect(terminalStore.dragSource).toBeNull();
+	});
+});
+
+describe("terminalStore — spawnPaneInto (FR-08 v1.4: 0-session sidebar drag)", () => {
+	it("inserts a fresh leaf into the target tab's tree without creating a new TabState", () => {
+		const target = terminalStore.openTab("proj-1", "tgt", "/tgt");
+		const targetSessionId = (target.root as { sessionId: string }).sessionId;
+
+		const newSessionId = terminalStore.spawnPaneInto(target.id, targetSessionId, "right", "/dragged-project");
+
+		expect(terminalStore.tabs).toHaveLength(1); // no new tab — merged into target's tree
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "row" });
+		expect(paneCount(refreshed.root)).toBe(2);
+		if (refreshed.root.type === "split") {
+			const spawned = refreshed.root.children.find((c) => c.type === "leaf" && c.sessionId === newSessionId);
+			expect(spawned).toMatchObject({ cwd: "/dragged-project", status: "running" });
+		}
+		expect(refreshed.focusedPaneId).toBe(newSessionId);
+	});
+
+	it("respects the drop zone's placement (TOP → before, column split)", () => {
+		const target = terminalStore.openTab("proj-1", "tgt", "/tgt");
+		const targetSessionId = (target.root as { sessionId: string }).sessionId;
+
+		const newSessionId = terminalStore.spawnPaneInto(target.id, targetSessionId, "top", "/dragged-project");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === target.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "column" });
+		if (refreshed.root.type === "split") {
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([
+				newSessionId,
+				targetSessionId,
+			]);
+		}
+	});
+});
+
+describe("terminalStore — sessionOrdinal & sessionsForProject (FR-08 v1.4: 'Session {n}' numbering)", () => {
+	it("assigns ordinal 1 to a project's first session", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		expect(tab.sessionOrdinal).toBe(1);
+	});
+
+	it("assigns increasing ordinals to a project's concurrently open sessions", () => {
+		const first = terminalStore.openTab("proj-1", "a", "/a");
+		const second = terminalStore.openTab("proj-1", "a", "/a");
+		const third = terminalStore.openTab("proj-1", "a", "/a");
+
+		expect([first.sessionOrdinal, second.sessionOrdinal, third.sessionOrdinal]).toEqual([1, 2, 3]);
+	});
+
+	it("does not renumber a surviving session's ordinal when an earlier one closes", () => {
+		const first = terminalStore.openTab("proj-1", "a", "/a");
+		const second = terminalStore.openTab("proj-1", "a", "/a");
+
+		terminalStore.closeTab(first.id);
+
+		const refreshedSecond = terminalStore.tabs.find((t) => t.id === second.id)!;
+		expect(refreshedSecond.sessionOrdinal).toBe(2);
+	});
+
+	it("resets to 1 once every session for a project has closed", () => {
+		const first = terminalStore.openTab("proj-1", "a", "/a");
+		terminalStore.closeTab(first.id);
+
+		const reopened = terminalStore.openTab("proj-1", "a", "/a");
+
+		expect(reopened.sessionOrdinal).toBe(1);
+	});
+
+	it("numbers ordinals independently per project", () => {
+		terminalStore.openTab("proj-1", "a", "/a");
+		const otherProjectFirst = terminalStore.openTab("proj-2", "b", "/b");
+
+		expect(otherProjectFirst.sessionOrdinal).toBe(1);
+	});
+
+	it("sessionsForProject() returns only that project's open sessions, in creation order", () => {
+		const first = terminalStore.openTab("proj-1", "a", "/a");
+		terminalStore.openTab("proj-2", "b", "/b");
+		const second = terminalStore.openTab("proj-1", "a", "/a");
+
+		expect(terminalStore.sessionsForProject("proj-1").map((t) => t.id)).toEqual([first.id, second.id]);
+	});
+});
+
+describe("terminalStore — openOrSwitchToTab (FR-08 v1.3: sidebar left-click)", () => {
+	it("opens a new tab when the project has none open yet", () => {
+		const { tab, isNew } = terminalStore.openOrSwitchToTab("proj-1", "a", "/a");
+
+		expect(isNew).toBe(true);
+		expect(terminalStore.tabs).toHaveLength(1);
+		expect(terminalStore.activeTabId).toBe(tab.id);
+	});
+
+	it("switches to the existing tab instead of opening a duplicate", () => {
+		const first = terminalStore.openTab("proj-1", "a", "/a");
+		terminalStore.openTab("proj-2", "b", "/b"); // a second, unrelated tab — also becomes active
+		terminalStore.setActiveTab(first.id);
+		// simulate focus having moved elsewhere before the user clicks the sidebar again
+		terminalStore.setActiveTab(terminalStore.tabs[1].id);
+
+		const { tab, isNew } = terminalStore.openOrSwitchToTab("proj-1", "a", "/a");
+
+		expect(isNew).toBe(false);
+		expect(tab.id).toBe(first.id);
+		expect(terminalStore.tabs).toHaveLength(2); // no duplicate created
+		expect(terminalStore.activeTabId).toBe(first.id);
+	});
+
+	it("switches to the FIRST-in-order tab when a project has multiple open tabs", () => {
+		const first = terminalStore.openTab("proj-1", "a", "/a");
+		const second = terminalStore.openTab("proj-1", "a", "/a"); // e.g. opened via "Open in new tab"
+
+		const { tab, isNew } = terminalStore.openOrSwitchToTab("proj-1", "a", "/a");
+
+		expect(isNew).toBe(false);
+		expect(tab.id).toBe(first.id);
+		expect(tab.id).not.toBe(second.id);
+	});
+
+	it("does not affect tabs belonging to other projects", () => {
+		terminalStore.openTab("proj-1", "a", "/a");
+		const other = terminalStore.openTab("proj-2", "b", "/b");
+
+		terminalStore.openOrSwitchToTab("proj-1", "a", "/a");
+
+		expect(terminalStore.tabs.find((t) => t.id === other.id)).toBeDefined();
+		expect(terminalStore.tabs).toHaveLength(2);
 	});
 });
 

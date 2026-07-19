@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** Draft | **Version:** 1.2 | **Date:** 2026-07-17 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** Draft | **Version:** 1.4 | **Date:** 2026-07-19 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 
@@ -80,18 +80,21 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - [ ] Terminal's initial working directory equals the project's stored path
   - [ ] User can type/run any shell command normally afterward (full PTY behavior — interactive programs, colors, control sequences work)
 
-#### FR-08: Multi-Tab + Split-Pane Terminal Grid (Tilix-style)
-- **Description:** Clicking a project opens a **new tab** with a terminal at that project's path. Within any tab, the user can split the view into multiple panes (horizontal/vertical), each running an independent terminal session — matching the tab + split-pane workflow of Tilix. Promoted from next-iteration to MVP per user decision (2026-07-17).
+#### FR-08: Sidebar-Driven Tabs + Split-Pane Terminal Grid (Tilix-style)
+- **Description:** Terminal sessions ("tabs" as a data concept — a project can have one or more open at once) are opened, switched, and closed entirely through the sidebar — there is no separate horizontal tab-bar widget above the terminal area (removed 2026-07-19, v1.4). Within any tab, the user can split the view into multiple panes (horizontal/vertical), each running an independent terminal session — matching the tab + split-pane workflow of Tilix. Promoted from next-iteration to MVP per user decision (2026-07-17); sidebar-only click behavior added 2026-07-19 (v1.3); tab bar removed and drag-to-split re-sourced from the sidebar 2026-07-19 (v1.4).
 - **Acceptance Criteria:**
-  - [ ] Clicking a project in the list opens it in a new tab (does not replace an existing open tab)
-  - [ ] User can switch between open tabs
-  - [ ] User can close a tab (with confirmation if a long-running process is active — ⚠️ TBD exact UX)
+  - [ ] **Left-clicking** a project in the sidebar: if no tab is open for it, opens one. If exactly one is open, switches to (activates) it. If two or more are open, left-click has no separate meaning of its own — see the sub-session list below.
+  - [ ] **When a project has two or more open tabs**, its sidebar entry automatically expands into a list of sub-items, one per session (labeled by creation order, e.g. "Session 1", "Session 2"). Clicking a sub-item switches to that specific tab. A project with 0 or 1 open tabs shows no such list — this is automatic based on count, never a manual expand/collapse the user has to remember to use.
+  - [ ] **Right-clicking** a project (or its Menu button) offers "Open in new tab" (always adds another tab for that project, even if one or more already exist — the deliberate way to get a second terminal on the same project) and **"Close terminal"** (closes the project's one open tab; only offered when exactly one is open — with 2+, closing happens per sub-item instead, since "close terminal" would otherwise be ambiguous about which one).
+  - [ ] **Dragging** a sidebar project row (0 or 1 open tabs) or a sub-item (2+ case) onto a pane in the terminal area splits that pane in the dragged-onto direction. If the source had a live session, that exact session moves in (reused, not respawned). If the source had none (dragging an unopened project), a fresh session spawns directly into the new pane position — the user never has to "open a tab first" just to then drag it.
   - [ ] Within a tab, user can split the terminal view horizontally and/or vertically into multiple panes
   - [ ] Each pane runs its own independent PTY session (own shell, own working directory, own auto-run command if opened via a project)
   - [ ] Panes within a tab can be resized and closed independently
 - **Edge cases:**
   - Closing a tab/pane with a running foreground process (e.g. `docker-compose up`) — must not silently kill without at least a visual cue or confirmation
   - Very many simultaneous panes/tabs — no hard limit required for MVP, but must not crash or become unusably slow at realistic personal-scale usage (a handful of tabs, a few panes each)
+  - Right-clicking a project with no tabs open yet — "Open in new tab" still works identically to a left-click in this specific case (there's nothing to switch to); "Close terminal" is absent (nothing to close)
+  - Deleting a project (FR-01) that still has open tab(s)/session(s) — close all of that project's sessions first, then delete, so no orphaned terminal keeps running against a project entry that no longer exists in the sidebar
 
 #### FR-04: Auto-run Setup Commands
 - **Description:** When a project's terminal opens, any configured setup command(s) run automatically before handing control to the user.
@@ -236,3 +239,5 @@ User wants a properly installed package from the start (not just running from so
 | 1.0 | 2026-07-17 | Initial PRD |
 | 1.1 | 2026-07-17 | Promoted multi-tab + split-pane terminal grid (Tilix-style) from next-iteration to MVP as FR-08, per user decision during system-architect intake. Resolved Q1 (master password for encryption key). Added distribution note (installable package expected, not just source build). |
 | 1.2 | 2026-07-17 | Added NFR-7 (resource efficiency — lightweight, fast, memory-friendly), per user requirement during system-architect intake. Drives frontend framework and terminal-rendering decisions in architecture.md. |
+| 1.3 | 2026-07-19 | FR-08 acceptance criteria revised: left-click on a sidebar project now switches to its existing tab instead of always opening a duplicate; right-click opens a context menu with an explicit "Open in new tab" action for that case. Replaces the old "always opens a new tab" behavior. |
+| 1.4 | 2026-07-19 | FR-08 revised again: the horizontal tab-bar widget is removed entirely — sidebar becomes the sole way to open/switch/close/drag tabs. Added: automatic sub-session list when a project has 2+ open tabs (no manual expand/collapse), "Close terminal" Menu action (replaces the tab bar's per-tab close button), drag-to-split now sourced from sidebar rows/sub-items instead of tab-bar tabs (and can spawn a fresh session directly into a split if the source had none open yet). Added an edge case: deleting a project with open sessions closes them first. |

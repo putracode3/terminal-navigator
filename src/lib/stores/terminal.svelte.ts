@@ -29,6 +29,24 @@ export interface TabState {
 	projectName: string;
 	root: PaneNode;
 	focusedPaneId: string;
+	/** FR-08 v1.4: stable "Session {n}" numbering for `Sidebar Session
+	 *  Sub-item`, assigned once at creation from the highest ordinal
+	 *  currently open for this project + 1 (not from array position, which
+	 *  would shift on close — components.md: "closing Session 1 does not
+	 *  renumber Session 2"). Resets to 1 once every session for a project
+	 *  has closed, since nothing is open to take the max of. */
+	sessionOrdinal: number;
+}
+
+/** Aggregates a tab's tree into one status for its `Sidebar Session
+ *  Sub-item` status dot: any error wins, otherwise any still-running setup
+ *  command wins, otherwise ready. */
+export function aggregateStatus(node: PaneNode): PaneStatus {
+	if (node.type === "leaf") return node.status;
+	const statuses = node.children.map(aggregateStatus);
+	if (statuses.includes("error")) return "error";
+	if (statuses.includes("running")) return "running";
+	return "ready";
 }
 
 const MIN_PANE_FRACTION = 0.1;
@@ -168,27 +186,53 @@ export function dropZoneToSplit(zone: DropZone): { direction: SplitDirection; pl
 	}
 }
 
+/** A drag currently in progress, sourced from the sidebar (FR-08 v1.4 — the
+ *  sidebar is the only drag source now, replacing the removed Tab
+ *  component). Two kinds, per components.md's Split Pane Container Behavior:
+ *  - `graft`: an existing session (a 1-session `Sidebar Project List Item`
+ *    or any `Sidebar Session Sub-item`) is reused verbatim at the drop
+ *    target — no new PTY.
+ *  - `spawn`: a 0-session `Sidebar Project List Item` has no existing
+ *    session to reuse, so a fresh one is spawned directly into the drop
+ *    target's pane tree instead. */
+export type DragSource =
+	| { kind: "graft"; tabId: string }
+	| { kind: "spawn"; projectId: string; projectName: string; cwd: string };
+
 class TerminalStore {
 	tabs = $state<TabState[]>([]);
 	activeTabId = $state<string | null>(null);
-	/** The tab currently being drag-and-dropped, or null. Ephemeral UI state
-	 *  (not persisted) — read during dragover to reject dropping a tab onto
-	 *  its own pane (components.md: no overlay for an invalid target). */
-	draggingTabId = $state<string | null>(null);
+	/** The sidebar drag currently in progress, or null. Ephemeral UI state
+	 *  (not persisted) — read during dragover to reject dropping a `graft`
+	 *  source onto its own pane (components.md: no overlay for an invalid
+	 *  target; `spawn` sources have no "self" to collide with). */
+	dragSource = $state<DragSource | null>(null);
 
 	get activeTab(): TabState | undefined {
 		return this.tabs.find((t) => t.id === this.activeTabId);
 	}
 
+	/** All open sessions ("tabs") for one project, in creation order —
+	 *  drives `Sidebar Project List Item`'s 0/1/grouped mode and, when
+	 *  grouped, the `Sidebar Session Sub-item` list beneath it. */
+	sessionsForProject(projectId: string): TabState[] {
+		return this.tabs.filter((t) => t.projectId === projectId);
+	}
+
 	openTab(projectId: string | null, projectName: string, cwd: string): TabState {
 		const sessionId = crypto.randomUUID();
 		const leaf: LeafPane = { type: "leaf", sessionId, cwd, status: "running" };
+		const existingOrdinals = projectId
+			? this.tabs.filter((t) => t.projectId === projectId).map((t) => t.sessionOrdinal)
+			: [];
+		const sessionOrdinal = existingOrdinals.length > 0 ? Math.max(...existingOrdinals) + 1 : 1;
 		const tab: TabState = {
 			id: crypto.randomUUID(),
 			projectId,
 			projectName,
 			root: leaf,
 			focusedPaneId: sessionId,
+			sessionOrdinal,
 		};
 		this.tabs = [...this.tabs, tab];
 		this.activeTabId = tab.id;
@@ -197,6 +241,21 @@ class TerminalStore {
 
 	setActiveTab(id: string) {
 		this.activeTabId = id;
+	}
+
+	/** FR-08 v1.3: left-click's smart switch-or-open. Returns the project's
+	 *  first-in-order existing tab (and activates it) if one exists;
+	 *  otherwise creates a fresh one via `openTab`. `tabs.find` already
+	 *  returns tab-order-first, since tabs are appended in creation order.
+	 *  The caller must only spawn a PTY when `isNew` is true — an existing
+	 *  tab already has a live session, spawning again would be wrong. */
+	openOrSwitchToTab(projectId: string, projectName: string, cwd: string): { tab: TabState; isNew: boolean } {
+		const existing = this.tabs.find((t) => t.projectId === projectId);
+		if (existing) {
+			this.activeTabId = existing.id;
+			return { tab: existing, isNew: false };
+		}
+		return { tab: this.openTab(projectId, projectName, cwd), isNew: true };
 	}
 
 	focusPane(tabId: string, sessionId: string) {
@@ -225,6 +284,25 @@ class TerminalStore {
 			if (tab.id !== tabId) return tab;
 			return { ...tab, root: insertNode(tab.root, targetSessionId, direction, newLeaf), focusedPaneId: newSessionId };
 		});
+		return newSessionId;
+	}
+
+	/** The `spawn` drag case (components.md, Split Pane Container Behavior):
+	 *  a 0-session `Sidebar Project List Item` was dropped on `targetTabId`'s
+	 *  pane at `targetSessionId`, `zone` giving the split direction/placement.
+	 *  Inserts a fresh leaf directly into the *target* tab's tree — this does
+	 *  not create a new `TabState`, so it does not add to the dragged
+	 *  project's own session count (mirrors `splitPane`, but placement-aware
+	 *  via the drop zone instead of always "after"). Caller spawns the PTY. */
+	spawnPaneInto(tabId: string, targetSessionId: string, zone: DropZone, cwd: string): string {
+		const { direction, placement } = dropZoneToSplit(zone);
+		const newSessionId = crypto.randomUUID();
+		const newLeaf: LeafPane = { type: "leaf", sessionId: newSessionId, cwd, status: "running" };
+		this.tabs = this.tabs.map((tab) =>
+			tab.id === tabId
+				? { ...tab, root: insertNode(tab.root, targetSessionId, direction, newLeaf, placement), focusedPaneId: newSessionId }
+				: tab,
+		);
 		return newSessionId;
 	}
 
@@ -268,11 +346,15 @@ class TerminalStore {
 	}
 
 	startDraggingTab(tabId: string) {
-		this.draggingTabId = tabId;
+		this.dragSource = { kind: "graft", tabId };
 	}
 
-	stopDraggingTab() {
-		this.draggingTabId = null;
+	startDraggingSpawn(projectId: string, projectName: string, cwd: string) {
+		this.dragSource = { kind: "spawn", projectId, projectName, cwd };
+	}
+
+	stopDragging() {
+		this.dragSource = null;
 	}
 
 	/** A drop is valid only when dragging onto a *different* tab's pane — a
@@ -283,7 +365,7 @@ class TerminalStore {
 		return this.tabs.some((t) => t.id === sourceTabId) && this.tabs.some((t) => t.id === targetTabId);
 	}
 
-	/** Drag-to-split (components.md pattern "Tab drag-to-split"): grafts
+	/** Drag-to-split (components.md pattern "Sidebar drag-to-split"): grafts
 	 *  `sourceTabId`'s entire pane tree into `targetTabId`'s tree at
 	 *  `targetSessionId`'s position, split per `zone`. Reuses every existing
 	 *  session id verbatim — no new PTY sessions, no backend calls needed by
@@ -303,7 +385,7 @@ class TerminalStore {
 			.filter((t) => t.id !== sourceTabId)
 			.map((t) => (t.id === targetTabId ? { ...t, root: graftedRoot, focusedPaneId: newFocusedPaneId } : t));
 		this.activeTabId = targetTabId;
-		this.draggingTabId = null;
+		this.dragSource = null;
 		return true;
 	}
 }

@@ -1,0 +1,250 @@
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/svelte";
+import SidebarProjectListItem from "./SidebarProjectListItem.svelte";
+import type { ProjectDto } from "$lib/api";
+import type { TabState } from "$lib/stores/terminal.svelte";
+
+const project: ProjectDto = {
+	id: "proj-1",
+	name: "my-project",
+	path: "/home/user/my-project",
+	setupCommands: [],
+	notes: "",
+};
+
+const flush = () => new Promise((r) => setTimeout(r, 10));
+
+function session(id: string, ordinal: number): TabState {
+	return {
+		id,
+		projectId: project.id,
+		projectName: project.name,
+		root: { type: "leaf", sessionId: `${id}-pane`, cwd: project.path, status: "ready" },
+		focusedPaneId: `${id}-pane`,
+		sessionOrdinal: ordinal,
+	};
+}
+
+function baseProps(overrides: Partial<Record<string, unknown>> = {}) {
+	return {
+		project,
+		sessions: [] as TabState[],
+		activeTabId: null,
+		onOpen: vi.fn(),
+		onForceNewTab: vi.fn(),
+		onSwitchSession: vi.fn(),
+		onCloseTerminal: vi.fn(),
+		onCloseSession: vi.fn(),
+		onEdit: vi.fn(),
+		onDelete: vi.fn(),
+		onDragStart: vi.fn(),
+		onSessionDragStart: vi.fn(),
+		onDragEnd: vi.fn(),
+		...overrides,
+	};
+}
+
+describe("SidebarProjectListItem — 0-session mode", () => {
+	it("left-click calls onOpen", async () => {
+		const onOpen = vi.fn();
+		render(SidebarProjectListItem, baseProps({ onOpen }));
+
+		await fireEvent.click(screen.getByText("my-project"));
+
+		expect(onOpen).toHaveBeenCalledOnce();
+	});
+
+	it("left-click on an invalid project shows a message instead of calling onOpen", async () => {
+		const onOpen = vi.fn();
+		render(SidebarProjectListItem, baseProps({ onOpen, invalid: true }));
+
+		await fireEvent.click(screen.getByText("my-project"));
+
+		expect(onOpen).not.toHaveBeenCalled();
+		expect(await screen.findByText(/no longer exists on disk/i)).toBeInTheDocument();
+	});
+
+	it("Menu has no 'Close terminal' item (nothing open to close)", async () => {
+		render(SidebarProjectListItem, baseProps());
+
+		await fireEvent.contextMenu(screen.getByText("my-project"));
+
+		expect(screen.queryByRole("menuitem", { name: "Close terminal" })).toBeNull();
+	});
+
+	it("the row is draggable (spawn source)", () => {
+		const { container } = render(SidebarProjectListItem, baseProps());
+		expect(container.querySelector(".item")).toHaveAttribute("draggable", "true");
+	});
+});
+
+describe("SidebarProjectListItem — 1-session mode", () => {
+	it("left-click switches (calls onOpen, the switch-or-open callback) rather than opening a duplicate", async () => {
+		const onOpen = vi.fn();
+		render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1)], onOpen }));
+
+		await fireEvent.click(screen.getByText("my-project"));
+
+		expect(onOpen).toHaveBeenCalledOnce();
+	});
+
+	it("applies the active class when its one session is the active tab", () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sessions: [session("tab-1", 1)], activeTabId: "tab-1" }),
+		);
+		expect(container.querySelector(".item")).toHaveClass("active");
+	});
+
+	it("applies the open (not active) class when its one session isn't the active tab", () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sessions: [session("tab-1", 1)], activeTabId: "some-other-tab" }),
+		);
+		const el = container.querySelector(".item");
+		expect(el).toHaveClass("open");
+		expect(el).not.toHaveClass("active");
+	});
+
+	it("Menu includes 'Close terminal', and selecting it calls onCloseTerminal", async () => {
+		const onCloseTerminal = vi.fn();
+		render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1)], onCloseTerminal }));
+
+		await fireEvent.contextMenu(screen.getByText("my-project"));
+		await fireEvent.click(screen.getByRole("menuitem", { name: "Close terminal" }));
+
+		expect(onCloseTerminal).toHaveBeenCalledOnce();
+	});
+
+	it("no sub-items render", () => {
+		const { container } = render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1)] }));
+		expect(container.querySelector(".sub-items")).toBeNull();
+	});
+});
+
+describe("SidebarProjectListItem — grouped (2+ session) mode (FR-08 v1.4)", () => {
+	const sessions = [session("tab-1", 1), session("tab-2", 2)];
+
+	it("left-click on the parent row is a no-op", async () => {
+		const onOpen = vi.fn();
+		render(SidebarProjectListItem, baseProps({ sessions, onOpen }));
+
+		await fireEvent.click(screen.getByText("my-project"));
+
+		expect(onOpen).not.toHaveBeenCalled();
+	});
+
+	it("the parent row is not draggable", () => {
+		const { container } = render(SidebarProjectListItem, baseProps({ sessions }));
+		expect(container.querySelector(".item")).toHaveAttribute("draggable", "false");
+	});
+
+	it("renders one Sidebar Session Sub-item per open session, labeled by stable ordinal", () => {
+		render(SidebarProjectListItem, baseProps({ sessions }));
+
+		expect(screen.getByText("Session 1")).toBeInTheDocument();
+		expect(screen.getByText("Session 2")).toBeInTheDocument();
+	});
+
+	it("clicking a sub-item calls onSwitchSession with that session's tab id", async () => {
+		const onSwitchSession = vi.fn();
+		render(SidebarProjectListItem, baseProps({ sessions, onSwitchSession }));
+
+		await fireEvent.click(screen.getByText("Session 2"));
+
+		expect(onSwitchSession).toHaveBeenCalledWith("tab-2");
+	});
+
+	it("Menu has no 'Close terminal' item (closing is per sub-item, not project-scoped, when grouped)", async () => {
+		render(SidebarProjectListItem, baseProps({ sessions }));
+
+		await fireEvent.click(screen.getByRole("button", { name: "More actions for my-project" }));
+
+		expect(screen.queryByRole("menuitem", { name: "Close terminal" })).toBeNull();
+	});
+
+	it("Menu's 'Open in new tab' still works (adds another session to the group)", async () => {
+		const onForceNewTab = vi.fn();
+		render(SidebarProjectListItem, baseProps({ sessions, onForceNewTab }));
+
+		await fireEvent.click(screen.getByRole("button", { name: "More actions for my-project" }));
+		await fireEvent.click(screen.getByRole("menuitem", { name: "Open in new tab" }));
+
+		expect(onForceNewTab).toHaveBeenCalledOnce();
+	});
+});
+
+describe("SidebarProjectListItem — Menu (right-click context + overflow anchored)", () => {
+	it("right-click opens a context menu with Open in new tab / Edit / Delete", async () => {
+		render(SidebarProjectListItem, baseProps());
+
+		await fireEvent.contextMenu(screen.getByText("my-project"));
+
+		expect(screen.getByRole("menuitem", { name: "Open in new tab" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Edit" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+	});
+
+	it("right-click does not itself call onOpen (no accidental left-click behavior)", async () => {
+		const onOpen = vi.fn();
+		render(SidebarProjectListItem, baseProps({ onOpen }));
+
+		await fireEvent.contextMenu(screen.getByText("my-project"));
+
+		expect(onOpen).not.toHaveBeenCalled();
+	});
+
+	it("the overflow '⋮' button opens the identical menu (anchored variant)", async () => {
+		render(SidebarProjectListItem, baseProps());
+
+		await fireEvent.click(screen.getByRole("button", { name: "More actions for my-project" }));
+
+		expect(screen.getByRole("menuitem", { name: "Open in new tab" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Edit" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+	});
+
+	it("selecting 'Open in new tab' calls onForceNewTab, not onOpen", async () => {
+		const onOpen = vi.fn();
+		const onForceNewTab = vi.fn();
+		render(SidebarProjectListItem, baseProps({ onOpen, onForceNewTab }));
+
+		await fireEvent.contextMenu(screen.getByText("my-project"));
+		await fireEvent.click(screen.getByRole("menuitem", { name: "Open in new tab" }));
+
+		expect(onForceNewTab).toHaveBeenCalledOnce();
+		expect(onOpen).not.toHaveBeenCalled();
+	});
+
+	it("selecting Edit/Delete from the menu calls the respective callback", async () => {
+		const onEdit = vi.fn();
+		render(SidebarProjectListItem, baseProps({ onEdit }));
+
+		await fireEvent.contextMenu(screen.getByText("my-project"));
+		await fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+
+		expect(onEdit).toHaveBeenCalledOnce();
+	});
+
+	it("the overflow button click does not bubble into the row's own left-click handler", async () => {
+		const onOpen = vi.fn();
+		render(SidebarProjectListItem, baseProps({ onOpen }));
+
+		await fireEvent.click(screen.getByRole("button", { name: "More actions for my-project" }));
+
+		expect(onOpen).not.toHaveBeenCalled();
+	});
+
+	it("clicking outside closes an open menu", async () => {
+		render(SidebarProjectListItem, baseProps());
+		await fireEvent.contextMenu(screen.getByText("my-project"));
+		await flush();
+
+		const outside = document.createElement("div");
+		document.body.appendChild(outside);
+		await fireEvent.click(outside);
+
+		expect(screen.queryByRole("menu")).toBeNull();
+		document.body.removeChild(outside);
+	});
+});
