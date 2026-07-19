@@ -161,11 +161,22 @@
 			ondragleave={handleDragLeave}
 			ondrop={(e) => handleDrop(e, node.sessionId)}
 		>
-			<TerminalPane
-				sessionId={node.sessionId}
-				focused={node.sessionId === focusedPaneId}
-				onFocus={() => onFocusPane(node.sessionId)}
-			/>
+			<!-- Keyed by sessionId: this leaf isn't inside a keyed {#each} (only
+			     split children are), so without this key, switching to a
+			     different single-pane tab would reuse the same TerminalPane
+			     instance instead of remounting it — its onMount-time PTY output
+			     subscription and xterm.js Terminal are only ever created once,
+			     so a reused instance would keep showing/writing to the OLD
+			     session forever, and its focus $effect wouldn't refire if
+			     `focused` happened to stay `true` across the switch (verified
+			     via a render/rerender repro before this fix). -->
+			{#key node.sessionId}
+				<TerminalPane
+					sessionId={node.sessionId}
+					focused={node.sessionId === focusedPaneId}
+					onFocus={() => onFocusPane(node.sessionId)}
+				/>
+			{/key}
 			<div class="pane-toolbar">
 				<button aria-label="Split right" onclick={() => onSplitPane(node.sessionId, "row")}>⬌</button>
 				<button aria-label="Split down" onclick={() => onSplitPane(node.sessionId, "column")}>⬍</button>
