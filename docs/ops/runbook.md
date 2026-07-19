@@ -116,6 +116,15 @@ There's no "site down" here — the closest equivalents:
 - **Log locations:** none configured — the app doesn't currently write logs to a file. Errors surface in-app (pane status → `error`, with a message), or via `console.error` calls in the terminal-pane code visible in the WebKitGTK inspector — but the `devtools` Tauri feature is intentionally **not** enabled for release builds: this app keeps the unlock password in a plain reactive store for the session (`appStore.password`), and an always-available inspector would let anyone with local access to a running unlocked instance read it straight out of memory, defeating FR-06's encryption-at-rest guarantee. Use `npm run tauri dev` (which has devtools by default) when you need to inspect the console. There's no persistent log to grep after the fact either way — a gap, see §9.
 - **Version check:** `dpkg -s terminal-navigator | grep Version` shows what's currently installed.
 
+- **Uninstall:**
+  ```bash
+  sudo apt remove terminal-navigator
+  ```
+  (or `sudo dpkg -r terminal-navigator`). This removes the binary and desktop launcher entry only — it does **not** touch your project data at `~/.local/share/com.dennysetiawisnugraha.terminal-navigator/projects.enc`, since that's user data, not part of the package. Reinstalling later picks the project list back up automatically. For a full wipe including data, **export first** (§4), then:
+  ```bash
+  rm -rf ~/.local/share/com.dennysetiawisnugraha.terminal-navigator
+  ```
+
 ## 8. Monitoring & alerts
 
 Not applicable — this is a local desktop app with a single user (yourself), not a hosted service with uptime to watch. The nearest equivalent (visible-error-surfacing) is already handled in-app via pane error status, not by a separate monitoring layer.
