@@ -228,6 +228,10 @@
 			This replaces <strong>all</strong> projects currently in Terminal Navigator with the contents
 			of the selected file (ADR-0008 — import is replace, not merge). This cannot be undone.
 		</p>
+		<p>
+			Imported projects' setup commands will run automatically the next time their terminal opens
+			— only import files from sources you trust.
+		</p>
 	{/snippet}
 	{#snippet footer()}
 		<Button variant="secondary" onclick={() => (pendingImportSource = undefined)}>Cancel</Button>

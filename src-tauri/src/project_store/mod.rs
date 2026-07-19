@@ -130,6 +130,16 @@ impl ProjectStore {
         let (nonce, ciphertext) = crypto::encrypt(&self.key, &plaintext)?;
         let envelope = build_envelope(&self.salt, &nonce, &ciphertext);
         std::fs::write(&self.data_file, envelope)?;
+        // Security audit 2026-07-20, M3: restrict the encrypted data file to
+        // owner-only — otherwise it's written with the OS default/umask
+        // permissions (typically world-readable), letting any other local
+        // user copy the ciphertext out for unlimited offline password
+        // cracking, unconstrained by this app's own protections.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.data_file, std::fs::Permissions::from_mode(0o600))?;
+        }
         Ok(())
     }
 }
@@ -191,6 +201,22 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
         assert!(store.list().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_file_is_restricted_to_owner_only() {
+        // Regression test, security audit 2026-07-20 (M3): the encrypted
+        // data file must not be left at the OS-default/umask permissions
+        // (typically world-readable) — anyone else with local access could
+        // otherwise copy the ciphertext out for unlimited offline cracking.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        ProjectStore::unlock(data_file.clone(), "pw").unwrap();
+
+        let mode = std::fs::metadata(&data_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "data file must be owner-read/write only, got {mode:o}");
     }
 
     #[test]

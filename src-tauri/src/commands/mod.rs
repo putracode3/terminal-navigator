@@ -160,6 +160,11 @@ pub fn split_pane(
     cwd: String,
     state: State<AppState>,
 ) -> Result<(), AppError> {
+    // Security audit 2026-07-20, M1: this command doesn't otherwise touch
+    // `state.store` (it needs no project data), so without this check it
+    // was the one command that could spawn a real shell before the app was
+    // ever unlocked — every other stateful command already gates on this.
+    state.store.lock().unwrap().as_ref().ok_or_else(AppError::locked)?;
     let session_id = parse_uuid(&session_id)?;
     let event_name = output_event_name(session_id);
     state

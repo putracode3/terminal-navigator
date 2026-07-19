@@ -24,6 +24,18 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data directory");
             std::fs::create_dir_all(&data_dir).expect("failed to create app data directory");
+            // Security audit 2026-07-20, M3: restrict the directory holding
+            // the encrypted project data to owner-only. Without this, the
+            // directory (and the data file inside it) end up with whatever
+            // permissions the OS default/umask gives — this app shouldn't
+            // rely on an ancestor directory happening to be locked down.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) = std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o700)) {
+                    eprintln!("warning: failed to restrict app data directory permissions: {e}");
+                }
+            }
 
             app.manage(AppState {
                 store: Mutex::new(None),
