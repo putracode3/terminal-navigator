@@ -79,8 +79,14 @@ import TerminalPane from "./TerminalPane.svelte";
 import { Terminal } from "@xterm/xterm";
 import { settingsStore } from "$lib/stores/settings.svelte";
 import { DEFAULT_KEYBINDINGS } from "$lib/keybindings";
+import { __resetTerminalRegistryForTests } from "$lib/terminal-registry";
 
 beforeEach(() => {
+	// This suite reuses the literal sessionId "s1" across almost every test —
+	// the registry is a module-level singleton (by design, see
+	// terminal-registry.ts), so without this reset, test #2 would silently
+	// "reuse" test #1's mock handle instead of creating a fresh one.
+	__resetTerminalRegistryForTests();
 	settingsStore.themePreset = "app-default";
 	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
 	termInstance.options = {};

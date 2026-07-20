@@ -5,6 +5,7 @@
 	import { closeTerminal, splitPane as splitPaneApi, openTerminal, errorMessage } from "$lib/api";
 	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { matchesCombo } from "$lib/keybindings";
+	import { disposeTerminalHandle } from "$lib/terminal-registry";
 
 	async function handleClosePane(tabId: string, sessionId: string) {
 		const { closedSessionIds } = terminalStore.closePane(tabId, sessionId);
@@ -14,6 +15,11 @@
 			} catch {
 				// Session may already be gone.
 			}
+			// The session is genuinely gone now (or never existed) — this is the
+			// one place its xterm.js Terminal/scrollback/PTY subscriptions
+			// actually get torn down, not <TerminalPane>'s own onDestroy (which
+			// fires on harmless remounts too — see $lib/terminal-registry).
+			disposeTerminalHandle(id);
 		}
 	}
 

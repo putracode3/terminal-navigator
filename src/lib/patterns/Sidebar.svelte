@@ -18,6 +18,7 @@
 		errorMessage,
 		type ProjectDto,
 	} from "$lib/api";
+	import { disposeTerminalHandle } from "$lib/terminal-registry";
 
 	let {
 		onOpenProject,
@@ -88,6 +89,7 @@
 			} catch {
 				// Session may already be gone; closing still proceeds either way.
 			}
+			disposeTerminalHandle(sessionId);
 		}
 	}
 

@@ -66,11 +66,18 @@ import TerminalArea from "./TerminalArea.svelte";
 import { terminalStore } from "$lib/stores/terminal.svelte";
 import { settingsStore } from "$lib/stores/settings.svelte";
 import { DEFAULT_KEYBINDINGS } from "$lib/keybindings";
+import { __resetTerminalRegistryForTests } from "$lib/terminal-registry";
 
 const flush = () => new Promise((r) => setTimeout(r, 10));
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Real sessionIds here come from crypto.randomUUID() (openTab/splitPane),
+	// so they won't collide across tests — but every session opened in one
+	// test still leaks into the registry (a module-level singleton) unless a
+	// test explicitly closes it, so reset explicitly rather than relying on
+	// that coincidence.
+	__resetTerminalRegistryForTests();
 	splitPaneApiMock.mockResolvedValue(undefined);
 	instances = [];
 	terminalStore.tabs = [];
@@ -295,21 +302,22 @@ describe("TerminalArea — regression: splitting a tab's only pane used to remou
 	});
 });
 
-// KNOWN GAP — not fixed in this pass, tracked as a follow-up: splitting a pane
-// *perpendicular* to its parent split's existing direction (when the tab
-// already has 2+ panes) still remounts the pane being split, because
-// terminal.svelte.ts's insertNode wraps it in a brand-new split node with a
-// fresh random id — that new id becomes the each-block key at that position,
-// so Svelte can't tell it's "the same slot, now nested" the way it can for
-// the root leaf→split case above (fixed). This is a different, harder fix
-// (needs key continuity across a node being wrapped in a new ancestor, not
-// just an array growing) and wasn't what was reported — the user's "the
-// *other* terminal loses scroll" phrasing matches only the root case, where
-// an unrelated pre-existing pane is affected, not the one actually being
-// split. Left as `.skip` (not `.todo`) since it has real, verified
-// assertions — flip to `it(...)` once it's actually fixed.
-describe("TerminalArea — KNOWN GAP: perpendicular split on an already-split tab still remounts the split target", () => {
-	it.skip("does not recreate the target pane's xterm.js Terminal when split perpendicular to its parent's direction", async () => {
+// Was a KNOWN GAP: splitting a pane *perpendicular* to its parent split's
+// existing direction (when the tab already has 2+ panes) used to remount the
+// pane being split, because terminal.svelte.ts's insertNode wraps it in a
+// brand-new split node with a fresh random id — that new id becomes the
+// each-block key at that position, so no amount of {#each} keying could tell
+// Svelte "this is the same slot, now nested" (unlike the root leaf→split
+// case above, fixable with a keying trick precisely because that leaf's key
+// never left its {#each} block's key space). Fixed not by trying to make
+// Svelte preserve the component instance across a restructuring it
+// fundamentally can't diff across, but by making the (still-happening)
+// remount harmless: the actual xterm.js Terminal/scrollback/PTY
+// subscriptions now live in $lib/terminal-registry, keyed by session id,
+// independent of which <TerminalPane> instance currently renders them — see
+// that file's own doc comment for the full reasoning.
+describe("TerminalArea — perpendicular split on an already-split tab reuses the split target's terminal", () => {
+	it("does not create a new xterm.js Terminal for the target pane when split perpendicular to its parent's direction", async () => {
 		render(TerminalArea);
 		const tab = terminalStore.openTab("proj-a", "a", "/a");
 		await flush();
@@ -321,7 +329,19 @@ describe("TerminalArea — KNOWN GAP: perpendicular split on an already-split ta
 		terminalStore.splitPane(tab.id, idB, "column", "/c"); // perpendicular to the existing row split
 		await flush();
 
-		expect(instances).toHaveLength(3); // currently fails: creates 2 new instances, not 1
-		expect(instanceB.dispose).not.toHaveBeenCalled(); // currently fails: B is disposed and remounted
+		expect(instances).toHaveLength(3); // only C (genuinely new) gets a new Terminal
+		expect(instanceB.dispose).not.toHaveBeenCalled(); // B's terminal is reused, not torn down
+
+		// The real risk this fix could have introduced: a naive "just don't
+		// dispose on unmount" change would leave B's *second* mount registering
+		// a second `pty://output`/`pty://exit` subscription on top of the
+		// first — since `listen()` (unlike xterm's single-slot custom-handler
+		// hooks) is a genuine multiple-subscriber event system, that would
+		// silently double-render every byte of B's output. Must stay exactly 1
+		// each, not 2, across the remount.
+		const outputSubscriptions = listenMock.mock.calls.filter(([name]) => name === `pty://output/${idB}`);
+		const exitSubscriptions = listenMock.mock.calls.filter(([name]) => name === `pty://exit/${idB}`);
+		expect(outputSubscriptions).toHaveLength(1);
+		expect(exitSubscriptions).toHaveLength(1);
 	});
 });

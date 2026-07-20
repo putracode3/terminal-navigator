@@ -10,6 +10,7 @@
 	import { getThemePreset } from "$lib/theme-presets";
 	import { matchesCombo } from "$lib/keybindings";
 	import { settingsStore } from "$lib/stores/settings.svelte";
+	import { getTerminalHandle, registerTerminalHandle, type TerminalHandle } from "$lib/terminal-registry";
 
 	let {
 		sessionId,
@@ -39,50 +40,33 @@
 	let containerEl: HTMLDivElement | undefined = $state();
 	let term: Terminal | undefined;
 	let fitAddon: FitAddon | undefined;
+	/** The session's persistent resources (xterm.js `Terminal`, its
+	 *  scrollback, its PTY subscriptions) — created once per session id, then
+	 *  reused across any number of `<TerminalPane>` remounts. See
+	 *  `$lib/terminal-registry`'s own doc comment for why this indirection
+	 *  exists at all: some tree restructurings (a perpendicular split on an
+	 *  already-split tab, a drag-to-split graft) force Svelte to destroy and
+	 *  recreate this component even though the underlying shell session never
+	 *  closed, and no amount of `{#each}` keying can prevent that — the
+	 *  restructuring moves the leaf's key into an `{#each}` block that didn't
+	 *  exist a moment ago. */
+	let handle: TerminalHandle | undefined;
 	/** FR-13 follow-up (terminal.zoomIn/zoomOut, architecture.md §5.6):
-	 *  per-pane, not persisted. Falls out naturally from where the keyboard
-	 *  handler already lives — `attachCustomKeyEventHandler` only fires for
-	 *  whichever pane actually has focus, so zoom is inherently per-pane with
-	 *  no extra coordination needed; Ctrl+Scroll is separately hover-scoped
-	 *  (a wheel listener on this pane's own container), independent of
-	 *  keyboard focus, same as how wheel scrolling works anywhere else.
-	 *  Ephemeral by design (resets on next launch) — consistent with
-	 *  appStore.sidebarHidden also not persisting, unlike the theme preset,
-	 *  which does (settingsStore/settings_store). */
+	 *  per-*session* (via `handle.fontSize`, so it survives the remounts
+	 *  above the same way scrollback does), not persisted across app
+	 *  restarts. Falls out naturally from where the keyboard handler already
+	 *  lives — `attachCustomKeyEventHandler` only fires for whichever pane
+	 *  actually has focus, so zoom is inherently per-pane with no extra
+	 *  coordination needed; Ctrl+Scroll is separately hover-scoped (a wheel
+	 *  listener on this pane's own container), independent of keyboard focus,
+	 *  same as how wheel scrolling works anywhere else. Ephemeral-across-
+	 *  restarts by design — consistent with appStore.sidebarHidden also not
+	 *  persisting, unlike the theme preset, which does
+	 *  (settingsStore/settings_store). */
 	const FONT_SIZE_MIN = 8;
 	const FONT_SIZE_MAX = 32;
 	const FONT_SIZE_STEP = 1;
 	let fontSize = 13;
-	let unlisten: (() => void) | undefined;
-	let unlistenExit: (() => void) | undefined;
-	let resizeObserver: ResizeObserver | undefined;
-	/** Serializes this pane's writes to the backend: `invoke()` calls are
-	 *  independent, concurrent IPC round-trips with no ordering guarantee
-	 *  between them (Tauri dispatches sync commands onto a thread pool), so
-	 *  firing one per keystroke without sequencing lets fast typing arrive at
-	 *  the PTY out of order — the root cause of the "garbled input" bug.
-	 *  Chaining every write onto this promise ensures at most one
-	 *  `writeTerminal` call for this pane is ever in flight, so the next
-	 *  keystroke's write only starts once the previous one has actually
-	 *  completed, preserving keystroke order.
-	 *
-	 *  It starts unresolved, not `Promise.resolve()`: the PTY is opened at a
-	 *  hardcoded default size (80x24, pty_manager::spawn) and only resized to
-	 *  this pane's real dimensions by an async `resizeTerminal` call after the
-	 *  first fit(). In a fast (release) build the terminal can already be
-	 *  focused and accepting keystrokes before that resize round-trip lands,
-	 *  so the shell edits its input line believing a column width that
-	 *  doesn't match what xterm.js is actually rendering — every subsequent
-	 *  cursor-position escape sequence the shell sends (e.g.
-	 *  zsh-autosuggestions' redraw-on-keystroke) then lands in the wrong
-	 *  place. This queue holds every keystroke until the first resize is
-	 *  confirmed applied, closing that window without delaying how soon the
-	 *  pane visually looks focused/ready. */
-	let writeQueue: Promise<void>;
-	let markInitialResizeDone: () => void;
-	writeQueue = new Promise((resolve) => {
-		markInitialResizeDone = resolve;
-	});
 
 	function cssVar(name: string): string {
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -95,10 +79,11 @@
 	 *  does (reportResize, inside onMount) — the shell needs to know its
 	 *  dimensions actually changed. */
 	function applyZoom(delta: number) {
-		if (!term || !fitAddon) return;
+		if (!term || !fitAddon || !handle) return;
 		const next = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, fontSize + delta));
 		if (next === fontSize) return;
 		fontSize = next;
+		handle.fontSize = next;
 		term.options.fontSize = fontSize;
 		fitAddon.fit();
 		resizeTerminal(sessionId, term.rows, term.cols).catch((err) =>
@@ -106,35 +91,102 @@
 		);
 	}
 
+	/** Serializes a write onto the session's (not just this component
+	 *  instance's) write queue — shared by typed input (onData) and a
+	 *  Ctrl+Shift+V paste, so a paste can never race ahead of/behind
+	 *  keystrokes typed just before or after it, and so ordering survives a
+	 *  remount too (see `handle.writeQueue`'s own doc comment). */
+	function queueWrite(data: string) {
+		if (!handle) return;
+		handle.writeQueue = handle.writeQueue
+			.then(() => writeTerminal(sessionId, data))
+			.catch((err) => console.error(`writeTerminal(${sessionId}) failed:`, err));
+	}
 
 	onMount(() => {
-		term = new Terminal({
-			fontFamily: cssVar("--font-family-mono"),
-			fontSize,
-			// FR-13/design.md §4.5: a named preset's full Theme (background,
-			// foreground, cursor, cursorAccent, all 16 ANSI colors) — replaces
-			// the old partial CSS-var-derived object that left the ANSI palette
-			// as xterm's unspecified defaults.
-			theme: getThemePreset(settingsStore.themePreset).theme,
-		});
-		fitAddon = new FitAddon();
-		term.loadAddon(fitAddon);
+		const existing = getTerminalHandle(sessionId);
 
-		try {
-			term.loadAddon(new WebglAddon());
-		} catch {
-			// ADR-0006 / architecture.md §9 risk 2: fall back to the default
-			// renderer if WebGL context creation fails on this system.
+		if (!existing) {
+			const newTerm = new Terminal({
+				fontFamily: cssVar("--font-family-mono"),
+				fontSize,
+				// FR-13/design.md §4.5: a named preset's full Theme (background,
+				// foreground, cursor, cursorAccent, all 16 ANSI colors) —
+				// replaces the old partial CSS-var-derived object that left the
+				// ANSI palette as xterm's unspecified defaults.
+				theme: getThemePreset(settingsStore.themePreset).theme,
+			});
+			const newFitAddon = new FitAddon();
+			newTerm.loadAddon(newFitAddon);
+
+			try {
+				newTerm.loadAddon(new WebglAddon());
+			} catch {
+				// ADR-0006 / architecture.md §9 risk 2: fall back to the default
+				// renderer if WebGL context creation fails on this system.
+			}
+
+			// A floating container, not `containerEl` itself: `term.open()` is
+			// only ever called once, here, at creation. Every mount (this one
+			// included) re-parents this same element into its own `containerEl`
+			// via a plain `appendChild` below — see terminal-registry.ts.
+			const wrapperEl = document.createElement("div");
+			wrapperEl.style.height = "100%";
+			wrapperEl.style.width = "100%";
+			newTerm.open(wrapperEl);
+
+			let markInitialResizeDone: () => void = () => {};
+			const initialWriteQueue = new Promise<void>((resolve) => {
+				markInitialResizeDone = resolve;
+			});
+
+			const newHandle: TerminalHandle = {
+				term: newTerm,
+				fitAddon: newFitAddon,
+				wrapperEl,
+				unlistenOutput: () => {},
+				unlistenExit: () => {},
+				// Calls through `reportResize` field, not a closure over this
+				// specific mount's `reportResize` function — see that field's
+				// own doc comment in terminal-registry.ts for why.
+				resizeObserver: new ResizeObserver(() => newHandle.reportResize()),
+				writeQueue: initialWriteQueue,
+				markInitialResizeDone,
+				initialResizeDone: false,
+				fontSize,
+				reportResize: () => {}, // overwritten below on every mount
+			};
+			handle = newHandle;
+			registerTerminalHandle(sessionId, handle);
+
+			newTerm.onData((data) => queueWrite(data));
+
+			listen<string>(`pty://output/${sessionId}`, (event) => {
+				getTerminalHandle(sessionId)?.term.write(event.payload);
+			}).then((fn) => {
+				const h = getTerminalHandle(sessionId);
+				if (h) h.unlistenOutput = fn;
+			});
+
+			// No payload: the shell's end of the pty just closed on its own (the
+			// user typed `exit`, the shell crashed, etc.) — there's no more
+			// output coming and nothing to replay, so react exactly as if the
+			// user had clicked this pane's own "Close pane" button.
+			listen(`pty://exit/${sessionId}`, () => {
+				onExit();
+			}).then((fn) => {
+				const h = getTerminalHandle(sessionId);
+				if (h) h.unlistenExit = fn;
+			});
+		} else {
+			handle = existing;
 		}
 
-		/** Serializes a write onto `writeQueue` — shared by typed input
-		 *  (onData below) and a Ctrl+Shift+V paste, so a paste can never race
-		 *  ahead of/behind keystrokes typed just before or after it. */
-		function queueWrite(data: string) {
-			writeQueue = writeQueue
-				.then(() => writeTerminal(sessionId, data))
-				.catch((err) => console.error(`writeTerminal(${sessionId}) failed:`, err));
-		}
+		term = handle.term;
+		fitAddon = handle.fitAddon;
+		fontSize = handle.fontSize;
+
+		if (containerEl) containerEl.appendChild(handle.wrapperEl);
 
 		// Ctrl+C/Ctrl+V are already SIGINT and (in most shells) a no-op-ish
 		// paste-via-bracketed-paste is not universal, so this app defaults to
@@ -215,20 +267,20 @@
 			return false;
 		});
 
-		if (containerEl) term.open(containerEl);
-
-		// Do NOT call fitAddon.fit() synchronously here: term.open() just
-		// inserted the terminal's DOM into a freshly-mounted container whose
+		// Do NOT call fitAddon.fit() synchronously here: on first creation,
+		// `term.open()` just inserted the terminal's DOM into a wrapper whose
 		// flex-computed size may not have been laid out by the browser yet
 		// (this is a well-documented xterm.js FitAddon race, independent of
-		// any font-loading concern). Measuring too early yields an
-		// under-sized cols/rows that then never gets corrected — the visible
-		// symptom is a terminal that renders smaller than its pane, with
-		// empty space around it. A double requestAnimationFrame guarantees at
-		// least one full layout+paint pass has completed first: the browser
-		// always recalculates layout before running rAF callbacks, and a
-		// callback scheduled from inside one rAF is guaranteed to run in the
-		// *next* frame, after that frame's own layout is done.
+		// any font-loading concern) — and on a reused handle, `containerEl`
+		// was just as freshly mounted, same concern. Measuring too early
+		// yields an under-sized cols/rows that then never gets corrected —
+		// the visible symptom is a terminal that renders smaller than its
+		// pane, with empty space around it. A double requestAnimationFrame
+		// guarantees at least one full layout+paint pass has completed first:
+		// the browser always recalculates layout before running rAF
+		// callbacks, and a callback scheduled from inside one rAF is
+		// guaranteed to run in the *next* frame, after that frame's own
+		// layout is done.
 		//
 		// `active` gates this the same way it gates the focus effect below:
 		// TerminalArea.svelte backgrounds a tab via `display: none`, which
@@ -244,45 +296,38 @@
 		// notification for the real size, by which point `active` is already
 		// true again.
 		function reportResize() {
-			if (!fitAddon || !term || !active) return;
+			if (!fitAddon || !term || !active || !handle) return;
 			fitAddon.fit();
 			resizeTerminal(sessionId, term.rows, term.cols)
 				.catch((err) => console.error(`resizeTerminal(${sessionId}) failed:`, err))
-				.finally(markInitialResizeDone);
+				.finally(() => {
+					// Only relevant once, right after this session's very first
+					// resize — a reused handle resolved this long ago.
+					if (handle && !handle.initialResizeDone) {
+						handle.initialResizeDone = true;
+						handle.markInitialResizeDone();
+					}
+				});
 		}
+
+		// Every mount overwrites this — see the field's own doc comment.
+		handle.reportResize = reportResize;
 
 		requestAnimationFrame(() => {
 			requestAnimationFrame(reportResize);
 		});
 
-		term.onData((data) => queueWrite(data));
-
-		listen<string>(`pty://output/${sessionId}`, (event) => {
-			term?.write(event.payload);
-		}).then((fn) => {
-			unlisten = fn;
-		});
-
-		// No payload: the shell's end of the pty just closed on its own (the
-		// user typed `exit`, the shell crashed, etc.) — there's no more
-		// output coming and nothing to replay, so react exactly as if the
-		// user had clicked this pane's own "Close pane" button.
-		listen(`pty://exit/${sessionId}`, () => {
-			onExit();
-		}).then((fn) => {
-			unlistenExit = fn;
-		});
-
-		resizeObserver = new ResizeObserver(reportResize);
-		if (containerEl) resizeObserver.observe(containerEl);
+		handle.resizeObserver.disconnect();
+		if (containerEl) handle.resizeObserver.observe(containerEl);
 	});
 
-	onDestroy(() => {
-		unlisten?.();
-		unlistenExit?.();
-		resizeObserver?.disconnect();
-		term?.dispose();
-	});
+	// Deliberately does NOT unsubscribe/dispose anything — this component can
+	// be destroyed for reasons that have nothing to do with the session
+	// actually closing (see `handle`'s own doc comment above, and
+	// `$lib/terminal-registry`). Real teardown happens exactly once, via
+	// `disposeTerminalHandle`, called by whichever code path just confirmed
+	// the session's shell process is genuinely gone.
+	onDestroy(() => {});
 
 	$effect(() => {
 		if (focused && active) term?.focus();
