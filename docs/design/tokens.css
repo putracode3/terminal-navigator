@@ -1,4 +1,4 @@
-/* Design Tokens — Terminal Navigator — generated 2026-07-17
+/* Design Tokens — Terminal Navigator — generated 2026-07-17, updated 2026-07-20 (v1.5: primary color violet → green)
    Canonical token layer. tokens.json mirrors this file.
    Dark-only theme (see design.md §3 — light mode is out of scope for MVP). */
 
@@ -13,13 +13,13 @@
   --white-90: #E4E7EC;  /* primary text */
   --white-60: #8B92A3;  /* secondary/muted text */
 
-  --violet-500: #7C5CFF; /* decorative gradient stop — NEVER carries text */
-  --violet-600: #6845E0; /* solid interactive primary */
-  --violet-700: #5636B8; /* primary hover */
-  --violet-800: #452A93; /* primary active/pressed */
-  --pink-500: #FF6B9D;   /* decorative gradient stop — NEVER carries text */
+  --green-500: #3EDA49; /* decorative gradient stop — NEVER carries text */
+  --green-600: #16741C; /* solid interactive primary */
+  --green-700: #125E17; /* primary hover */
+  --green-800: #0C4010; /* primary active/pressed */
+  --cyan-500: #36B4E2;  /* decorative gradient stop — NEVER carries text */
 
-  --emerald-500: #34D399; /* security/encrypted accent */
+  --emerald-500: #34D399; /* security/encrypted accent — deliberately a different green (teal-spring, ~158° hue, high L/S) from --green-600's grass green (~124° hue, darker) so "primary action" and "protected/encrypted" never collapse into one signal; see design.md §3 */
   --emerald-950: #0F2A20; /* security subtle background */
 
   --amber-500: #FBBF24;  /* warning */
@@ -55,10 +55,10 @@
   --color-on-primary: #FFFFFF;
   --color-on-security: #FFFFFF;
 
-  --color-primary: var(--violet-600);
-  --color-primary-hover: var(--violet-700);
-  --color-primary-active: var(--violet-800);
-  --color-accent-gradient: linear-gradient(135deg, var(--violet-500), var(--pink-500));
+  --color-primary: var(--green-600);
+  --color-primary-hover: var(--green-700);
+  --color-primary-active: var(--green-800);
+  --color-accent-gradient: linear-gradient(135deg, var(--green-500), var(--cyan-500));
 
   --color-security: var(--emerald-500);
   --color-security-bg-subtle: var(--emerald-950);
@@ -67,9 +67,9 @@
   --color-danger: var(--red-500);
   --color-danger-bg-subtle: var(--red-950);
 
-  --color-focus: var(--violet-600);
+  --color-focus: var(--green-600);
   --color-backdrop: rgba(13, 15, 20, 0.7); /* composited from --color-background at 70% */
-  --color-primary-bg-subtle: rgba(104, 69, 224, 0.18); /* violet-600 at 18% — drop-zone fill, drag affordances */
+  --color-primary-bg-subtle: rgba(22, 116, 28, 0.18); /* green-600 at 18% — drop-zone fill, drag affordances */
 
   /* ── Tier 2: Semantic — Typography scale ─────────────────
      Modular scale, ratio ~1.2, rounded to practical pixel
@@ -118,7 +118,7 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
-  --shadow-glow-primary: 0 0 24px rgba(124, 92, 255, 0.25);
+  --shadow-glow-primary: 0 0 24px rgba(62, 218, 73, 0.25);
 
   /* ── Tier 2: Semantic — Motion ────────────────────────────*/
   --duration-fast: 120ms;

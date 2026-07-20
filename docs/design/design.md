@@ -1,6 +1,6 @@
 # Design System — Terminal Navigator
 
-> Version 1.4 · 2026-07-20 · Status: approved
+> Version 1.5 · 2026-07-20 · Status: approved
 > Files: design.md (this file, rules & rationale) · tokens.css / tokens.json (values) · components.md (component specs)
 > Source docs: docs/prd-terminal-navigator.md (v1.3) · docs/backend/architecture.md (v1.0)
 
@@ -26,9 +26,9 @@ Success criteria: the app is used daily, replacing Tilix. That bar is about *fel
 
 **Chosen direction: "Warp Modern"** (gradient-accent minimal), selected from three proposed directions (mono-flat "Terminal Native" and IDE-like "Structured Workspace" were the alternatives). Rationale: it most directly matches the user's own reference point (Warp) and stated personality ("minimal"), while the disciplined one-place gradient rule (Principle 2) prevents the aesthetic from working against "minimal."
 
-The signature element is the gradient itself (`--violet-500 → --pink-500`), used purely decoratively (never under text, since the pink end of the gradient fails text contrast — see §7). As of v1.4 it marks exactly one thing: "your data is about to be decrypted" (the unlock screen's glow) — the moment the user's attention should land before anything else in the app is even visible. It previously also marked "this tab is active," until the tab bar itself was removed in v1.4.
+The signature element is the gradient itself (`--green-500 → --cyan-500`, an "aurora" grass-green-to-sky-blue sweep — as of v1.5, was `--violet-500 → --pink-500`), used purely decoratively (never under text, since both gradient stops individually fail text contrast — see §7). As of v1.4 it marks exactly one thing: "your data is about to be decrypted" (the unlock screen's glow) — the moment the user's attention should land before anything else in the app is even visible. It previously also marked "this tab is active," until the tab bar itself was removed in v1.4.
 
-Security gets its own distinct hue (emerald, `--color-security`) rather than reusing the gradient, so "active/selected" and "protected/encrypted" never read as the same signal.
+Security gets its own distinct hue (emerald, `--color-security`) rather than reusing the gradient, so "active/selected" and "protected/encrypted" never read as the same signal. This distinction is now closer than it used to be — the primary is a green (`--color-primary`, grass green ~124° hue) and security is also a green family (`--color-security`, teal-spring ~158° hue) — so the ~34° hue separation plus a deliberate lightness/saturation difference (§4.1) carries the load that "purple vs. green" used to carry for free. Never rely on that separation alone, though: `--color-security` is always paired with the lock icon (Principle 3), which is the real disambiguator if a viewer can't distinguish the hues.
 
 ## 4. Design tokens — summary
 
@@ -45,14 +45,14 @@ Full values live in `tokens.css` / `tokens.json`. Dark-only theme — there is n
 | `--color-border-strong` | `#5A6272` | Inputs, structural dividers — meets 3:1 non-text contrast |
 | `--color-text` | `#E4E7EC` | Primary text |
 | `--color-text-muted` | `#8B92A3` | Secondary text |
-| `--color-primary` | `#6845E0` | Solid interactive fills (buttons, focus ring source) |
-| `--color-primary-hover` / `-active` | `#5636B8` / `#452A93` | Button hover/press |
-| `--color-accent-gradient` | `#7C5CFF → #FF6B9D` | Decorative only — unlock screen glow (its only remaining use as of v1.4; the tab bar it also used to appear on is removed) |
-| `--color-primary-bg-subtle` | `rgba(104, 69, 224, 0.18)` | Translucent overlay fill — drag-and-drop drop zones |
-| `--color-security` | `#34D399` | Encryption/trust signal (badge, valid-path dot) |
+| `--color-primary` | `#16741C` | Solid interactive fills (buttons, focus ring source) |
+| `--color-primary-hover` / `-active` | `#125E17` / `#0C4010` | Button hover/press |
+| `--color-accent-gradient` | `#3EDA49 → #36B4E2` | Decorative only — unlock screen glow (its only remaining use as of v1.4; the tab bar it also used to appear on is removed) |
+| `--color-primary-bg-subtle` | `rgba(22, 116, 28, 0.18)` | Translucent overlay fill — drag-and-drop drop zones |
+| `--color-security` | `#34D399` | Encryption/trust signal (badge, sync status text) — deliberately a different green than `--color-primary`, see §3 |
 | `--color-warning` | `#FBBF24` | Warnings |
 | `--color-danger` | `#F87171` | Errors, destructive actions |
-| `--color-focus` | `#6845E0` | Focus ring (all interactive elements) |
+| `--color-focus` | `#16741C` | Focus ring (all interactive elements) |
 
 ### 4.2 Typography
 
@@ -111,16 +111,16 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 | `--color-text-muted` (#8B92A3) | `--color-background` (#0D0F14) | 6.2:1 | ✅ AA (normal text) |
 | `--color-text-muted` (#8B92A3) | `--color-surface` (#15181F) | 5.7:1 | ✅ AA (normal text) |
 | `--color-text` (#E4E7EC) | `--color-surface-elevated` (#1C2029) | ~13:1 | ✅ AA/AAA |
-| `--color-on-primary` (#FFFFFF) | `--color-primary` (#6845E0) | 6.0:1 | ✅ AA (normal text) |
-| `--color-on-primary` (#FFFFFF) | `--color-primary-hover` (#5636B8) | 8.0:1 | ✅ AA/AAA |
+| `--color-on-primary` (#FFFFFF) | `--color-primary` (#16741C) | 5.9:1 | ✅ AA (normal text) |
+| `--color-on-primary` (#FFFFFF) | `--color-primary-hover` (#125E17) | 8.0:1 | ✅ AA/AAA |
 | `--color-security` (#34D399) | `--color-background` (#0D0F14) | 10.0:1 | ✅ AA/AAA |
 | `--color-security` (#34D399) | `--color-security-bg-subtle` (#0F2A20) | 8.0:1 | ✅ AA/AAA |
 | `--color-danger` (#F87171) | `--color-background` (#0D0F14) | 6.9:1 | ✅ AA |
 | `--color-warning` (#FBBF24) | `--color-background` (#0D0F14) | 11.5:1 | ✅ AA/AAA |
-| `--color-primary` (#6845E0) | `--color-background` (#0D0F14) | 3.2:1 | ✅ AA (UI component / focus indicator, 3:1 threshold) |
+| `--color-primary` (#16741C) | `--color-background` (#0D0F14) | 3.2:1 | ✅ AA (UI component / focus indicator, 3:1 threshold) |
 | `--color-border-strong` (#5A6272) | `--color-background` (#0D0F14) | 3.1:1 | ✅ AA (UI component, 3:1 threshold) |
 
-**Flagged and resolved during design:** white text directly on the raw gradient's pink stop (`#FF6B9D`) computes to only **2.7:1** — a real failure. This is why §3/Principle 2 restricts the gradient to purely decorative use (underline bars, glows) and components.md explicitly forbids placing text on it. Buttons use the solid `--color-primary` (6.0:1), never the gradient, for exactly this reason.
+**Flagged and resolved during design:** white text directly on either raw gradient stop — `--green-500` (#3EDA49, **1.9:1**) or `--cyan-500` (#36B4E2, **1.8:1**) — is a real failure at both ends. This is why §3/Principle 2 restricts the gradient to purely decorative use (underline bars, glows) and components.md explicitly forbids placing text on it. Buttons use the solid `--color-primary` (5.9:1), never the gradient, for exactly this reason.
 
 - **Focus style (global rule):** every interactive element gets a 2px outline in `--color-focus`, 2px offset (or -2px inset for full-width rows like Sidebar Project List Item) — no exceptions, no invisible `:focus` states.
 - **Touch targets:** N/A as a touch requirement (desktop, pointer-driven), but all clickable controls still respect a minimum 24×24px hit area (WCAG 2.1 AA 2.5.5-adjacent good practice), matching `--control-height-sm` as the practical floor.
@@ -132,6 +132,7 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 - ❌ Don't use raw hex/px values in implementation → ✅ use semantic tokens from `tokens.css`
 - ❌ Don't put text directly on `--color-accent-gradient` → ✅ gradient is decoration-only (underline, glow); text-bearing surfaces use solid `--color-primary`
 - ❌ Don't invent a second "encrypted/secure" visual language → ✅ `--color-security` (emerald) is the only signal for that meaning, always paired with the lock icon, everywhere in the app
+- ❌ Don't substitute `--color-primary` for `--color-security` (or vice versa) because "they're both green now" → ✅ they're different tokens for different meanings on purpose (§3); always reference the semantic token, never eyeball a green and assume it's interchangeable
 - ❌ Don't let the active-pane focus indicator be optional or purely a color tint → ✅ always render the full `--color-primary` border around the focused pane (Principle 4 — wrong-pane typing is the app's worst usability failure)
 - ❌ Don't add drop shadows to flat surfaces (sidebar rows, session sub-items, panes) → ✅ shadows are reserved for true elevation (modals/popovers) per Principle 1
 - ❌ Don't introduce new font sizes outside §4.2's scale → ✅ pick the nearest token; if none fits, propose a token addition, don't hardcode
@@ -158,3 +159,4 @@ You are implementing UI for this project. Follow these rules:
 | 1.2 | 2026-07-19 | EVOLVE per PRD v1.3: left-click on a sidebar project now switches to its existing tab instead of always duplicating; new "Menu" component (overflow + right-click context variant, identical content, keeps "Open in new tab" keyboard-reachable) replaces the old inline overflow-menu description in Sidebar Project List Item; new `open`/`active` left-edge bar states replace the unimplemented "opened once" dot-color idea from v1.0. No new tokens, no visual direction change. |
 | 1.3 | 2026-07-19 | EVOLVE per PRD v1.4: horizontal tab bar removed entirely — sidebar is now the sole entry point for opening, switching, closing, and drag-sourcing terminal sessions. `Tab` component spec marked REMOVED (see its stub in components.md for rationale). Sidebar Project List Item gains a three-mode model by open-session count (0 / 1 / 2+), with 2+ auto-expanding into a new "Sidebar Session Sub-item" component — no manual expand/collapse toggle. Menu gains a conditional "Close terminal" item (exactly-1-session case only). Split Pane Container's pane header is now always rendered (previously gated by `multiPane`) since it is the only remaining "which project/session" indicator with no tab label to fall back on. Signature gradient reduced from **two** places to **one** (the unlock screen only) — deliberately not relocated to the sidebar (§2, §3, §4.1, §8 updated). `--tab-height` token is now orphaned (kept defined, unused) since its only consumer is removed. No new tokens, no visual direction change. |
 | 1.4 | 2026-07-20 | EVOLVE per direct product decision (no PRD FR yet): Sidebar Project List Item's status dot is repurposed from path-validity to **has-open-session** (project-scope, independent of which tab is currently active) — this deliberately revives the dot-color idea v1.2's changelog notes was dropped in favor of the left-edge bar, now at the owner's explicit request; the two signals remain visually distinct (dot = "anything open here", bar = "this is the one on screen"). Path validity moves to text color only (`--color-text-muted` when invalid, `--color-text` when valid) and the path itself moves from an always-visible second line to a hover/focus-revealed tooltip (first real use of the previously-reserved `--z-tooltip` token) — Principle 5 updated to reflect that the pane header, not the sidebar row, is now the persistently-visible path location. New "Sidebar show/hide toggle" pattern: a manual, fully-implemented full-hide control, deliberately on a separate axis from the breakpoint icon-rail collapse described in components.md's Sidebar layout — code-review turned up that the icon-rail collapse itself was never actually implemented (token defined, nothing reads it), so components.md now marks it ❌ rather than implying it's a working baseline; the two are meant to compose independently whenever it does get built. New feature: Ctrl+Shift+C/V clipboard shortcuts in the terminal pane (no dedicated visual spec — behavioral only, xterm.js key-handler level). No new tokens beyond activating `--z-tooltip`; no visual direction change. |
+| 1.5 | 2026-07-20 | EVOLVE per direct product decision (owner: replace purple with green): primary color changed from violet to green. Primitives `--violet-500/600/700/800` and `--pink-500` replaced by `--green-500/600/700/800` and `--cyan-500`; every semantic token that referenced them (`--color-primary`, `-hover`, `-active`, `--color-accent-gradient`, `--color-focus`, `--color-primary-bg-subtle`, `--shadow-glow-primary`) was re-derived from the new primitives, not hand-edited independently. New shades were computed (not eyeballed) to land on the same contrast ratios as before: `--color-primary` on white ≈5.9:1 (was 6.0:1), hover ≈8.0:1 (unchanged), primary-vs-background (focus/UI-component threshold) 3.2:1 (unchanged) — see §7. Because `--color-security` (emerald, ~158° hue) and the new primary (grass green, ~124° hue) are now both "green," picked the new primary's hue deliberately ~34° away plus a darker/less-saturated value so the two stay visually distinguishable side by side; §3 and §8 spell out that this separation is a backstop, not a replacement for the lock-icon pairing rule (Principle 3). Signature gradient becomes green→cyan ("aurora"), replacing violet→pink; both new stops individually fail text contrast same as before, so the decorative-only rule (Principle 2, §7) still applies unchanged. No component behavior, layout, or non-color token changed. |

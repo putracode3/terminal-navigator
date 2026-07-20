@@ -51,7 +51,7 @@
 
 ### Do / Don't
 - ✅ Do: use exactly one `primary` button per view/dialog — it is the one action a user should default to.
-- ❌ Don't: put the gradient (`--color-accent-gradient`) as a button's solid fill — it fails text contrast at the pink end (see design.md §7). Gradient is decorative-only.
+- ❌ Don't: put the gradient (`--color-accent-gradient`) as a button's solid fill — both of its stops fail text contrast (see design.md §7). Gradient is decorative-only.
 - ❌ Don't: use `danger` variant for anything that isn't destructive/irreversible (e.g. don't use it for "Cancel").
 
 ---
@@ -156,11 +156,12 @@
 
 ### Anatomy
 1. Container — full-width row
-2. Status dot (leading) — small circle indicating this project has **1+ open sessions** (any mode other than `empty`), regardless of whether one of them is the tab currently showing in the terminal area — that's a project-scope "is anything running here" signal, deliberately distinct from the left-edge bar's tab-scope "am I looking at it right now" signal (see States). Rendered fully transparent/hidden when the project has no open session — not a different color, no dot presence at all. As of v1.4 this dot no longer carries path-validity meaning (see Path below).
-3. Project name — `--text-sm` / `--weight-medium`
-4. Path (hover/focus reveal only, not part of the row's resting layout) — shown in a small floating tooltip anchored below the name when the row is hovered or keyboard-focused, `--text-xs` / `--font-family-mono`, full path (untruncated; wraps if it doesn't fit rather than truncating, since the tooltip isn't width-constrained like the row). Text color signals path validity now that the dot no longer does: `--color-text` when valid, `--color-text-muted` when invalid (de-emphasized, not alarmed — `--color-danger` is reserved for the inline error message only, see States). Tooltip uses `--z-tooltip`.
-5. Overflow menu button (trailing, appears on hover/focus) — opens the Menu component (anchored variant)
-6. Session count (implicit, not rendered as its own element) — determines the row's behavior mode below; when it's 2+, a list of `Sidebar Session Sub-item`s renders directly beneath this row, indented, as part of the same list flow (no wrapping box/border — see that component's spec)
+2. Project name — `--text-sm` / `--weight-medium`
+3. Path (focus reveal only, not part of the row's resting layout) — shown in a small floating tooltip anchored below the name via CSS `:focus-visible` on the row (v1.5 change, see States): reveals on genuine keyboard Tab-navigation only, not mouse hover, a plain left-click, or the autofocus that lands on the context/overflow menu's first item when it opens — all of those used to trip it via `:focus-within`, which matches on any descendant focus regardless of input method. `--text-xs` / `--font-family-mono`, full path (untruncated; wraps if it doesn't fit rather than truncating, since the tooltip isn't width-constrained like the row). Text color signals path validity: `--color-text` when valid, `--color-text-muted` when invalid (de-emphasized, not alarmed — `--color-danger` is reserved for the inline error message only, see States). Tooltip uses `--z-tooltip`.
+4. Overflow menu button (trailing, appears on hover/focus) — opens the Menu component (anchored variant)
+5. Session count (implicit, not rendered as its own element) — determines the row's behavior mode below; when it's 2+, a list of `Sidebar Session Sub-item`s renders directly beneath this row, indented, as part of the same list flow (no wrapping box/border — see that component's spec)
+
+**v1.5 — status dot removed:** the leading "has 1+ open sessions" dot was dropped as redundant with the left-edge `open`/`active` bar (see States) — that bar already tells the same "is anything running here, and is it the one on screen" story for the 0/1-session modes, and `grouped` mode makes it visually obvious via the rendered `Sidebar Session Sub-item` list beneath the row. `--color-security` remains reserved for encryption/trust signals elsewhere (badge, sync status text) — see design.md.
 
 ### Variants
 | Variant | When to use |
@@ -176,13 +177,12 @@
 ### States
 | State | Visual change |
 |---|---|
-| default (no open session) | bg transparent, status dot hidden |
-| has open session (1+ sessions open for this project, any mode) | status dot `--color-security` — lit independent of the `open`/`active`/`grouped` states below, and independent of which project's tab is currently focused on screen |
-| hover / focus-visible | bg `--color-surface-elevated`; overflow menu button becomes visible (only in the 0/1-session modes — see Behavior); path tooltip appears (`--z-tooltip`); focus-visible additionally gets outline 2px `--color-focus`, offset -2px (inset, since the row is full-width) |
+| default (no open session) | bg transparent |
+| hover / focus-visible | bg `--color-surface-elevated`; overflow menu button becomes visible (only in the 0/1-session modes — see Behavior); focus-visible additionally gets outline 2px `--color-focus`, offset -2px (inset, since the row is full-width) and reveals the path tooltip (`--z-tooltip`) — hover and mouse-triggered focus no longer do (v1.5 change, see Anatomy) |
 | open (exactly 1 session open, and it is not the currently active tab) | left edge gets a `--border-width-sm` `--color-border-strong` bar — a quiet hint that left-clicking here will *switch*, not open a duplicate |
 | active (exactly 1 session open, and it is the currently active tab) | left edge gets a `--border-width-md` `--color-primary` bar (supersedes the `open` bar); bg `--color-surface-elevated` |
 | grouped (2+ sessions open) | no left-edge bar of its own (an individual sub-item carries `active` instead — see Sidebar Session Sub-item); row loses hover/pointer affordances that imply direct clickability, since it no longer performs a switch action itself |
-| invalid | path tooltip text `--color-text-muted` (see Anatomy); row remains clickable but clicking shows an inline message instead of opening a tab; does not affect the status dot, which only ever reflects open-session state |
+| invalid | path tooltip text `--color-text-muted` (see Anatomy); row remains clickable but clicking shows an inline message instead of opening a tab |
 
 ### Behavior — three modes by session count (FR-08 v1.4)
 This component's interactivity depends entirely on how many tabs are currently open for it. The transition between modes is automatic (recomputed from `terminalStore.tabs` on every change) — there is no manual expand/collapse the user has to operate.
@@ -198,20 +198,19 @@ This component's interactivity depends entirely on how many tabs are currently o
 - Right-click / "⋮" Menu: "Open in new tab" (adds a second — this is what flips the row into `grouped` mode), "Close terminal" (closes the one open session), Edit, Delete.
 
 **2+ open sessions ("grouped"):**
-- The row itself becomes non-interactive for switching: left-click does nothing (it no longer has one single tab to switch to), and it is **not draggable** (ambiguous — which of its sessions would be dragged?). It still renders normally otherwise (name, path, status dot) — it now reads as a group label for the `Sidebar Session Sub-item` list beneath it.
+- The row itself becomes non-interactive for switching: left-click does nothing (it no longer has one single tab to switch to), and it is **not draggable** (ambiguous — which of its sessions would be dragged?). It still renders normally otherwise (name, path) — it now reads as a group label for the `Sidebar Session Sub-item` list beneath it.
 - Right-click / "⋮" Menu still works, still project-scoped: "Open in new tab" (adds another session to the group), Edit, Delete. No "Close terminal" here — with 2+ sessions, closing is unambiguous only per sub-item (see that component).
 - Switching, closing, and dragging all move down to the individual `Sidebar Session Sub-item`s.
 
 ### Accessibility
 - Row is a single focusable, actionable element (`role="button"` or native list-item button) in the 0/1-session modes; in `grouped` mode it is still focusable (for its Menu) but is not a button performing a switch action — its accessible role/behavior should reflect that it's inert for activation purposes (e.g. it can remain a heading-like static element with just its Menu control focusable within it).
-- The full path is always available to assistive tech via an `aria-label`/`aria-describedby` on the row (e.g. `"${name}, ${path}"`), independent of the hover/focus-visible tooltip — a screen reader user should never need to trigger a hover state to learn the path. The visual tooltip itself is `aria-hidden` (it would otherwise duplicate that announcement).
+- The full path is always available to assistive tech via an `aria-label`/`aria-describedby` on the row (e.g. `"${name}, ${path}"`), independent of the focus-visible tooltip — a screen reader user should never need to trigger a focus state to learn the path. The visual tooltip itself is `aria-hidden` (it would otherwise duplicate that announcement).
 - Path validity (`valid`/`invalid`) is conveyed by both the tooltip text color and the inline error message shown on click, never by color alone.
-- The status dot (has-open-session) and the `open`/`active` left-edge bars are supplementary hints, not the only signal of their respective states.
+- The `open`/`active` left-edge bars are a supplementary hint, not the only signal of that state.
 - Drag has no keyboard equivalent — acceptable only because every outcome it can produce (spawn-into-split, move-into-split) is also reachable via `Split Pane Container`'s existing toolbar split buttons once a tab is already active, same rule as the original drag-to-split pattern.
 
 ### Do / Don't
-- ✅ Do: keep the status dot lit for as long as any session under this project is open, even while a different project's tab is the one currently focused/visible on screen — it answers "is anything running here", not "am I looking at it right now" (that's the left-edge bar's job).
-- ✅ Do: reveal the path only on hover/focus, anchored near the row, not inline in the resting layout — keeps the row visually calm at rest (design.md Principle 1); the full, untruncated path is fine to show there since the tooltip isn't width-constrained like the row itself.
+- ✅ Do: reveal the path only on genuine keyboard focus (`:focus-visible`, not `:focus-within`), anchored near the row, not inline in the resting layout — keeps the row visually calm at rest (design.md Principle 1); the full, untruncated path is fine to show there since the tooltip isn't width-constrained like the row itself. Not on mouse hover, left-click, or right-click (v1.5 change) — the overflow menu button and background highlight remain hover-revealed, just not the path tooltip.
 - ✅ Do: recompute the session-count mode reactively — a row must flip from `open`/`active` to `grouped` the instant a second session opens (e.g. via Menu → "Open in new tab"), not on next render/reload.
 - ❌ Don't: use `--color-danger` for path invalidity anymore — de-emphasize with `--color-text-muted` instead, and reserve `--color-danger` for the inline "path no longer exists" error message only (v1.4 change — see States).
 - ❌ Don't: reuse the `open`/`active` left-edge bar treatment for anything else — they must stay visually distinct from both the status dot and the invalid-path signal.
