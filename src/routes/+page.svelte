@@ -1,11 +1,20 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import UnlockScreen from "$lib/patterns/UnlockScreen.svelte";
 	import Sidebar from "$lib/patterns/Sidebar.svelte";
 	import TerminalArea from "$lib/patterns/TerminalArea.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
 	import { terminalStore } from "$lib/stores/terminal.svelte";
+	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { openTerminal, errorMessage, type ProjectDto } from "$lib/api";
+
+	// FR-13/NFR-8: settings load independently of lock state — must be ready
+	// even at the unlock screen (theme/sidebar-position apply without ever
+	// entering the master password).
+	onMount(() => {
+		settingsStore.load().catch((err) => console.error("failed to load settings:", err));
+	});
 
 	/** Always opens a fresh tab for `project`, regardless of whether one is
 	 *  already open — FR-08 v1.3's deliberate-duplicate path, reached via
@@ -41,13 +50,13 @@
 {#if appStore.locked}
 	<UnlockScreen />
 {:else}
-	<div class="app-shell">
+	<div class="app-shell" class:app-shell-reverse={settingsStore.sidebarPosition === "right"} data-sidebar-position={settingsStore.sidebarPosition}>
 		{#if !appStore.sidebarHidden}
 			<Sidebar onOpenProject={handleOpenProject} onForceNewTab={forceOpenNewTab} />
 		{:else}
-			<div class="reveal-sidebar-wrap">
+			<div class="reveal-sidebar-wrap" class:reveal-sidebar-wrap-right={settingsStore.sidebarPosition === "right"}>
 				<Button variant="ghost" size="icon" ariaLabel="Show sidebar" onclick={() => appStore.toggleSidebar()}>
-					▶
+					☰
 				</Button>
 			</div>
 		{/if}
@@ -56,10 +65,19 @@
 {/if}
 
 <style>
+	.app-shell-reverse {
+		flex-direction: row-reverse;
+	}
+
 	.reveal-sidebar-wrap {
 		position: fixed;
 		top: var(--space-3);
 		left: var(--space-3);
 		z-index: var(--z-dropdown);
+	}
+
+	.reveal-sidebar-wrap-right {
+		left: auto;
+		right: var(--space-3);
 	}
 </style>

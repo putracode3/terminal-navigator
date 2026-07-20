@@ -16,10 +16,12 @@ vi.mock("@xterm/xterm", () => ({
 			focus: focusMock,
 			write: vi.fn(),
 			attachCustomKeyEventHandler: vi.fn(),
+			attachCustomWheelEventHandler: vi.fn(),
 			getSelection: vi.fn(),
 			paste: vi.fn(),
 			rows: 24,
 			cols: 80,
+			options: {},
 		};
 	}),
 }));
@@ -101,6 +103,19 @@ describe("PaneNodeView — remounts TerminalPane when the root leaf's session ch
 		await rerender(baseProps({ node: leaf("s1", "/a-renamed"), tabId: "tab-a", focusedPaneId: "s1" }));
 
 		expect(openMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("PaneNodeView — reacts to the shell exiting on its own (regression: a pane used to stay open forever after `exit`, since nothing told the frontend the shell process had ended)", () => {
+	it("calls onClosePane with the leaf's sessionId when TerminalPane's pty://exit fires", () => {
+		const onClosePane = vi.fn();
+		render(PaneNodeView, baseProps({ node: leaf("pane-1"), focusedPaneId: "pane-1", onClosePane }));
+
+		const exitCall = listenMock.mock.calls.find(([name]) => name === "pty://exit/pane-1");
+		expect(exitCall).toBeDefined();
+		(exitCall![1] as () => void)();
+
+		expect(onClosePane).toHaveBeenCalledWith("pane-1");
 	});
 });
 

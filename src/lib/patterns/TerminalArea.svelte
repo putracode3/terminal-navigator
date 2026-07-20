@@ -1,7 +1,10 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import SplitPaneContainer from "$lib/components/SplitPaneContainer.svelte";
 	import { terminalStore, type SplitDirection, type DropZone } from "$lib/stores/terminal.svelte";
 	import { closeTerminal, splitPane as splitPaneApi, openTerminal, errorMessage } from "$lib/api";
+	import { settingsStore } from "$lib/stores/settings.svelte";
+	import { matchesCombo } from "$lib/keybindings";
 
 	async function handleClosePane(tabId: string, sessionId: string) {
 		const { closedSessionIds } = terminalStore.closePane(tabId, sessionId);
@@ -30,10 +33,13 @@
 		terminalStore.resizeSplit(tabId, splitId, sizes);
 	}
 
-	/** components.md pattern "Sidebar drag-to-split". Only the active tab's
-	 *  pane tree is ever mounted (see the {#if terminalStore.activeTab}
-	 *  below), so a drop can only ever target the active tab — that's the
-	 *  tab id used here, not something passed in from the drop event itself. */
+	/** components.md pattern "Sidebar drag-to-split". Every open tab's pane
+	 *  tree stays mounted (see the {#each terminalStore.tabs} below — only
+	 *  the active one is visible, the rest are `display:none` so their
+	 *  xterm.js buffers stay alive across switches, see TerminalPane.svelte),
+	 *  but only the active tab's tree is actually visible/interactive, so a
+	 *  drop can only ever target it in practice — that's the tab id used
+	 *  here, not something passed in from the drop event itself. */
 	async function handleDrop(targetSessionId: string, zone: DropZone) {
 		const source = terminalStore.dragSource;
 		const targetTabId = terminalStore.activeTabId;
@@ -56,23 +62,103 @@
 		}
 		terminalStore.stopDragging();
 	}
+
+	/** FR-13 keyboard pane split/move-focus (architecture.md §5.6). Capture
+	 * phase on window — before the event ever reaches the focused
+	 * TerminalPane's xterm.js textarea, the same reasoning as the Ctrl+Shift+V
+	 * fix (a bubble-phase listener here would run too late: xterm would
+	 * already have sent the keystroke to the shell as normal input by the
+	 * time it bubbled back up to window). Skipped while any Modal is open
+	 * (`role="dialog"`) — pane shortcuts shouldn't fire while, say, the
+	 * Settings modal's own fields have focus (unspecified in components.md —
+	 * review needed; this is the escalation-rule treatment). */
+	function handleGlobalKeydown(e: KeyboardEvent) {
+		// `e.target` is `window`/`document` (no `.closest`) whenever nothing
+		// in the page currently has focus — not just a test artifact, a real
+		// state the very first keydown after launch can land in.
+		if (e.target instanceof Element && e.target.closest('[role="dialog"]')) return;
+
+		const tabId = terminalStore.activeTabId;
+		const tab = terminalStore.activeTab;
+		if (!tabId || !tab) return;
+		const kb = settingsStore.keybindings;
+
+		// preventDefault() alone only suppresses the browser's own default
+		// action — it does NOT stop this capture-phase event from continuing
+		// to the focused TerminalPane's xterm.js textarea, which would then
+		// process the same keystroke as ordinary terminal input (e.g. Alt+Left
+		// leaking into the shell as a "backward-word" readline binding at the
+		// same time it moves pane focus). stopPropagation() is required to
+		// actually own the keystroke — code review finding B1.
+		if (matchesCombo(e, kb["pane.splitBottom"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			handleSplitPane(tabId, tab.focusedPaneId, "column");
+		} else if (matchesCombo(e, kb["pane.splitRight"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			handleSplitPane(tabId, tab.focusedPaneId, "row");
+		} else if (matchesCombo(e, kb["pane.moveFocusLeft"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.moveFocus(tabId, "left");
+		} else if (matchesCombo(e, kb["pane.moveFocusRight"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.moveFocus(tabId, "right");
+		} else if (matchesCombo(e, kb["pane.moveFocusUp"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.moveFocus(tabId, "up");
+		} else if (matchesCombo(e, kb["pane.moveFocusDown"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.moveFocus(tabId, "down");
+		} else if (matchesCombo(e, kb["terminal.nextTab"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.cycleActiveTab("next");
+		} else if (matchesCombo(e, kb["terminal.previousTab"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.cycleActiveTab("previous");
+		}
+	}
+
+	onMount(() => {
+		window.addEventListener("keydown", handleGlobalKeydown, true);
+		return () => window.removeEventListener("keydown", handleGlobalKeydown, true);
+	});
 </script>
 
 <div class="terminal-area">
-	{#if terminalStore.activeTab}
-		{@const tab = terminalStore.activeTab}
-		<SplitPaneContainer
-			tabId={tab.id}
-			root={tab.root}
-			focusedPaneId={tab.focusedPaneId}
-			dragSource={terminalStore.dragSource}
-			onFocusPane={(sessionId) => terminalStore.focusPane(tab.id, sessionId)}
-			onSplitPane={(sessionId, direction) => handleSplitPane(tab.id, sessionId, direction)}
-			onClosePane={(sessionId) => handleClosePane(tab.id, sessionId)}
-			onResizeSplit={(splitId, sizes) => handleResizeSplit(tab.id, splitId, sizes)}
-			onDrop={handleDrop}
-		/>
-	{:else}
+	<!-- Every open tab renders here permanently, not just the active one:
+	     each tab's TerminalPane owns a live xterm.js Terminal + PTY output
+	     subscription, created once on mount (see TerminalPane.svelte). Only
+	     conditionally mounting the active tab's tree (the pre-v1.5 approach)
+	     meant switching tabs away and back destroyed and recreated that
+	     xterm.js instance from scratch — losing all its buffered output and
+	     scrollback even though the backend PTY session was still running the
+	     whole time (regression: switching sidebar sessions away and back left
+	     the pane blank and unscrollable). Keeping every tab's tree mounted
+	     and only toggling visibility fixes that at the root. -->
+	{#each terminalStore.tabs as tab (tab.id)}
+		<div class="tab-tree" class:tab-tree-active={tab.id === terminalStore.activeTabId}>
+			<SplitPaneContainer
+				tabId={tab.id}
+				root={tab.root}
+				focusedPaneId={tab.focusedPaneId}
+				active={tab.id === terminalStore.activeTabId}
+				dragSource={terminalStore.dragSource}
+				onFocusPane={(sessionId) => terminalStore.focusPane(tab.id, sessionId)}
+				onSplitPane={(sessionId, direction) => handleSplitPane(tab.id, sessionId, direction)}
+				onClosePane={(sessionId) => handleClosePane(tab.id, sessionId)}
+				onResizeSplit={(splitId, sizes) => handleResizeSplit(tab.id, splitId, sizes)}
+				onDrop={handleDrop}
+			/>
+		</div>
+	{/each}
+	{#if !terminalStore.activeTab}
 		<div class="empty-state">
 			<p>Select a project from the sidebar to open a terminal here.</p>
 		</div>
@@ -84,6 +170,16 @@
 		flex: 1;
 		height: 100%;
 		min-width: 0;
+	}
+
+	.tab-tree {
+		display: none;
+		height: 100%;
+		width: 100%;
+	}
+
+	.tab-tree-active {
+		display: flex;
 	}
 
 	.empty-state {

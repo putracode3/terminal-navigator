@@ -11,9 +11,11 @@ Paste this into your project's agent instructions file (`CLAUDE.md` / `AGENTS.md
 3. **App-shell components** — Sidebar Project List Item, Tab, Split Pane Container.
 4. **Modal/Dialog** + the two Patterns that use it (Add/Edit Project form, confirmations).
 5. **Full-page patterns** — Unlock screen, Terminal tab + split grid area, Sidebar layout — these compose everything above.
+6. **Settings Panel** (v1.6, FR-13) — Theme Preset Card, Keybinding Row, Segmented Control, then the Settings Panel pattern composing them with Modal/Input/Button/Security Badge. Build last — it depends on everything above.
 
 ## Notes
 
 - This package is dark-only (MVP scope) — do not build a light-mode remap unless the user explicitly asks for it later (PRD next-iteration, not current scope).
-- The gradient (`--color-accent-gradient`) is restricted to exactly two places app-wide (design.md Principle 2, §8). Treat any third usage as a bug, not a style choice.
+- The gradient (`--color-accent-gradient`) is restricted to exactly **one** place app-wide (design.md Principle 2, §8) — the unlock screen's ambient glow. Treat any second usage as a bug, not a style choice.
+- Terminal theme presets (design.md §4.5) are frontend-only data, not design tokens — implement per architecture.md ADR-0009, do not add them to `tokens.css`/`tokens.json`.
 - Contrast for every token pair actually used in components.md is pre-verified in design.md §7 — if you introduce a new color pairing not in that table, compute its contrast before shipping it.

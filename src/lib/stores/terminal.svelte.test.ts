@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { terminalStore, paneCount, type PaneNode } from "./terminal.svelte";
+import { terminalStore, paneCount, findPaneInDirection, type PaneNode } from "./terminal.svelte";
 
 // Singleton store — reset between tests (qa-tester principle 5: no
 // inter-test dependence).
@@ -569,3 +569,115 @@ function collectLeafIdsForTest(node: { type: string; sessionId?: string; childre
 	if (node.type === "leaf") return [node.sessionId as string];
 	return (node.children as Parameters<typeof collectLeafIdsForTest>[0][]).flatMap(collectLeafIdsForTest);
 }
+
+// FR-13 keyboard pane-focus movement (architecture.md §5.6). Builds:
+//   row-split[ A, column-split[ B, C ] ]
+// i.e. A is the row's left sibling; B/C are stacked inside the row's right
+// sibling — an i3/tmux-style traversal, not real screen geometry.
+describe("terminalStore — moveFocus / findPaneInDirection (FR-13)", () => {
+	function buildTree() {
+		const tab = terminalStore.openTab("proj-1", "a", "/a"); // leaf A
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b"); // row-split[A, B]
+		const idC = terminalStore.splitPane(tab.id, idB, "column", "/c"); // B's slot -> column-split[B, C]
+		return { tabId: tab.id, idA, idB, idC };
+	}
+
+	it("moves right from a row-split's left sibling into the nested split's first leaf", () => {
+		const { tabId, idA, idB } = buildTree();
+		terminalStore.focusPane(tabId, idA);
+
+		terminalStore.moveFocus(tabId, "right");
+
+		expect(terminalStore.tabs.find((t) => t.id === tabId)?.focusedPaneId).toBe(idB);
+	});
+
+	it("moves left back from the nested split into the row-split's left sibling", () => {
+		const { tabId, idA, idB } = buildTree();
+		terminalStore.focusPane(tabId, idB);
+
+		terminalStore.moveFocus(tabId, "left");
+
+		expect(terminalStore.tabs.find((t) => t.id === tabId)?.focusedPaneId).toBe(idA);
+	});
+
+	it("moves down within the nested column-split", () => {
+		const { tabId, idB, idC } = buildTree();
+		terminalStore.focusPane(tabId, idB);
+
+		terminalStore.moveFocus(tabId, "down");
+
+		expect(terminalStore.tabs.find((t) => t.id === tabId)?.focusedPaneId).toBe(idC);
+	});
+
+	it("moves up within the nested column-split", () => {
+		const { tabId, idB, idC } = buildTree();
+		terminalStore.focusPane(tabId, idC);
+
+		terminalStore.moveFocus(tabId, "up");
+
+		expect(terminalStore.tabs.find((t) => t.id === tabId)?.focusedPaneId).toBe(idB);
+	});
+
+	it("is a no-op at the edge of the grid (no matching ancestor split, or no neighbor in bounds)", () => {
+		const { tabId, idA } = buildTree();
+		terminalStore.focusPane(tabId, idA);
+
+		terminalStore.moveFocus(tabId, "left"); // A is already the leftmost in its row
+		expect(terminalStore.tabs.find((t) => t.id === tabId)?.focusedPaneId).toBe(idA);
+
+		terminalStore.moveFocus(tabId, "up"); // A has no column-direction ancestor at all
+		expect(terminalStore.tabs.find((t) => t.id === tabId)?.focusedPaneId).toBe(idA);
+	});
+
+	it("findPaneInDirection returns null for an unknown focused pane id", () => {
+		const { tabId } = buildTree();
+		const tab = terminalStore.tabs.find((t) => t.id === tabId)!;
+
+		expect(findPaneInDirection(tab.root, "not-a-real-session-id", "right")).toBeNull();
+	});
+
+	it("moveFocus is a no-op for an unknown tab id (no throw)", () => {
+		expect(() => terminalStore.moveFocus("not-a-real-tab-id", "right")).not.toThrow();
+	});
+});
+
+describe("terminalStore — cycleActiveTab (FR-13 follow-up, terminal.nextTab/previousTab)", () => {
+	it("cycles to the next tab, wrapping around at the end", () => {
+		const tabA = terminalStore.openTab("proj-a", "a", "/a");
+		const tabB = terminalStore.openTab("proj-b", "b", "/b");
+		const tabC = terminalStore.openTab("proj-c", "c", "/c");
+		terminalStore.setActiveTab(tabA.id);
+
+		terminalStore.cycleActiveTab("next");
+		expect(terminalStore.activeTabId).toBe(tabB.id);
+
+		terminalStore.cycleActiveTab("next");
+		expect(terminalStore.activeTabId).toBe(tabC.id);
+
+		terminalStore.cycleActiveTab("next"); // wraps
+		expect(terminalStore.activeTabId).toBe(tabA.id);
+	});
+
+	it("cycles to the previous tab, wrapping around at the start", () => {
+		const tabA = terminalStore.openTab("proj-a", "a", "/a");
+		const tabB = terminalStore.openTab("proj-b", "b", "/b");
+		terminalStore.setActiveTab(tabA.id);
+
+		terminalStore.cycleActiveTab("previous"); // wraps backward from the first tab
+		expect(terminalStore.activeTabId).toBe(tabB.id);
+	});
+
+	it("is a no-op with only one tab open", () => {
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+
+		terminalStore.cycleActiveTab("next");
+
+		expect(terminalStore.activeTabId).toBe(tab.id);
+	});
+
+	it("is a no-op with no tabs open (no throw)", () => {
+		expect(() => terminalStore.cycleActiveTab("next")).not.toThrow();
+		expect(terminalStore.activeTabId).toBeNull();
+	});
+});

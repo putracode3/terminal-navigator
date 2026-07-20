@@ -87,3 +87,27 @@ export function importConfig(source: string, password: string): Promise<ProjectD
 export function pathExists(path: string): Promise<boolean> {
 	return invoke("path_exists", { path });
 }
+
+export type SidebarPosition = "left" | "right";
+
+export interface SettingsDto {
+	themePreset: string;
+	keybindings: Record<string, string>;
+	sidebarPosition: SidebarPosition;
+}
+
+/** FR-13 — readable/writable without `unlock` (NFR-8/ADR-0009): callable
+ * before the master password is ever entered. */
+export function getSettings(): Promise<SettingsDto> {
+	return invoke("get_settings");
+}
+
+export function saveSettings(settings: SettingsDto): Promise<SettingsDto> {
+	return invoke("save_settings", { settings });
+}
+
+/** FR-13/ADR-0010 — unlike settings above, this requires the store to
+ * already be unlocked (it rotates the encryption key itself). */
+export function changeMasterPassword(currentPassword: string, newPassword: string): Promise<void> {
+	return invoke("change_master_password", { currentPassword, newPassword });
+}

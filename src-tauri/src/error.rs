@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::config_sync::ConfigSyncError;
 use crate::project_store::ProjectStoreError;
 use crate::pty_manager::PtyError;
+use crate::settings_store::SettingsStoreError;
 
 #[derive(Debug, Serialize)]
 pub struct AppError {
@@ -26,11 +27,25 @@ impl AppError {
 impl From<ProjectStoreError> for AppError {
     fn from(err: ProjectStoreError) -> Self {
         let kind = match &err {
-            ProjectStoreError::EmptyName | ProjectStoreError::PathNotFound(_) => "invalid_input",
+            ProjectStoreError::EmptyName
+            | ProjectStoreError::PathNotFound(_)
+            | ProjectStoreError::EmptyPassword => "invalid_input",
             ProjectStoreError::NotFound(_) => "not_found",
             ProjectStoreError::Crypto(_) => "crypto",
             ProjectStoreError::Io(_) => "io",
             ProjectStoreError::Corrupted => "corrupted",
+            ProjectStoreError::WrongPassword => "wrong_password",
+        };
+        Self { kind, message: err.to_string() }
+    }
+}
+
+impl From<SettingsStoreError> for AppError {
+    fn from(err: SettingsStoreError) -> Self {
+        let kind = match &err {
+            SettingsStoreError::DuplicateKeybinding(_) => "invalid_input",
+            SettingsStoreError::Io(_) => "io",
+            SettingsStoreError::Corrupted => "corrupted",
         };
         Self { kind, message: err.to_string() }
     }

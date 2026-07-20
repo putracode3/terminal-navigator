@@ -2,10 +2,11 @@
 //! Sole owner of the `Project` entity (architecture.md §5.1) — no other module
 //! reads or writes project data directly.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -46,6 +47,10 @@ pub enum ProjectStoreError {
     Io(#[from] std::io::Error),
     #[error("data file is corrupted or in an unrecognized format")]
     Corrupted,
+    #[error("current password is incorrect")]
+    WrongPassword,
+    #[error("new password cannot be empty")]
+    EmptyPassword,
 }
 
 pub struct ProjectStore {
@@ -125,21 +130,79 @@ impl ProjectStore {
         Ok(())
     }
 
+    /// Rotates the master password (FR-13, ADR-0010): verifies
+    /// `current_password` against the store's own derived key (constant-time
+    /// comparison — this is real key material, not a plain string), then
+    /// re-derives a fresh key/salt from `new_password` and re-persists.
+    /// `persist()`'s atomic write means a crash mid-rotation leaves either
+    /// the old file or the new file intact, never a partially-written one.
+    /// If the write itself fails, the in-memory key/salt are rolled back so
+    /// memory and disk never disagree about which password is current.
+    pub fn change_password(
+        &mut self,
+        current_password: &str,
+        new_password: &str,
+    ) -> Result<(), ProjectStoreError> {
+        if new_password.is_empty() {
+            return Err(ProjectStoreError::EmptyPassword);
+        }
+
+        let candidate_key = crypto::derive_key(current_password, &self.salt)?;
+        if candidate_key.ct_eq(&self.key).unwrap_u8() == 0 {
+            return Err(ProjectStoreError::WrongPassword);
+        }
+
+        // Derive the new salt/key into locals first — only assign to `self`
+        // once both have succeeded, so the sole failure window needing a
+        // rollback below is `persist()` itself. Mutating `self.salt` before
+        // `derive_key` was known to succeed would leave a mismatched
+        // salt/key pair in memory with no rollback path if that derivation
+        // ever failed (code review finding M1).
+        let new_salt = crypto::generate_salt();
+        let new_key = crypto::derive_key(new_password, &new_salt)?;
+
+        let previous_key = self.key;
+        let previous_salt = self.salt;
+
+        self.key = new_key;
+        self.salt = new_salt;
+
+        if let Err(err) = self.persist() {
+            self.key = previous_key;
+            self.salt = previous_salt;
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    /// Writes the current envelope to disk. Atomic (temp file + rename in
+    /// the same directory, ADR-0010): a crash mid-write leaves either the
+    /// previous file or the fully-written new one, never a truncated/corrupt
+    /// one. This protects every caller — `add`/`update`/`delete` and
+    /// `change_password` alike — not just password rotation specifically.
     fn persist(&self) -> Result<(), ProjectStoreError> {
         let plaintext = bincode::serialize(&self.projects).map_err(|_| ProjectStoreError::Corrupted)?;
         let (nonce, ciphertext) = crypto::encrypt(&self.key, &plaintext)?;
         let envelope = build_envelope(&self.salt, &nonce, &ciphertext);
-        std::fs::write(&self.data_file, envelope)?;
+
+        let dir = self.data_file.parent().unwrap_or_else(|| Path::new("."));
+        let file_name = self.data_file.file_name().and_then(|n| n.to_str()).unwrap_or("projects.enc");
+        let tmp_path = dir.join(format!(".{file_name}.tmp"));
+
+        std::fs::write(&tmp_path, &envelope)?;
         // Security audit 2026-07-20, M3: restrict the encrypted data file to
         // owner-only — otherwise it's written with the OS default/umask
         // permissions (typically world-readable), letting any other local
         // user copy the ciphertext out for unlimited offline password
-        // cracking, unconstrained by this app's own protections.
+        // cracking, unconstrained by this app's own protections. Set on the
+        // temp file before the rename — permissions carry through a rename
+        // on the same filesystem.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.data_file, std::fs::Permissions::from_mode(0o600))?;
+            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
         }
+        std::fs::rename(&tmp_path, &self.data_file)?;
         Ok(())
     }
 }
@@ -329,5 +392,73 @@ mod tests {
         let raw_str = String::from_utf8_lossy(&raw);
         assert!(!raw_str.contains("super-secret-project"));
         assert!(!raw_str.contains("API_KEY"));
+    }
+
+    #[test]
+    fn change_password_allows_unlock_with_new_password_afterward() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+
+        {
+            let mut store = ProjectStore::unlock(data_file.clone(), "old-password").unwrap();
+            store.add(input("p", dir.path().to_path_buf())).unwrap();
+            store.change_password("old-password", "new-password").unwrap();
+        }
+
+        let reopened = ProjectStore::unlock(data_file, "new-password").unwrap();
+        assert_eq!(reopened.list().len(), 1, "data must survive rotation intact");
+        assert_eq!(reopened.list()[0].name, "p");
+    }
+
+    #[test]
+    fn change_password_rejects_old_password_after_rotation() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+
+        {
+            let mut store = ProjectStore::unlock(data_file.clone(), "old-password").unwrap();
+            store.change_password("old-password", "new-password").unwrap();
+        }
+
+        let result = ProjectStore::unlock(data_file, "old-password");
+        assert!(result.is_err(), "old password must stop working after rotation");
+    }
+
+    #[test]
+    fn change_password_rejects_wrong_current_password_without_mutating_data() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let mut store = ProjectStore::unlock(data_file.clone(), "correct-password").unwrap();
+        store.add(input("p", dir.path().to_path_buf())).unwrap();
+        let before = std::fs::read(&data_file).unwrap();
+
+        let result = store.change_password("wrong-current-password", "new-password");
+
+        assert!(matches!(result, Err(ProjectStoreError::WrongPassword)));
+        let after = std::fs::read(&data_file).unwrap();
+        assert_eq!(before, after, "a rejected rotation must not touch the on-disk file");
+
+        // The store must still unlock with the original password — an
+        // in-memory-only rejection, nothing was rotated.
+        let reopened = ProjectStore::unlock(data_file, "correct-password").unwrap();
+        assert_eq!(reopened.list().len(), 1);
+    }
+
+    #[test]
+    fn change_password_rejects_empty_new_password() {
+        let dir = tempdir().unwrap();
+        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let result = store.change_password("pw", "");
+        assert!(matches!(result, Err(ProjectStoreError::EmptyPassword)));
+    }
+
+    #[test]
+    fn persist_leaves_no_leftover_temp_file() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let mut store = ProjectStore::unlock(data_file.clone(), "pw").unwrap();
+        store.add(input("p", dir.path().to_path_buf())).unwrap();
+
+        assert!(!dir.path().join(".projects.enc.tmp").exists());
     }
 }

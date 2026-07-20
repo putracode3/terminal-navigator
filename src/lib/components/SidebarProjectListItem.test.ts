@@ -77,11 +77,6 @@ describe("SidebarProjectListItem — 0-session mode", () => {
 		expect(container.querySelector(".item")).toHaveAttribute("draggable", "true");
 	});
 
-	it("status dot is not lit (no open session)", () => {
-		const { container } = render(SidebarProjectListItem, baseProps());
-		expect(container.querySelector(".dot")).not.toHaveClass("dot-open");
-	});
-
 	it("full path is exposed via aria-label; the tooltip copy is hidden from assistive tech", () => {
 		const { container } = render(SidebarProjectListItem, baseProps());
 		expect(container.querySelector(".item")).toHaveAttribute(
@@ -136,13 +131,6 @@ describe("SidebarProjectListItem — 1-session mode", () => {
 		expect(container.querySelector(".sub-items")).toBeNull();
 	});
 
-	it("status dot is lit — a session is open even if a different tab is currently active", () => {
-		const { container } = render(
-			SidebarProjectListItem,
-			baseProps({ sessions: [session("tab-1", 1)], activeTabId: "some-other-tab" }),
-		);
-		expect(container.querySelector(".dot")).toHaveClass("dot-open");
-	});
 });
 
 describe("SidebarProjectListItem — grouped (2+ session) mode (FR-08 v1.4)", () => {
@@ -160,11 +148,6 @@ describe("SidebarProjectListItem — grouped (2+ session) mode (FR-08 v1.4)", ()
 	it("the parent row is not draggable", () => {
 		const { container } = render(SidebarProjectListItem, baseProps({ sessions }));
 		expect(container.querySelector(".item")).toHaveAttribute("draggable", "false");
-	});
-
-	it("status dot is lit — the group has open sessions", () => {
-		const { container } = render(SidebarProjectListItem, baseProps({ sessions }));
-		expect(container.querySelector(".dot")).toHaveClass("dot-open");
 	});
 
 	it("renders one Sidebar Session Sub-item per open session, labeled by stable ordinal", () => {
@@ -274,5 +257,39 @@ describe("SidebarProjectListItem — Menu (right-click context + overflow anchor
 
 		expect(screen.queryByRole("menu")).toBeNull();
 		document.body.removeChild(outside);
+	});
+});
+
+describe("SidebarProjectListItem — hover state after right-click menu closes (regression)", () => {
+	// Some webviews (WebKitGTK on Linux) leave `:hover` stuck on the
+	// right-clicked row after the popup closes, even though the pointer has
+	// moved on — hover is tracked in JS instead so it can be forced off.
+	it("closing a right-click-opened menu clears the row's hover state", async () => {
+		const { container } = render(SidebarProjectListItem, baseProps());
+		const row = screen.getByText("my-project").closest(".item") as HTMLElement;
+
+		await fireEvent.mouseEnter(row);
+		expect(row).toHaveClass("hovering");
+
+		await fireEvent.contextMenu(row);
+		await flush();
+		expect(row).toHaveClass("hovering");
+
+		await fireEvent.keyDown(window, { key: "Escape" });
+
+		expect(row).not.toHaveClass("hovering");
+		expect(container.querySelector('[role="menu"]')).toBeNull();
+	});
+
+	it("closing the overflow ('⋮') anchored menu leaves hover state untouched", async () => {
+		render(SidebarProjectListItem, baseProps());
+		const row = screen.getByText("my-project").closest(".item") as HTMLElement;
+
+		await fireEvent.mouseEnter(row);
+		await fireEvent.click(screen.getByRole("button", { name: "More actions for my-project" }));
+		await flush();
+		await fireEvent.keyDown(window, { key: "Escape" });
+
+		expect(row).toHaveClass("hovering");
 	});
 });

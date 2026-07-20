@@ -12,6 +12,8 @@ const openMock = vi.fn();
 const disposeMock = vi.fn();
 let onDataCallback: ((data: string) => void) | undefined;
 let keyEventHandler: ((event: KeyboardEvent) => boolean) | undefined;
+let wheelEventHandler: ((event: WheelEvent) => boolean) | undefined;
+let resizeObserverCallback: (() => void) | undefined;
 const getSelectionMock = vi.fn();
 const pasteMock = vi.fn();
 const termInstance = {
@@ -26,10 +28,14 @@ const termInstance = {
 	attachCustomKeyEventHandler: vi.fn((handler: (event: KeyboardEvent) => boolean) => {
 		keyEventHandler = handler;
 	}),
+	attachCustomWheelEventHandler: vi.fn((handler: (event: WheelEvent) => boolean) => {
+		wheelEventHandler = handler;
+	}),
 	getSelection: getSelectionMock,
 	paste: pasteMock,
 	rows: 24,
 	cols: 80,
+	options: {} as { theme?: unknown; fontSize?: number },
 };
 
 vi.mock("@xterm/xterm", () => ({
@@ -70,8 +76,15 @@ vi.mock("$lib/api", () => ({
 }));
 
 import TerminalPane from "./TerminalPane.svelte";
+import { Terminal } from "@xterm/xterm";
+import { settingsStore } from "$lib/stores/settings.svelte";
+import { DEFAULT_KEYBINDINGS } from "$lib/keybindings";
 
 beforeEach(() => {
+	settingsStore.themePreset = "app-default";
+	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
+	termInstance.options = {};
+	(Terminal as unknown as ReturnType<typeof vi.fn>).mockClear();
 	fitMock.mockClear();
 	openMock.mockClear();
 	resizeTerminalMock.mockClear();
@@ -88,15 +101,23 @@ beforeEach(() => {
 	readTextMock.mockResolvedValue("");
 	getSelectionMock.mockReset();
 	pasteMock.mockClear();
+	listenMock.mockClear();
 	onDataCallback = undefined;
 	keyEventHandler = undefined;
+	wheelEventHandler = undefined;
+	resizeObserverCallback = undefined;
 	// Reduce requestAnimationFrame to a fake-timer-controllable primitive
 	// rather than relying on sinon's rAF-specific fake-timer support.
 	vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
 	// jsdom has no ResizeObserver; TerminalPane only needs .observe()/.disconnect() to exist.
+	// The callback is captured (not just a no-op) so tests can simulate the
+	// browser firing a real resize notification, e.g. the display:none <->
+	// flex flip TerminalArea.svelte does when backgrounding/foregrounding a
+	// tab (see the "background/foreground gating" describe block below).
 	vi.stubGlobal(
 		"ResizeObserver",
-		vi.fn(function ResizeObserver() {
+		vi.fn(function ResizeObserver(callback: () => void) {
+			resizeObserverCallback = callback;
 			return { observe: vi.fn(), disconnect: vi.fn() };
 		}),
 	);
@@ -110,17 +131,17 @@ afterEach(() => {
 
 describe("TerminalPane — initial fit timing (see the code comment above the fix for the full rationale)", () => {
 	it("opens the terminal into its container on mount", () => {
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		expect(openMock).toHaveBeenCalledOnce();
 	});
 
 	it("does NOT call fit() synchronously on mount", () => {
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		expect(fitMock).not.toHaveBeenCalled();
 	});
 
 	it("calls fit() and reports the resulting size to the backend once layout has had a chance to settle", async () => {
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		await vi.runAllTimersAsync();
 		expect(fitMock).toHaveBeenCalledOnce();
 		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
@@ -141,7 +162,7 @@ describe("TerminalPane — keystroke write ordering (regression: typed character
 			return Promise.resolve();
 		});
 
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		await vi.runAllTimersAsync(); // let the initial resize resolve so the write queue opens
 		expect(onDataCallback).toBeDefined();
 
@@ -173,7 +194,7 @@ describe("TerminalPane — initial-resize gating (regression: keystrokes typed r
 			() => new Promise<void>((res) => { resolveResize = res; }),
 		);
 
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		await vi.runAllTimersAsync(); // let the double-rAF fire, triggering the initial resize call
 		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
 		expect(onDataCallback).toBeDefined();
@@ -197,12 +218,19 @@ describe("TerminalPane — initial-resize gating (regression: keystrokes typed r
 
 describe("TerminalPane — Ctrl+Shift+C/V clipboard shortcuts", () => {
 	function keydown(code: string, overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
-		return { type: "keydown", ctrlKey: true, shiftKey: true, code, ...overrides } as KeyboardEvent;
+		return {
+			type: "keydown",
+			ctrlKey: true,
+			shiftKey: true,
+			code,
+			preventDefault: vi.fn(),
+			...overrides,
+		} as unknown as KeyboardEvent;
 	}
 
 	it("Ctrl+Shift+C copies the current selection and swallows the keystroke", async () => {
 		getSelectionMock.mockReturnValue("selected text");
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		expect(keyEventHandler).toBeDefined();
 
 		const handled = keyEventHandler!(keydown("KeyC"));
@@ -213,7 +241,7 @@ describe("TerminalPane — Ctrl+Shift+C/V clipboard shortcuts", () => {
 
 	it("Ctrl+Shift+C with no selection does not touch the clipboard", () => {
 		getSelectionMock.mockReturnValue("");
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 
 		keyEventHandler!(keydown("KeyC"));
 
@@ -222,7 +250,7 @@ describe("TerminalPane — Ctrl+Shift+C/V clipboard shortcuts", () => {
 
 	it("Ctrl+Shift+V reads the clipboard and hands it to term.paste() (not a raw write) so bracketed-paste mode applies", async () => {
 		readTextMock.mockResolvedValue("pasted text");
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		await vi.runAllTimersAsync(); // let the initial resize resolve so the write queue opens
 
 		const handled = keyEventHandler!(keydown("KeyV"));
@@ -234,7 +262,7 @@ describe("TerminalPane — Ctrl+Shift+C/V clipboard shortcuts", () => {
 
 	it("Ctrl+Shift+V with an empty clipboard does not call term.paste()", async () => {
 		readTextMock.mockResolvedValue("");
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		await vi.runAllTimersAsync();
 
 		keyEventHandler!(keydown("KeyV"));
@@ -243,12 +271,256 @@ describe("TerminalPane — Ctrl+Shift+C/V clipboard shortcuts", () => {
 		expect(pasteMock).not.toHaveBeenCalled();
 	});
 
+	it("regression: Ctrl+Shift+V calls preventDefault so the webview's own native paste action can't ALSO fire and insert the clipboard text a second time (xterm.js registers its own built-in `paste` listener on the hidden textarea, independent of this custom key handler)", async () => {
+		readTextMock.mockResolvedValue("pasted text");
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		const event = keydown("KeyV");
+		keyEventHandler!(event);
+		await vi.runAllTimersAsync();
+
+		expect(event.preventDefault).toHaveBeenCalled();
+	});
+
+	it("regression: Ctrl+Shift+C also calls preventDefault, for the same reason (own the keydown fully once handled)", () => {
+		getSelectionMock.mockReturnValue("selected text");
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		const event = keydown("KeyC");
+		keyEventHandler!(event);
+
+		expect(event.preventDefault).toHaveBeenCalled();
+	});
+
 	it("does not intercept a plain Ctrl+C (SIGINT stays untouched)", () => {
-		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 
 		const handled = keyEventHandler!(keydown("KeyC", { shiftKey: false }));
 
 		expect(handled).toBe(true);
 		expect(writeTextMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("TerminalPane — FR-13 theme presets", () => {
+	it("constructs the terminal with the currently-selected preset's full Theme", () => {
+		settingsStore.themePreset = "dracula";
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({ theme: expect.objectContaining({ background: "#282A36" }) }));
+	});
+
+	it("applies a newly-selected preset to an already-open pane immediately (no remount)", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		expect(Terminal).toHaveBeenCalledTimes(1);
+
+		settingsStore.themePreset = "nord";
+		await vi.runAllTimersAsync();
+
+		expect(termInstance.options.theme).toMatchObject({ background: "#2E3440" });
+		expect(Terminal).toHaveBeenCalledTimes(1); // still the same instance — not recreated
+	});
+});
+
+describe("TerminalPane — FR-13 rebindable clipboard shortcuts", () => {
+	it("uses the currently-bound combo, not a hardcoded Ctrl+Shift+C/V, once the user has rebound it", async () => {
+		settingsStore.keybindings = { ...settingsStore.keybindings, "clipboard.paste": "Alt+Shift+P" };
+		readTextMock.mockResolvedValue("pasted text");
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		// The old default no longer triggers paste...
+		const oldDefaultEvent = {
+			type: "keydown",
+			ctrlKey: true,
+			shiftKey: true,
+			code: "KeyV",
+			preventDefault: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const oldHandled = keyEventHandler!(oldDefaultEvent);
+		expect(oldHandled).toBe(true);
+		expect(pasteMock).not.toHaveBeenCalled();
+
+		// ...but the newly-bound combo does.
+		const event = { type: "keydown", altKey: true, shiftKey: true, code: "KeyP", preventDefault: vi.fn() } as unknown as KeyboardEvent;
+		const handled = keyEventHandler!(event);
+		await vi.runAllTimersAsync();
+
+		expect(handled).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(pasteMock).toHaveBeenCalledWith("pasted text");
+	});
+});
+
+describe("TerminalPane — FR-13 follow-up: zoom in/out (terminal.zoomIn/zoomOut)", () => {
+	function ctrlKey(code: string): KeyboardEvent {
+		return { type: "keydown", ctrlKey: true, code, preventDefault: vi.fn() } as unknown as KeyboardEvent;
+	}
+
+	it("Ctrl+= increases the font size, re-fits, and reports the new size to the backend", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		fitMock.mockClear();
+		resizeTerminalMock.mockClear();
+
+		const event = ctrlKey("Equal");
+		const handled = keyEventHandler!(event);
+
+		expect(handled).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(termInstance.options.fontSize).toBe(14);
+		expect(fitMock).toHaveBeenCalledOnce();
+		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
+	});
+
+	it("Ctrl+- decreases the font size", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		keyEventHandler!(ctrlKey("Minus"));
+
+		expect(termInstance.options.fontSize).toBe(12);
+	});
+
+	it("clamps at the maximum font size instead of growing indefinitely", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		for (let i = 0; i < 30; i++) keyEventHandler!(ctrlKey("Equal"));
+
+		expect(termInstance.options.fontSize).toBe(32);
+	});
+
+	it("clamps at the minimum font size instead of shrinking to zero/negative", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		for (let i = 0; i < 30; i++) keyEventHandler!(ctrlKey("Minus"));
+
+		expect(termInstance.options.fontSize).toBe(8);
+	});
+
+	it("does not re-fit once already clamped (no-op past the limit)", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		for (let i = 0; i < 19; i++) keyEventHandler!(ctrlKey("Equal")); // reach the max (13 -> 32)
+		fitMock.mockClear();
+
+		keyEventHandler!(ctrlKey("Equal")); // one more, already at max
+
+		expect(fitMock).not.toHaveBeenCalled();
+	});
+
+	// Regression (code review B1): must go through xterm's own
+	// attachCustomWheelEventHandler hook, not a separate DOM `wheel` listener
+	// on an ancestor element — an ancestor's bubble-phase handler runs too
+	// late to stop xterm's own default wheel handling (buffer scroll, or —
+	// with no scrollback — literal arrow-key sequences sent to the shell).
+	it("registers via term.attachCustomWheelEventHandler, not a template DOM listener", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		expect(wheelEventHandler).toBeDefined();
+	});
+
+	it("Ctrl+Scroll up (deltaY < 0) zooms in, prevents default, and skips xterm's own wheel handling", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		const event = new WheelEvent("wheel", { ctrlKey: true, deltaY: -100, cancelable: true });
+		const handled = wheelEventHandler!(event);
+
+		expect(termInstance.options.fontSize).toBe(14);
+		expect(event.defaultPrevented).toBe(true);
+		expect(handled).toBe(false); // false = xterm must NOT also process this wheel event
+	});
+
+	it("Ctrl+Scroll down (deltaY > 0) zooms out", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		wheelEventHandler!(new WheelEvent("wheel", { ctrlKey: true, deltaY: 100, cancelable: true }));
+
+		expect(termInstance.options.fontSize).toBe(12);
+	});
+
+	it("a plain scroll (no Ctrl) does not zoom, does not preventDefault, and lets xterm handle it normally", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		const event = new WheelEvent("wheel", { ctrlKey: false, deltaY: -100, cancelable: true });
+		const handled = wheelEventHandler!(event);
+
+		expect(termInstance.options.fontSize).toBeUndefined();
+		expect(event.defaultPrevented).toBe(false);
+		expect(handled).toBe(true); // true = xterm proceeds with its own default (scrollback/arrow-key) handling
+	});
+});
+
+describe("TerminalPane — background/foreground resize gating (regression: switching tabs quickly flashed a mis-sized/blank terminal, because backgrounding a tab collapsed its container to 0x0 and the ResizeObserver fired for that collapse just like any other resize, shrinking the xterm.js buffer and the backend PTY toward 0 before it had to be resized straight back up when the tab was reactivated)", () => {
+	it("does not refit or resize the backend when a resize notification fires while the pane is inactive (backgrounded)", async () => {
+		render(TerminalPane, { sessionId: "s1", focused: false, active: false, onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		fitMock.mockClear();
+		resizeTerminalMock.mockClear();
+
+		// Simulates TerminalArea.svelte's container collapsing to 0x0 when its
+		// tab is backgrounded (`.tab-tree { display: none }`) — the browser's
+		// ResizeObserver fires for that collapse exactly like any other size
+		// change.
+		expect(resizeObserverCallback).toBeDefined();
+		resizeObserverCallback!();
+
+		expect(fitMock).not.toHaveBeenCalled();
+		expect(resizeTerminalMock).not.toHaveBeenCalled();
+	});
+
+	it("refits and resizes the backend once the pane becomes active again", async () => {
+		const { rerender } = render(TerminalPane, {
+			sessionId: "s1",
+			focused: false,
+			active: false,
+			onFocus: vi.fn(),
+			onExit: vi.fn(),
+		});
+		await vi.runAllTimersAsync();
+		fitMock.mockClear();
+		resizeTerminalMock.mockClear();
+
+		await rerender({ sessionId: "s1", focused: false, active: true, onFocus: vi.fn(), onExit: vi.fn() });
+
+		// The real display:none -> flex flip fires a genuine ResizeObserver
+		// notification (0x0 -> real size) right as the tab is foregrounded —
+		// simulated here since jsdom has no layout engine to produce it itself.
+		resizeObserverCallback!();
+
+		expect(fitMock).toHaveBeenCalledOnce();
+		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
+	});
+});
+
+describe("TerminalPane — shell exit (regression: the pane used to stay open forever after the shell process exited on its own, e.g. the user typing `exit`, since nothing ever told the frontend it had happened)", () => {
+	function exitCallback(): () => void {
+		const call = listenMock.mock.calls.find(([name]) => name === "pty://exit/s1");
+		if (!call) throw new Error("expected a listen() call for pty://exit/s1");
+		return call[1] as () => void;
+	}
+
+	it("calls onExit when the backend's pty://exit event for this session fires", () => {
+		const onExit = vi.fn();
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit });
+
+		exitCallback()();
+
+		expect(onExit).toHaveBeenCalledOnce();
+	});
+
+	it("does not call onExit just from mounting (only the real event triggers it)", () => {
+		const onExit = vi.fn();
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit });
+
+		expect(onExit).not.toHaveBeenCalled();
 	});
 });

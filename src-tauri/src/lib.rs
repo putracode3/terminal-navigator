@@ -5,6 +5,7 @@ mod crypto;
 mod error;
 mod project_store;
 mod pty_manager;
+mod settings_store;
 
 use std::sync::Mutex;
 
@@ -41,6 +42,7 @@ pub fn run() {
             app.manage(AppState {
                 store: Mutex::new(None),
                 data_file: data_dir.join("projects.enc"),
+                settings_file: data_dir.join("settings.json"),
                 pty_manager: PtyManager::new(),
             });
 
@@ -82,6 +84,9 @@ pub fn run() {
             commands::export_config,
             commands::import_config,
             commands::path_exists,
+            commands::get_settings,
+            commands::save_settings,
+            commands::change_master_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

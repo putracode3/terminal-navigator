@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** In Development — MVP implemented (all FR-01–FR-08), undergoing real-world daily-driver testing | **Version:** 1.4 | **Date:** 2026-07-19 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) scoped 2026-07-20, implementation pending | **Version:** 1.5 | **Date:** 2026-07-20 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 
@@ -47,6 +47,7 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 - **US-05** — As the user, I want my notes and commands stored encrypted, so that sensitive info (API keys, credentials) in them isn't exposed in plaintext on disk.
 - **US-06** — As the user, I want to export/import my project list (or sync it via a git-committed config file), so that I can carry my setup across devices.
 - **US-07** — As the user, I want to remove or edit an existing project entry, so that my list stays accurate as projects come and go.
+- **US-08** — As the user, I want a single Settings panel to customize terminal theme, rebind any keyboard shortcut, change my master password, and switch which side the sidebar sits on, so that I can adjust the app to my preference without hand-editing config files.
 
 ---
 
@@ -125,9 +126,35 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - [ ] User can import a config file, merging or replacing current data (behavior ⚠️ TBD — decide during design)
   - [ ] Encrypted fields remain protected in exported files (export is not a plaintext leak)
 
+#### FR-13: Settings Panel
+- **Description:** A modal (opened from existing app chrome, not a separate full page) exposing four settings groups: terminal theme, master password change, keybinding customization, and sidebar position. Promoted directly to MVP per user decision (2026-07-20), absorbing and superseding the old FR-12 placeholder ("Terminal theme customization"). Theme, keybindings, and sidebar position are **not sensitive data** — they persist in a local, unencrypted preferences store, separate from the encrypted project-data blob (FR-06); master password change is the one sub-feature that touches the encrypted blob itself, via the existing `crypto`/`config_sync` path.
+- **Acceptance Criteria:**
+  - [ ] Settings is opened as a modal from existing app chrome (exact entry point — e.g. sidebar footer/menu — decided by ui-ux-designer)
+  - [ ] The modal groups the four areas below; each is independently save-able
+  - **Theme customization:**
+    - [ ] User picks from a fixed set of preset themes (not a per-color custom picker)
+    - [ ] Selected theme applies immediately to open terminal panes
+    - [ ] Selected theme persists across app restarts
+  - **Master password change:**
+    - [ ] User must correctly enter their *current* master password before a new one is accepted
+    - [ ] On confirming a new password, the app re-derives the encryption key and re-encrypts the existing data blob under it — no data loss
+    - [ ] An incorrect current password rejects the change with a clear error and leaves existing data untouched
+    - [ ] The app requires the new master password on the next unlock (old password stops working)
+  - **Keybinding customization:**
+    - [ ] Every app shortcut (clipboard copy/paste, split-pane, close pane/tab, open in new tab, etc.) can be rebound to a different key combination
+    - [ ] Assigning a combination already used by another action is blocked/flagged with a conflict warning before it's saved
+    - [ ] Rebound shortcuts persist across restarts and take effect immediately
+  - **Sidebar position:**
+    - [ ] User can toggle the sidebar between left and right
+    - [ ] Chosen position persists across restarts
+- **Edge cases:**
+  - First launch with no settings file yet → falls back to sensible defaults (default theme, default keybindings, sidebar on the left)
+  - Master password change interrupted mid-way (app crash/close) must not leave the data blob partially re-encrypted/unreadable — system-architect to define a safe rotation strategy (e.g. write-new-then-swap)
+  - Rebinding a shortcut to a combination the OS/webview treats as a native command (e.g. Ctrl+Shift+V's native "Paste" action — see the `TerminalPane.svelte` clipboard double-paste bug fixed 2026-07-20) is a real risk surface for custom keybindings in general; system-architect/ui-ux-designer should account for it, not just the one shortcut already fixed
+
 ### 4.2 Next Iteration (Should Have)
 - **FR-11:** Project grouping/folders — organize the list into categories
-- **FR-12:** Terminal theme customization
+- ~~**FR-12:** Terminal theme customization~~ — superseded by FR-13 (2026-07-20)
 
 ### 4.3 Future Backlog
 - Search/filter across project list
@@ -148,6 +175,7 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 | NFR-5 | Portability | Config/data must be portable across devices via git-trackable file(s) and/or export/import, per user's multi-device workflow |
 | NFR-6 | Learnability | Solo author is new to Rust and Tauri — downstream architecture docs should favor well-established, well-documented libraries and explain non-obvious decisions, over cutting-edge/exotic choices |
 | NFR-7 | Resource efficiency | App must be lightweight, fast to start, and memory-friendly — especially relevant given multi-pane terminal usage (FR-08) can mean many concurrent PTY sessions + rendered terminal views running for long periods |
+| NFR-8 | Security / Data sensitivity | Non-sensitive preferences (theme, keybindings, sidebar position — FR-13) must NOT require the app to be unlocked (master password entered) to read or apply — stored separately from the encrypted data blob (FR-06), so app chrome can render correctly even at the unlock screen |
 
 | ID | Constraint |
 |---|---|
@@ -216,6 +244,8 @@ User wants a properly installed package from the start (not just running from so
 - [ ] [Q2] Import behavior when syncing config across devices — merge vs. replace — Owner: system-architect / design phase
 - [ ] [Q3] Frontend framework and PTY library choice — Owner: system-architect
 - [ ] [Q4] Tab/pane close UX when a long-running foreground process is active — Owner: ui-ux-designer / design phase
+- [ ] [Q5] Exact format/location of the unencrypted preferences store (FR-13/NFR-8) and the master-password-rotation strategy for the encrypted blob — Owner: system-architect
+- [ ] [Q6] Which specific preset themes ship for FR-13 theme customization — Owner: ui-ux-designer
 
 ---
 
@@ -241,3 +271,4 @@ User wants a properly installed package from the start (not just running from so
 | 1.2 | 2026-07-17 | Added NFR-7 (resource efficiency — lightweight, fast, memory-friendly), per user requirement during system-architect intake. Drives frontend framework and terminal-rendering decisions in architecture.md. |
 | 1.3 | 2026-07-19 | FR-08 acceptance criteria revised: left-click on a sidebar project now switches to its existing tab instead of always opening a duplicate; right-click opens a context menu with an explicit "Open in new tab" action for that case. Replaces the old "always opens a new tab" behavior. |
 | 1.4 | 2026-07-19 | FR-08 revised again: the horizontal tab-bar widget is removed entirely — sidebar becomes the sole way to open/switch/close/drag tabs. Added: automatic sub-session list when a project has 2+ open tabs (no manual expand/collapse), "Close terminal" Menu action (replaces the tab bar's per-tab close button), drag-to-split now sourced from sidebar rows/sub-items instead of tab-bar tabs (and can spawn a fresh session directly into a split if the source had none open yet). Added an edge case: deleting a project with open sessions closes them first. |
+| 1.5 | 2026-07-20 | Added FR-13 (Settings Panel: theme presets, master password change, full keybinding customization with conflict detection, sidebar left/right position), promoted straight to MVP per user decision, superseding the old FR-12 placeholder. Added US-08, NFR-8 (non-sensitive settings stored unencrypted, separate from FR-06's blob), and Q5/Q6 open questions for system-architect/ui-ux-designer. |

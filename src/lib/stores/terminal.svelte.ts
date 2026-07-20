@@ -151,6 +151,47 @@ function firstLeafId(node: PaneNode): string {
 	return node.type === "leaf" ? node.sessionId : firstLeafId(node.children[0]);
 }
 
+/** FR-13 keyboard pane-focus movement (architecture.md §5.6). Walks the
+ * path from root to the focused leaf, then from the leaf's own parent
+ * upward, looking for the nearest ancestor split whose `direction` matches
+ * the requested axis and that has a sibling on the requested side —
+ * i3/tmux-style directional traversal, not real screen geometry (this app
+ * has no per-pane pixel-position tracking, and doesn't need one for this).
+ * Enters the neighboring subtree at its first leaf. Returns null at the
+ * edge of the grid (no-op, not a wraparound). */
+export type MoveDirection = "left" | "right" | "up" | "down";
+
+function findPathToLeaf(node: PaneNode, targetId: string): { split: SplitPane; index: number }[] | null {
+	if (node.type === "leaf") return node.sessionId === targetId ? [] : null;
+	for (let i = 0; i < node.children.length; i++) {
+		const child = node.children[i];
+		if (child.type === "leaf") {
+			if (child.sessionId === targetId) return [{ split: node, index: i }];
+			continue;
+		}
+		const rest = findPathToLeaf(child, targetId);
+		if (rest) return [{ split: node, index: i }, ...rest];
+	}
+	return null;
+}
+
+export function findPaneInDirection(root: PaneNode, focusedId: string, direction: MoveDirection): string | null {
+	const path = findPathToLeaf(root, focusedId);
+	if (!path) return null;
+	const axis: SplitDirection = direction === "left" || direction === "right" ? "row" : "column";
+	const sign = direction === "right" || direction === "down" ? 1 : -1;
+
+	for (let i = path.length - 1; i >= 0; i--) {
+		const { split, index } = path[i];
+		if (split.direction !== axis) continue;
+		const neighborIndex = index + sign;
+		if (neighborIndex >= 0 && neighborIndex < split.children.length) {
+			return firstLeafId(split.children[neighborIndex]);
+		}
+	}
+	return null;
+}
+
 function collectLeafIds(node: PaneNode): string[] {
 	return node.type === "leaf" ? [node.sessionId] : node.children.flatMap(collectLeafIds);
 }
@@ -243,6 +284,18 @@ class TerminalStore {
 		this.activeTabId = id;
 	}
 
+	/** FR-13 follow-up (architecture.md §5.6, terminal.nextTab/previousTab) —
+	 * cycles which *tab* is active, wrapping at both ends. A different concept
+	 * from `moveFocus`, which moves focus between panes within one already-
+	 * active tab. No-op with 0 or 1 tabs open — nothing to cycle to. */
+	cycleActiveTab(direction: "next" | "previous") {
+		if (this.tabs.length < 2) return;
+		const currentIndex = this.tabs.findIndex((t) => t.id === this.activeTabId);
+		const delta = direction === "next" ? 1 : -1;
+		const nextIndex = (currentIndex + delta + this.tabs.length) % this.tabs.length;
+		this.activeTabId = this.tabs[nextIndex].id;
+	}
+
 	/** FR-08 v1.3: left-click's smart switch-or-open. Returns the project's
 	 *  first-in-order existing tab (and activates it) if one exists;
 	 *  otherwise creates a fresh one via `openTab`. `tabs.find` already
@@ -260,6 +313,15 @@ class TerminalStore {
 
 	focusPane(tabId: string, sessionId: string) {
 		this.tabs = this.tabs.map((t) => (t.id === tabId ? { ...t, focusedPaneId: sessionId } : t));
+	}
+
+	/** FR-13 keyboard pane-focus movement — a no-op at the edge of the grid
+	 * (architecture.md §5.6: pure frontend focus change, no IPC). */
+	moveFocus(tabId: string, direction: MoveDirection) {
+		const tab = this.tabs.find((t) => t.id === tabId);
+		if (!tab) return;
+		const target = findPaneInDirection(tab.root, tab.focusedPaneId, direction);
+		if (target) this.focusPane(tabId, target);
 	}
 
 	setPaneStatus(sessionId: string, status: PaneStatus, errorMessage?: string) {

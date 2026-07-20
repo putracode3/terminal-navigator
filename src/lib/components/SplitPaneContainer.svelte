@@ -9,6 +9,7 @@
 		tabId,
 		root,
 		focusedPaneId,
+		active = true,
 		dragSource,
 		onFocusPane,
 		onSplitPane,
@@ -19,6 +20,11 @@
 		tabId: string;
 		root: PaneNode;
 		focusedPaneId: string;
+		/** Whether `tabId` is the tab currently shown in the terminal area —
+		 *  threaded straight through to `PaneNodeView` (see its own prop doc).
+		 *  Defaults `true` so standalone usage (tests) behaves as if always
+		 *  active, matching pre-v1.5 behavior. */
+		active?: boolean;
 		dragSource: DragSource | null;
 		onFocusPane: (sessionId: string) => void;
 		onSplitPane: (sessionId: string, direction: SplitDirection) => void;
@@ -33,6 +39,7 @@
 		node={root}
 		{tabId}
 		{focusedPaneId}
+		{active}
 		{dragSource}
 		{onFocusPane}
 		{onSplitPane}

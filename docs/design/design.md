@@ -1,8 +1,8 @@
 # Design System — Terminal Navigator
 
-> Version 1.5 · 2026-07-20 · Status: approved
+> Version 1.7 · 2026-07-20 · Status: approved
 > Files: design.md (this file, rules & rationale) · tokens.css / tokens.json (values) · components.md (component specs)
-> Source docs: docs/prd-terminal-navigator.md (v1.3) · docs/backend/architecture.md (v1.0)
+> Source docs: docs/prd-terminal-navigator.md (v1.5) · docs/backend/architecture.md (v1.1)
 
 ## 1. Project brief
 
@@ -10,7 +10,7 @@ Terminal Navigator is a single-user Rust + Tauri desktop app that replaces the a
 
 Brand reference: **Warp** — modern, simple, feature-rich. Personality: **minimal**. Mode: **dark-only** for MVP (light mode explicitly out of scope). UI language: **English**.
 
-Scope: sidebar project list (with browse-folder add flow, session sub-items, and drag-to-split), split-pane terminal grid, Add/Edit project form, master-password unlock screen, per-project notes editor. Stack: Tauri + Svelte, terminal rendered via `xterm.js` + WebGL renderer (architecture.md ADR-0006).
+Scope: sidebar project list (with browse-folder add flow, session sub-items, and drag-to-split), split-pane terminal grid, Add/Edit project form, master-password unlock screen, per-project notes editor, and (v1.6, FR-13) a Settings panel — terminal theme presets, master password change, keybinding customization, sidebar position. Stack: Tauri + Svelte, terminal rendered via `xterm.js` + WebGL renderer (architecture.md ADR-0006).
 
 Success criteria: the app is used daily, replacing Tilix. That bar is about *felt* speed and unobtrusiveness as much as visual polish — see Principle 1 below.
 
@@ -85,11 +85,44 @@ Base unit 4px. Scale: `--space-1` (4px) through `--space-16` (64px), see tokens.
 | Breakpoints | `--bp-sidebar-collapse` 720px — the only responsive rule in the app (window width, not a web breakpoint set) |
 | Z-index | dropdown 1000 → tooltip 1400, see tokens.css |
 
+### 4.5 Terminal theme presets (FR-13, v1.6) — a separate palette system, not app-chrome tokens
+
+**These are not design tokens and do not live in `tokens.css`/`tokens.json`.** Per architecture.md ADR-0009, the backend only ever persists a selected preset's *id* (a string); the full color definitions below belong entirely to the frontend, in a small static data module (`src/lib/theme-presets.ts` — see components.md, Theme Preset Card). They govern **terminal content colors only** (the `xterm.js` `Theme` object for each pane) — they never apply to app chrome (sidebar, modals, buttons), which stays governed by §4.1's tokens exactly as before. Do not add a preset color here to `tokens.css` by mistake, and do not pull an app-chrome token into a preset just because the hex happens to match — the two systems are deliberately independent so one can't drift by editing the other.
+
+All four presets are dark (no light terminal theme ships in MVP) — this directly extends the app's existing dark-only stance (§1, §3) to terminal content, the same way it already applies to app chrome. A light terminal preset is an explicit non-goal for now, exactly like light app-chrome mode.
+
+**App Default** is the only preset original to this app; it's derived from §4.1's existing tokens so a user who never opens Settings sees no change from today's behavior. It's also the one preset where reusing an app-chrome hex is intentional (ties terminal content back to the app's own identity) — the other three are independent, widely-recognized reference palettes (Dracula, Nord, Solarized Dark), chosen deliberately over inventing new color schemes: each is a known quantity many developers already recognize on sight, which is the same "boring/proven over novel" reasoning architecture.md applies to libraries (NFR-6), applied here to color.
+
+| Slot | App Default | Dracula | Nord | Solarized Dark |
+|---|---|---|---|---|
+| background | `#0D0F14` | `#282A36` | `#2E3440` | `#002B36` |
+| foreground | `#E4E7EC` | `#F8F8F2` | `#D8DEE9` | `#839496` |
+| cursor | `#16741C` | `#F8F8F2` | `#D8DEE9` | `#93A1A1` |
+| cursorAccent | `#0D0F14` | `#282A36` | `#2E3440` | `#002B36` |
+| black | `#15181F` | `#21222C` | `#3B4252` | `#073642` |
+| red | `#F87171` | `#FF5555` | `#BF616A` | `#DC322F` |
+| green | `#16741C` | `#50FA7B` | `#A3BE8C` | `#859900` |
+| yellow | `#FBBF24` | `#F1FA8C` | `#EBCB8B` | `#B58900` |
+| blue | `#3B82F6` | `#BD93F9` | `#81A1C1` | `#268BD2` |
+| magenta | `#C084FC` | `#FF79C6` | `#B48EAD` | `#D33682` |
+| cyan | `#36B4E2` | `#8BE9FD` | `#88C0D0` | `#2AA198` |
+| white | `#E4E7EC` | `#F8F8F2` | `#E5E9F0` | `#EEE8D5` |
+| brightBlack | `#5A6272` | `#6272A4` | `#4C566A` | `#002B36` |
+| brightRed | `#FCA5A5` | `#FF6E6E` | `#BF616A` | `#CB4B16` |
+| brightGreen | `#3EDA49` | `#69FF94` | `#A3BE8C` | `#586E75` |
+| brightYellow | `#FDE68A` | `#FFFFA5` | `#EBCB8B` | `#657B83` |
+| brightBlue | `#60A5FA` | `#D6ACFF` | `#81A1C1` | `#839496` |
+| brightMagenta | `#D8B4FE` | `#FF92DF` | `#B48EAD` | `#6C71C4` |
+| brightCyan | `#7DD3FC` | `#A4FFFF` | `#88C0D0` | `#93A1A1` |
+| brightWhite | `#FFFFFF` | `#FFFFFF` | `#ECEFF4` | `#FDF6E3` |
+
+Nord's normal/bright rows are intentionally near-identical for colors other than black/white — that's Nord's actual documented palette (low bright/normal differentiation is one of its defining traits), not an error to "fix" by inventing more contrast.
+
 ## 5. Layout rules
 
 - **App shell:** fixed sidebar (260px, collapses to 56px icon rail below `--bp-sidebar-collapse`) + main content area (the split-pane grid alone, edge to edge — no tab bar as of v1.4). No page scroll at the app-shell level — only individual panels (sidebar list, modal body, terminal buffers) scroll internally.
 - **No responsive grid system** — this is a single-window desktop app, not a multi-page responsive site. The only layout adaptation is the sidebar collapse rule above.
-- **Density rule:** `--space-3` (12px) is the default padding for list rows and form field containers; `--space-6` (24px) separates distinct form sections/fields in the Add/Edit Project modal (see components.md Patterns).
+- **Density rule:** `--space-3` (12px) is the default padding for list rows and form field containers; `--space-6` (24px) separates distinct form sections/fields in the Add/Edit Project modal and the Settings panel's four groups alike (see components.md Patterns).
 - **Terminal area always wins the remaining space** — sidebar is fixed-width, the pane grid fills 100% of everything else, full height.
 
 ## 6. Content & voice
@@ -98,6 +131,7 @@ Base unit 4px. Scale: `--space-1` (4px) through `--space-16` (64px), see tokens.
 - **Button labels:** verb + object, specific — "Save project", "Unlock", "Delete project" — never bare "Submit" or "OK".
 - **Error messages:** state what happened and, where possible, what to do — "This path doesn't exist. Check the folder location and try again." Never a bare "Invalid input."
 - **Empty states** (e.g. no projects yet): one line describing what to do next — "No projects yet. Click **+ Add project** to get started." — plus the same primary action available in context.
+- **Keybinding conflict/validation errors** (v1.6): name the actual conflicting action, don't just say "conflict" — "Already used by Split pane right." Missing-modifier rejections state the rule, not just "invalid" — "Must include Ctrl, Alt, or Cmd." Master password errors follow the existing Input error convention (§ Input, components.md) — "Current password is incorrect," never a bare "Error."
 - **Language:** all UI copy in English (per brief). Paths and command output are naturally whatever the user's own filesystem/shell produces — never translate or reformat those.
 - **Numbers/dates:** not a current requirement (no numeric/date-heavy UI in MVP scope) — if added later, follow the user's OS locale rather than hardcoding a format.
 
@@ -126,6 +160,7 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 - **Touch targets:** N/A as a touch requirement (desktop, pointer-driven), but all clickable controls still respect a minimum 24×24px hit area (WCAG 2.1 AA 2.5.5-adjacent good practice), matching `--control-height-sm` as the practical floor.
 - **Keyboard:** every documented component in components.md specifies its keyboard interactions explicitly — there is no component in this app that is mouse-only.
 - **Reduced motion:** all pulsing/animated states (Sidebar Session Sub-item's `running` status dot, Security Badge's `error` pulse) collapse to a static equivalent under `prefers-reduced-motion: reduce`. Transitions (hover, modal enter/exit) may keep near-instant (<50ms) motion under reduced-motion, per common convention, but never anything that loops or pulses.
+- **Live regions (v1.6):** a Keybinding Row entering its `recording` state announces "Recording — press a key combination" via a polite live region (same convention as Textarea's autosave status); a captured conflict or missing-modifier rejection announces the specific error text from §6, not a generic failure tone.
 
 ## 8. Do / Don't
 
@@ -136,6 +171,9 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 - ❌ Don't let the active-pane focus indicator be optional or purely a color tint → ✅ always render the full `--color-primary` border around the focused pane (Principle 4 — wrong-pane typing is the app's worst usability failure)
 - ❌ Don't add drop shadows to flat surfaces (sidebar rows, session sub-items, panes) → ✅ shadows are reserved for true elevation (modals/popovers) per Principle 1
 - ❌ Don't introduce new font sizes outside §4.2's scale → ✅ pick the nearest token; if none fits, propose a token addition, don't hardcode
+- ❌ Don't let a keybinding be captured without at least one of Ctrl/Alt/Cmd → ✅ reject bare or Shift-only combos before they can be saved (§4.5's presets are irrelevant here — this is about not breaking normal typing in the terminal, see components.md Keybinding Row)
+- ❌ Don't add the gradient (`--color-accent-gradient`) to the Theme Preset Card's selected state "because it's a picker, it deserves flair" → ✅ selected state uses solid `--color-primary` (border + checkmark), same reasoning as the sidebar's `active` state (components.md, Tab — REMOVED in v1.4) — the gradient stays at exactly one place app-wide (Principle 2)
+- ❌ Don't add a second confirmation modal/step on top of the master-password-change form → ✅ the three-field form (current, new, confirm) is itself the friction gate; a nested confirm dialog is ceremony this app's "perceived speed" principle doesn't want
 
 ## 9. Instructions for AI agents
 
@@ -149,6 +187,7 @@ You are implementing UI for this project. Follow these rules:
 6. **Do not modify `tokens.css`/`tokens.json`** unless explicitly asked; propose changes instead.
 7. **This is a Tauri + Svelte app** (architecture.md §7) — implement components as Svelte components consuming these CSS custom properties directly; there is no Tailwind/CSS-in-JS layer assumed by this package.
 8. **Respect the one-place-only gradient rule** (Principle 2) literally — if you're about to use `--color-accent-gradient` a second place, stop and flag it for review rather than proceeding.
+9. **Terminal theme preset colors (§4.5) are not tokens** — implement them as the frontend-only data module architecture.md ADR-0009 specifies (`src/lib/theme-presets.ts`), not as additions to `tokens.css`/`tokens.json`. Rule 2's "never invent values" still applies to app-chrome colors; it does not extend to these — §4.5's table is itself the source of truth for them.
 
 ## 10. Changelog
 
@@ -160,3 +199,5 @@ You are implementing UI for this project. Follow these rules:
 | 1.3 | 2026-07-19 | EVOLVE per PRD v1.4: horizontal tab bar removed entirely — sidebar is now the sole entry point for opening, switching, closing, and drag-sourcing terminal sessions. `Tab` component spec marked REMOVED (see its stub in components.md for rationale). Sidebar Project List Item gains a three-mode model by open-session count (0 / 1 / 2+), with 2+ auto-expanding into a new "Sidebar Session Sub-item" component — no manual expand/collapse toggle. Menu gains a conditional "Close terminal" item (exactly-1-session case only). Split Pane Container's pane header is now always rendered (previously gated by `multiPane`) since it is the only remaining "which project/session" indicator with no tab label to fall back on. Signature gradient reduced from **two** places to **one** (the unlock screen only) — deliberately not relocated to the sidebar (§2, §3, §4.1, §8 updated). `--tab-height` token is now orphaned (kept defined, unused) since its only consumer is removed. No new tokens, no visual direction change. |
 | 1.4 | 2026-07-20 | EVOLVE per direct product decision (no PRD FR yet): Sidebar Project List Item's status dot is repurposed from path-validity to **has-open-session** (project-scope, independent of which tab is currently active) — this deliberately revives the dot-color idea v1.2's changelog notes was dropped in favor of the left-edge bar, now at the owner's explicit request; the two signals remain visually distinct (dot = "anything open here", bar = "this is the one on screen"). Path validity moves to text color only (`--color-text-muted` when invalid, `--color-text` when valid) and the path itself moves from an always-visible second line to a hover/focus-revealed tooltip (first real use of the previously-reserved `--z-tooltip` token) — Principle 5 updated to reflect that the pane header, not the sidebar row, is now the persistently-visible path location. New "Sidebar show/hide toggle" pattern: a manual, fully-implemented full-hide control, deliberately on a separate axis from the breakpoint icon-rail collapse described in components.md's Sidebar layout — code-review turned up that the icon-rail collapse itself was never actually implemented (token defined, nothing reads it), so components.md now marks it ❌ rather than implying it's a working baseline; the two are meant to compose independently whenever it does get built. New feature: Ctrl+Shift+C/V clipboard shortcuts in the terminal pane (no dedicated visual spec — behavioral only, xterm.js key-handler level). No new tokens beyond activating `--z-tooltip`; no visual direction change. |
 | 1.5 | 2026-07-20 | EVOLVE per direct product decision (owner: replace purple with green): primary color changed from violet to green. Primitives `--violet-500/600/700/800` and `--pink-500` replaced by `--green-500/600/700/800` and `--cyan-500`; every semantic token that referenced them (`--color-primary`, `-hover`, `-active`, `--color-accent-gradient`, `--color-focus`, `--color-primary-bg-subtle`, `--shadow-glow-primary`) was re-derived from the new primitives, not hand-edited independently. New shades were computed (not eyeballed) to land on the same contrast ratios as before: `--color-primary` on white ≈5.9:1 (was 6.0:1), hover ≈8.0:1 (unchanged), primary-vs-background (focus/UI-component threshold) 3.2:1 (unchanged) — see §7. Because `--color-security` (emerald, ~158° hue) and the new primary (grass green, ~124° hue) are now both "green," picked the new primary's hue deliberately ~34° away plus a darker/less-saturated value so the two stay visually distinguishable side by side; §3 and §8 spell out that this separation is a backstop, not a replacement for the lock-icon pairing rule (Principle 3). Signature gradient becomes green→cyan ("aurora"), replacing violet→pink; both new stops individually fail text contrast same as before, so the decorative-only rule (Principle 2, §7) still applies unchanged. No component behavior, layout, or non-color token changed. |
+| 1.6 | 2026-07-20 | EVOLVE per FR-13 (Settings Panel), architecture.md v1.1/ADR-0009/ADR-0010: added §4.5 Terminal theme presets (App Default + Dracula, Nord, Solarized Dark — a separate frontend-only palette system, not app-chrome tokens; resolves PRD Q6). New components (components.md): Theme Preset Card, Keybinding Row (+ its `recording`/conflict states), Segmented Control (2-option toggle, used for sidebar position). New pattern: Settings Panel (Modal, `form` variant, reused as-is — no new modal size needed since the theme picker uses a 2-column grid rather than forcing all 4 cards onto one row). Settings Panel deliberately deviates from Modal's "one primary button in the footer" default: everything except master-password-change autosaves per-control (same philosophy as the existing Notes/Textarea autosave precedent), so the footer holds only a dismiss action; master password change keeps its own scoped primary button ("Change password") since it's the one real submit-style action in the panel. Added keybinding safety rule (§8): captured combos must include Ctrl/Alt/Cmd, rejected otherwise — protects normal terminal typing from an accidental bare-key binding. No new design tokens required — everything composes from the existing token set. Fixed a stale HANDOFF.md reference to the gradient rule ("two places" → "one place," matching v1.3/v1.4's actual current state). |
+| 1.7 | 2026-07-20 | EVOLVE per architecture.md v1.3 (keybinding registry extended to zoom + tab-cycling actions, no new visual spec needed for those — behavioral only, same as the original Ctrl+Shift+C/V clipboard shortcuts precedent, FR-13 v1.4). Sidebar show/hide toggle's icon changed from direction-flipping ◀/▶ (which had to swap based on `settingsStore.sidebarPosition`) to a single consistent hamburger (☰) in both hidden/shown states and both sidebar positions — simpler, no swap logic needed, standard convention for a sidebar/menu toggle. No new tokens, no visual direction change. |

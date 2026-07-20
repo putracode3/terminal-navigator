@@ -423,7 +423,7 @@ The overlay's highlighted half previews the *resulting* pane's approximate bound
 - Focus is trapped within the dialog while open (`Tab`/`Shift+Tab` cycle within it).
 
 ### Do / Don't
-- ✅ Do: put exactly one primary button in the footer (per the Button spec's rule).
+- ✅ Do: put exactly one primary button in the footer (per the Button spec's rule) — **except** an all-autosave `form` dialog (v1.6: Settings Panel, see Patterns), whose footer holds only a dismiss action since there is no draft state to submit. This is the one documented exception; don't extend it to Add/Edit Project, which is explicitly not autosave (Behavior, above).
 - ❌ Don't: use a `confirm` dialog for the Unlock screen — unlock is a full-page pattern (see Patterns), not a dismissible overlay, since there is nothing behind it to see yet.
 
 ---
@@ -465,6 +465,132 @@ This is a status indicator, not an interactive control — no hover/focus/active
 
 ---
 
+## Theme Preset Card (v1.6, FR-13)
+
+**Purpose:** Lets the user pick one of the fixed terminal theme presets (design.md §4.5) — a self-demonstrating swatch, not an abstract color picker (there is no per-color custom picker in this app, by PRD decision).
+**Use instead:** For a binary or small exclusive choice that isn't a color preview (e.g. sidebar position), use Segmented Control instead — don't force this component's visual weight onto choices that don't need a preview.
+
+### Anatomy
+1. Container — card, one per preset
+2. Mini terminal preview — a small rectangle rendered in the preset's own `background`, showing 2–3 lines of sample mono text in `foreground` plus a short run of 4–5 ANSI colors (red/green/yellow/blue/cyan) as a compact swatch strip beneath the text — the preview *is* the proof, not a decorative stand-in
+3. Preset name — below the preview, `--text-sm` / `--weight-medium`, `--color-text` (app-chrome text color, not the preset's own foreground — the label is UI chrome, not terminal content)
+4. Selected indicator — checkmark icon, top-right corner of the card, shown only when selected
+
+### Variants
+None — one visual treatment; selection state is carried by States below, not a variant.
+
+### Sizes
+N/A — cards are laid out in a 2-column CSS grid (`grid-template-columns: repeat(2, 1fr)`, gap `--space-3`) inside the Settings Panel; width follows the modal's own content width, no fixed card width token needed. Card padding `--space-3`; mini preview fixed at a 16:9-ish rectangle sized to comfortably fit 2 lines of `--text-xs` mono text (implementer's call within that ratio — not pixel-critical, this is a preview, not real terminal content).
+
+### States
+| State | Visual change |
+|---|---|
+| default (not selected) | card border `--border-width-sm` `--color-border`, bg `--color-surface` |
+| hover / focus-visible | card border `--color-border-strong`; focus-visible additionally gets the standard 2px `--color-focus` outline, offset 2px |
+| selected | card border `--border-width-md` `--color-primary` (solid — **never** the gradient, see design.md §8); checkmark appears, `--color-primary` |
+
+### Behavior
+- Click selects the preset immediately — applies to every currently open terminal pane on click, no separate "Apply"/"Save" (Settings Panel autosaves per-control, see Patterns below). Exactly one card is selected at a time (radio semantics, not multi-select).
+- No hover preview-swap of the panes behind the modal — the card's own mini preview is the only preview; committing is instant on click, matching this app's "perceived speed" principle (design.md Principle 1) rather than a two-step preview-then-confirm.
+
+### Accessibility
+- Rendered as a radio-group (`role="radiogroup"` on the grid container, `role="radio"` + `aria-checked` per card), not plain buttons — this is a mutually-exclusive single choice.
+- Arrow keys move selection between cards (same convention as Menu's item navigation); `Enter`/`Space` selects the focused card.
+- Selection is conveyed by both the border color and the checkmark icon, never color alone.
+
+### Do / Don't
+- ✅ Do: render the mini preview using the preset's *actual* color values (background/foreground/a few ANSI colors) — it must be trustworthy evidence of what the terminal will look like, not a stylized abstraction.
+- ❌ Don't: use `--color-accent-gradient` anywhere on this component, selected or not — see design.md §8.
+- ❌ Don't: add a live full-app preview or a separate "Apply" step — selection is immediate (Behavior, above).
+
+---
+
+## Keybinding Row (v1.6, FR-13)
+
+**Purpose:** One row per rebindable action (architecture.md §5.6's 8-action registry — clipboard copy/paste, pane split-bottom/split-right, pane move-focus×4) — shows the action's current combo and lets the user capture a new one, with live conflict detection.
+**Use instead:** This is specific to the fixed action registry; don't repurpose it for arbitrary "pick a value from a list" needs — use Menu for those.
+
+### Anatomy
+1. Action label — plain text, left-aligned, `--text-sm` `--color-text` (e.g. "Copy selection", "Split pane down")
+2. Combo chip(s) — the current key combination, rendered as small monospace tags (one chip per key segment, e.g. separate `Ctrl` `Shift` `V` chips, or one combined chip — implementer's call, but always `--font-family-mono`, `--text-xs`, bg `--color-surface`, border `--border-width-sm` `--color-border-strong`, `--radius-sm`, padding `--space-1` `--space-2`)
+3. Rebind trigger — trailing ghost `Button`, sm, label "Rebind"
+4. Inline status text (conditional) — appears only during `recording`/`conflict`/`rejected` states, below the chip(s)
+
+### Variants
+None — states (below) carry all visual differentiation.
+
+### Sizes
+| Size | Height | Padding |
+|---|---|---|
+| default | auto (content height + `--space-2` vertical) | `--space-3` horizontal, matching other Settings Panel rows |
+
+### States
+| State | Visual change |
+|---|---|
+| default | as Anatomy |
+| hover / focus-visible (row) | bg `--color-surface-elevated`; Rebind button becomes visible (hidden until hover/focus, matching Sidebar Session Sub-item's close-button convention) |
+| recording | combo chip area replaced by a placeholder chip reading "Press a key combination…", border `--border-width-md` `--color-primary` (pulsing per `--duration-slow`, respects `prefers-reduced-motion` → static if reduced), Rebind button becomes a "Cancel" ghost button in its place |
+| conflict (captured combo already used by another action) | placeholder chip gets `--border-width-md` `--color-danger`; inline status text below reads "Already used by {other action label}", `--color-danger`, `--text-xs`; recording stays active so the user can immediately try a different combo — it does not auto-cancel |
+| rejected (captured combo has no Ctrl/Alt/Cmd modifier) | same visual treatment as `conflict`; inline text reads "Must include Ctrl, Alt, or Cmd" — recording stays active, same reasoning |
+| saved (briefly, after a successful capture) | chip(s) update to the new combo; inline status text below reads "Saved", `--color-text-muted`, fades after 2s — identical convention to Textarea's autosave status |
+
+### Behavior
+- Clicking "Rebind" enters `recording`: the row starts listening for the next keydown. `Tab` and `Escape` are never captured as part of a binding — `Escape` always cancels recording (reverts to the previous combo, no save) and **does not** propagate to close the Settings modal; `Tab` always ends recording as a cancel and moves focus normally (protects the modal's own focus trap). This is a deliberate override of Modal's global Escape-closes-dialog behavior, scoped to exactly this row, exactly while recording.
+- Any other keydown is captured as the candidate combo (`event.preventDefault()` is called unconditionally during capture — this row is actively "owning" the next keystroke, the same discipline `TerminalPane.svelte`'s clipboard handler now follows after its 2026-07-20 fix, generalized here to every capture).
+- Validation order on capture: (1) reject if no Ctrl/Alt/Cmd modifier present → `rejected`; (2) else check against every other action's current combo → `conflict` if it matches one; (3) else commit — persist immediately (no separate save step, Settings Panel autosaves) and enter `saved`.
+- The conflict/modifier check re-runs against the in-memory keybindings map on every capture attempt while still recording — the user can retry immediately without re-clicking "Rebind."
+
+### Accessibility
+- `recording`/`conflict`/`rejected`/`saved` status text changes are announced via a polite live region (design.md §7 — same convention as Textarea's autosave announcements).
+- The row's accessible name includes the action label and its current combo (e.g. `"Copy selection, currently Ctrl+Shift+C"`), not just the label — a screen reader user should be able to identify the binding without visually parsing chips.
+- "Rebind"/"Cancel" is a real, keyboard-activatable `Button` — recording can be entered and exited without a mouse.
+
+### Do / Don't
+- ✅ Do: keep recording active through a `conflict`/`rejected` rejection — forcing the user to re-click "Rebind" after every failed attempt is unnecessary friction this app's speed principle doesn't want.
+- ❌ Don't: allow a combo with no Ctrl/Alt/Cmd to be captured — an unmodified letter key would fire on every normal keystroke typed into the terminal (see design.md §8). This is a hard rule, not a soft warning.
+- ❌ Don't: silently overwrite the other action when a conflict is detected — always block and require the user to choose a different combo.
+
+---
+
+## Segmented Control (v1.6, FR-13)
+
+**Purpose:** A small, exclusive choice between 2 (occasionally 3) plainly-labeled options where a preview isn't needed — this app's only current use is Settings Panel's sidebar-position toggle (Left / Right).
+**Use instead:** For a choice that benefits from a visual preview (e.g. theme), use Theme Preset Card. For a longer list of options, use Menu instead — this component doesn't scroll or support more than a handful of options.
+
+### Anatomy
+1. Container — a single pill-shaped track holding all options, border `--border-width-sm` `--color-border-strong`, `--radius-md`
+2. Option(s) — one segment per choice, equal width, text label only (no icon required)
+
+### Variants
+None for MVP — text-label segments only.
+
+### Sizes
+| Size | Height | Font |
+|---|---|---|
+| default | `--control-height-md` (32px) | `--text-sm` / `--weight-medium` |
+
+### States
+| State | Visual change |
+|---|---|
+| segment default (unselected) | bg transparent, text `--color-text-muted` |
+| segment hover | text `--color-text` |
+| segment selected | bg `--color-primary`, text `--color-on-primary` (same solid pairing as Button primary — verified contrast, design.md §7) |
+| segment focus-visible | outline 2px `--color-focus`, offset 2px |
+
+### Behavior
+- Click (or `Enter`/`Space` when focused) selects a segment immediately — applies instantly, no separate save step (same autosave philosophy as the rest of Settings Panel). Exactly one segment is selected at all times; there is no "none selected" state.
+- Selecting a segment moves the whole selected-segment background in a single `--duration-fast` transition, not an instant snap — this is feedback, not decoration, so it stays even under reduced motion (it's a one-shot transition, not a loop or pulse).
+
+### Accessibility
+- `role="radiogroup"` on the container, `role="radio"` + `aria-checked` per segment.
+- `ArrowLeft`/`ArrowRight` moves selection between segments (wrapping at the ends); `Enter`/`Space` also activates the focused segment directly (not required to move focus first).
+
+### Do / Don't
+- ✅ Do: keep option count small (2, at most 3) — this is a compact toggle, not a substitute for Menu.
+- ❌ Don't: use this for a choice that needs a preview (colors, images) — Theme Preset Card exists for exactly that case.
+
+---
+
 ## Patterns
 
 ### Unlock screen (full-page, not a Modal)
@@ -479,10 +605,10 @@ No tab bar (removed v1.4). The active tab's `Split Pane Container` fills the *en
 ### Sidebar layout
 Fixed width 260px. Spec calls for collapsing to a 56px icon-only rail below `--bp-sidebar-collapse` (automatic, no manual control) — **❌ not yet implemented**: the token is defined in tokens.css but as of v1.4 nothing in `src/` reads it (no media query/logic wires it up). Treat this as a known gap, not a working baseline to build on top of, until it's actually built. Top-to-bottom: search input (compact `Input`, sm size) with a ghost icon `Button` ("Hide sidebar", ◀) at its trailing edge, scrollable list of `Sidebar Project List Item`s (each optionally followed by its `Sidebar Session Sub-item` list when it has 2+ open sessions — the list's total height is therefore dynamic, not fixed-row-height; the scroll container already handles this, no extra layout work needed), pinned footer with a ghost `Button` ("+ Add project").
 
-### Sidebar show/hide toggle (v1.4)
-A manual, user-driven, fully-implemented control — intentionally on a separate axis from the (currently unimplemented, see Sidebar layout above) breakpoint collapse: that one is "narrow window, still present as an icon rail", this one is "fully hidden, 0px, gone until brought back." When the breakpoint collapse above does get built, it and this toggle should keep working independently of each other. Two triggers, same state:
+### Sidebar show/hide toggle (v1.4, icon updated post-FR-13)
+A manual, user-driven, fully-implemented control — intentionally on a separate axis from the (currently unimplemented, see Sidebar layout above) breakpoint collapse: that one is "narrow window, still present as an icon rail", this one is "fully hidden, 0px, gone until brought back." When the breakpoint collapse above does get built, it and this toggle should keep working independently of each other. Two triggers, same state, both a **hamburger icon (☰)** — a single consistent glyph regardless of hidden/shown state or sidebar position (left/right, FR-13), replacing the original direction-flipping ◀/▶ arrows (which had to swap depending on `settingsStore.sidebarPosition`; the hamburger convention needs no such swap, simpler and more standard for a sidebar/menu toggle):
 1. A ghost icon `Button` inside the sidebar itself (trailing edge of the search row) — only reachable while the sidebar is visible; hides it.
-2. A small floating ghost icon `Button` (▶), fixed to the top-left corner of the app shell, `--z-dropdown`, rendered only while the sidebar is hidden — the sole way to bring it back once hidden, since nothing inside a hidden sidebar can be clicked.
+2. A small floating ghost icon `Button`, fixed to the top-left corner of the app shell when the sidebar is on the left (top-right when the sidebar is positioned right, FR-13), `--z-dropdown`, rendered only while the sidebar is hidden — the sole way to bring it back once hidden, since nothing inside a hidden sidebar can be clicked.
 
 No animation requirement beyond the existing transition tokens (Principle 1: perceived speed over decoration) — an instant width/visibility change is preferable to a slide that delays the terminal area reclaiming the space.
 
@@ -494,3 +620,18 @@ No animation requirement beyond the existing transition tokens (Principle 1: per
 5. On drop anywhere invalid (outside a pane, or on the source's own pane): no-op, the dragged element returns to its normal state — this is the browser's native drag-cancel behavior, not a custom animation to build.
 
 This pattern has no dedicated component of its own — it's existing `Sidebar Project List Item`, `Sidebar Session Sub-item`, and `Split Pane Container` states composed into one interaction, which is why it's documented here rather than as a new spec entry.
+
+### Settings Panel (v1.6, FR-13 — Modal, `form` variant)
+
+Reuses Modal's existing `form` variant chrome as-is (480px, `--modal-width-form`, scrollable body) — no new modal size needed. Opened from a trigger in existing app chrome (e.g. a sidebar footer button; exact trigger placement is a small implementation detail, not a new component). Four groups, top to bottom, each separated by `--space-6` and a `--text-lg`/`--weight-semibold` section heading (same title treatment as the Modal header itself, one step down in the hierarchy):
+
+1. **Theme** — a `Theme Preset Card` grid (2 columns), one card per design.md §4.5 preset (App Default, Dracula, Nord, Solarized Dark).
+2. **Master password** — three `Input` (password variant): "Current password", "New password", "Confirm new password" — the confirm field exists specifically because a mistyped new password is unrecoverable (architecture.md ADR-0005/ADR-0010: no backdoor, no recovery), so a retype catches that before it's committed, not after. A `Security Badge` (inline variant) sits beside the section heading — this is the single most security-relevant control in the entire app (it rotates the encryption key itself), and design.md Principle 3 requires the badge everywhere trust-relevant data is touched. Below the fields, a scoped `Button` (primary, "Change password") — the **one** genuine submit action in this modal (see Modal's amended Do/Don't, above). On success: fields clear, inline confirmation text "Password changed" (`--color-text-muted`, fades after 2s, same convention as Textarea's autosave). On failure (wrong current password): the "Current password" `Input` enters its `error` state, message "Current password is incorrect" — the other two fields are untouched, not cleared, so the user doesn't have to retype a new password they already typed correctly.
+3. **Keybindings** — a list of 8 `Keybinding Row`s, one per architecture.md §5.6's registry, grouped visually by area (Clipboard: copy/paste; Panes: split-bottom/split-right/move-focus×4) via a `--text-xs`/`--color-text-muted` sub-label, not a second heading level. A single `--text-xs`/`--color-text-muted` helper line under the section heading sets expectations honestly: "Some combinations may be intercepted by your desktop environment before this app sees them" — a plain disclaimer rather than attempting per-combo OS-reserved detection, which isn't reliable enough across platforms to promise (see architecture.md risk #5).
+4. **Sidebar position** — one `Segmented Control` ("Left" / "Right").
+
+**Everything in this modal autosaves per-control** (Theme Preset Card selection, every Keybinding Row capture, the Segmented Control) **except master password change**, which is the one field group with real, hard-to-reverse consequences (rotates the encryption key) and so gets its own explicit, scoped submit button rather than firing on every keystroke. This mirrors the same reasoning the design system already applies to Notes/Textarea (autosave — nothing to "submit") versus Add/Edit Project (explicit Save — a multi-field form with a real invalid/incomplete state mid-edit).
+
+**Footer:** a single `Button` (secondary, "Done") — dismiss only, since nothing here needs a global "Save." `Escape` and backdrop-click both close the modal unconditionally (no pristine-check gate, unlike Add/Edit Project) — every applied setting is already saved the instant it was changed, and any half-typed-but-not-submitted master password fields are deliberately low-stakes to discard (nothing was applied yet), so there's no accidental-data-loss risk the pristine gate exists to prevent elsewhere.
+
+**Escape precedence:** while any `Keybinding Row` is in its `recording` state, `Escape` is consumed by that row (cancels recording) and does not reach the Modal's own Escape-to-close handler — see Keybinding Row's Behavior. Modal's normal Escape-to-close resumes the instant no row is recording.

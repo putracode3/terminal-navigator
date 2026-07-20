@@ -5,7 +5,9 @@
 	import Modal from "$lib/components/Modal.svelte";
 	import SidebarProjectListItem from "$lib/components/SidebarProjectListItem.svelte";
 	import ProjectFormModal from "./ProjectFormModal.svelte";
+	import SettingsModal from "./SettingsModal.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
+	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { terminalStore, type TabState } from "$lib/stores/terminal.svelte";
 	import {
 		deleteProject,
@@ -29,6 +31,7 @@
 
 	let search = $state("");
 	let formOpen = $state(false);
+	let settingsOpen = $state(false);
 	let editingProject = $state<ProjectDto | undefined>(undefined);
 	let pendingDelete = $state<ProjectDto | undefined>(undefined);
 	let deleteError = $state("");
@@ -155,7 +158,7 @@
 	<div class="search-wrap">
 		<Input id="project-search" label="Search" placeholder="Search projects…" bind:value={search} />
 		<Button variant="ghost" size="icon" ariaLabel="Hide sidebar" onclick={() => appStore.toggleSidebar()}>
-			◀
+			☰
 		</Button>
 	</div>
 	<div class="list">
@@ -189,7 +192,10 @@
 		{/if}
 	</div>
 	<div class="footer">
-		<Button variant="ghost" onclick={openAddForm}>+ Add project</Button>
+		<div class="add-row">
+			<Button variant="ghost" onclick={openAddForm}>+ Add project</Button>
+			<Button variant="ghost" size="icon" ariaLabel="Settings" onclick={() => (settingsOpen = true)}>⚙</Button>
+		</div>
 		<div class="sync-row">
 			<Button variant="secondary" size="sm" onclick={handleExport} loading={syncing}>Export</Button>
 			<Button variant="secondary" size="sm" onclick={handleImportPick} loading={syncing}>Import</Button>
@@ -200,6 +206,8 @@
 </aside>
 
 <ProjectFormModal open={formOpen} project={editingProject} onClose={() => (formOpen = false)} />
+
+<SettingsModal open={settingsOpen} onClose={() => (settingsOpen = false)} />
 
 <Modal
 	open={!!pendingDelete}
@@ -252,6 +260,11 @@
 		border-right: var(--border-width-sm) solid var(--color-border);
 	}
 
+	:global([data-sidebar-position="right"]) .sidebar {
+		border-right: none;
+		border-left: var(--border-width-sm) solid var(--color-border);
+	}
+
 	.search-wrap {
 		display: flex;
 		align-items: flex-end;
@@ -285,6 +298,16 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
+	}
+
+	.add-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	.add-row > :global(.btn-md) {
+		flex: 1;
 	}
 
 	.sync-row {

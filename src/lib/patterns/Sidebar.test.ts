@@ -60,6 +60,22 @@ describe("Sidebar — show/hide toggle", () => {
 	});
 });
 
+describe("Sidebar — Settings trigger (FR-13)", () => {
+	it("does not render the Settings modal until opened", () => {
+		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+
+		expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+	});
+
+	it("clicking the Settings button opens the Settings modal", async () => {
+		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+		expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+	});
+});
+
 describe("Sidebar — invalid path indicator (FR-01 edge case)", () => {
 	it("marks a project invalid when its path no longer exists, and clicking shows a message instead of opening it", async () => {
 		pathExistsMock.mockImplementation(async (path: string) => path !== "/gone");

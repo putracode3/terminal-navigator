@@ -10,6 +10,7 @@
 		node,
 		tabId,
 		focusedPaneId,
+		active = true,
 		dragSource,
 		onFocusPane,
 		onSplitPane,
@@ -23,6 +24,11 @@
 		 *  tree can't be grafted into itself), not for anything else. */
 		tabId: string;
 		focusedPaneId: string;
+		/** Whether `tabId` is the tab currently shown in the terminal area —
+		 *  threaded straight through to each leaf's TerminalPane (see its own
+		 *  prop doc). Defaults `true` so standalone usage (tests) behaves as
+		 *  if always active, matching pre-v1.5 behavior. */
+		active?: boolean;
 		/** The sidebar drag currently in progress, or null — see
 		 *  terminalStore.dragSource. Threaded as a prop (not read from the
 		 *  store directly) to keep this component prop-driven/testable. */
@@ -35,7 +41,31 @@
 	} = $props();
 
 	let containerEl: HTMLDivElement | undefined = $state();
-	let dropZone = $state<DropZone | null>(null);
+	// Keyed by the hovered leaf's own sessionId (not just a bare DropZone) —
+	// see the note above the template: a single PaneNodeView instance can now
+	// render several sibling leaves inline, so the overlay must know *which*
+	// one is being dragged over, not just which zone.
+	let dropZone = $state<{ sessionId: string; zone: DropZone } | null>(null);
+
+	/** Bug fix (debugger session, "split pane makes the other terminal
+	 *  unscrollable"): a lone leaf and a real split used to be two entirely
+	 *  different branches of a top-level `{#if node.type === 'leaf'}`. The
+	 *  moment a tab's *only* pane got split, that leaf's branch was torn down
+	 *  and the `{:else}` branch mounted a brand-new nested `<PaneNodeView>`
+	 *  for it from scratch — which mounted a brand-new `<TerminalPane>`,
+	 *  destroying the existing xterm.js `Terminal` (and its scrollback/scroll
+	 *  state) even though that session's PTY never actually restarted.
+	 *  Splitting an *already*-split tab further never had this problem —
+	 *  that just grows an existing keyed `{#each}`'s array, which Svelte
+	 *  correctly reconciles by key. The fix: always render through that same
+	 *  keyed `{#each}` shape, normalizing a lone leaf to a single-item list,
+	 *  so a leaf→split transition is just "the array grew from 1 to 2" to
+	 *  Svelte, not "an if-branch flipped" — the existing leaf's key
+	 *  (sessionId) never changes, so its component instance survives. */
+	const isRealSplit = $derived(node.type === "split");
+	const items = $derived(isRealSplit ? (node as Extract<PaneNode, { type: "split" }>).children : [node]);
+	const direction = $derived(isRealSplit ? (node as Extract<PaneNode, { type: "split" }>).direction : "row");
+	const sizes = $derived(isRealSplit ? (node as Extract<PaneNode, { type: "split" }>).sizes : [1]);
 
 	/** Divides the pane by its two diagonals into 4 triangles (components.md's
 	 *  Drop zones table — deliberately no center zone). */
@@ -61,7 +91,7 @@
 		return dragSource.kind === "spawn" || dragSource.tabId !== tabId;
 	}
 
-	function handleDragOver(e: DragEvent) {
+	function handleDragOver(e: DragEvent, sessionId: string) {
 		// No preventDefault() → browser shows its native "not-allowed" cursor
 		// and disallows the drop, satisfying the invalid-target spec with zero
 		// extra styling (no drag in progress, or hovering the dragged tab's
@@ -70,7 +100,7 @@
 		e.preventDefault();
 		if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		dropZone = computeDropZone(rect, e.clientX, e.clientY);
+		dropZone = { sessionId, zone: computeDropZone(rect, e.clientX, e.clientY) };
 	}
 
 	function handleDragLeave() {
@@ -79,8 +109,8 @@
 
 	function handleDrop(e: DragEvent, sessionId: string) {
 		e.preventDefault();
-		if (dropZone && isValidDropTarget()) {
-			onDrop(sessionId, dropZone);
+		if (dropZone && dropZone.sessionId === sessionId && isValidDropTarget()) {
+			onDrop(sessionId, dropZone.zone);
 		}
 		dropZone = null;
 	}
@@ -148,52 +178,54 @@
 	}
 </script>
 
-{#if node.type === "leaf"}
-	<div class="leaf">
-		<div class="pane-header">
-			<span class="cwd" title={node.cwd}>{truncateMiddle(node.cwd)}</span>
-			<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(node.sessionId)}>✕</button>
-		</div>
-		<div
-			class="pane-body"
-			role="group"
-			ondragover={handleDragOver}
-			ondragleave={handleDragLeave}
-			ondrop={(e) => handleDrop(e, node.sessionId)}
-		>
-			<!-- Keyed by sessionId: this leaf isn't inside a keyed {#each} (only
-			     split children are), so without this key, switching to a
-			     different single-pane tab would reuse the same TerminalPane
-			     instance instead of remounting it — its onMount-time PTY output
-			     subscription and xterm.js Terminal are only ever created once,
-			     so a reused instance would keep showing/writing to the OLD
-			     session forever, and its focus $effect wouldn't refire if
-			     `focused` happened to stay `true` across the switch (verified
-			     via a render/rerender repro before this fix). -->
-			{#key node.sessionId}
-				<TerminalPane
-					sessionId={node.sessionId}
-					focused={node.sessionId === focusedPaneId}
-					onFocus={() => onFocusPane(node.sessionId)}
-				/>
-			{/key}
-			<div class="pane-toolbar">
-				<button aria-label="Split right" onclick={() => onSplitPane(node.sessionId, "row")}>⬌</button>
-				<button aria-label="Split down" onclick={() => onSplitPane(node.sessionId, "column")}>⬍</button>
-			</div>
-			{#if dropZone}
-				<div class="drop-zone-overlay drop-zone-{dropZone}" aria-hidden="true"></div>
-			{/if}
-		</div>
-	</div>
-{:else}
-	<div class="split split-{node.direction}" bind:this={containerEl}>
-		{#each node.children as child, i (child.type === "leaf" ? child.sessionId : child.id)}
-			<div class="split-child" style:flex="{node.sizes[i]} 1 0%">
+<div class="split split-{direction}" bind:this={containerEl}>
+	{#each items as child, i (child.type === "leaf" ? child.sessionId : child.id)}
+		<div class="split-child" style:flex="{sizes[i]} 1 0%">
+			{#if child.type === "leaf"}
+				<div class="leaf">
+					<div class="pane-header">
+						<span class="cwd" title={child.cwd}>{truncateMiddle(child.cwd)}</span>
+						<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(child.sessionId)}>✕</button>
+					</div>
+					<div
+						class="pane-body"
+						role="group"
+						ondragover={(e) => handleDragOver(e, child.sessionId)}
+						ondragleave={handleDragLeave}
+						ondrop={(e) => handleDrop(e, child.sessionId)}
+					>
+						<!-- Keyed by sessionId via the {#each} above: a leaf whose
+						     sessionId changes *in place* (e.g. grafting a dragged
+						     session onto it, TerminalArea.svelte's handleDrop) still
+						     gets a fresh TerminalPane instance — its onMount-time PTY
+						     output subscription and xterm.js Terminal are only ever
+						     created once, so reusing the instance would keep
+						     showing/writing to the OLD session forever. A leaf
+						     surviving a leaf→split transition (this file's bug fix,
+						     see above) is the opposite case: same sessionId, same
+						     key, correctly reused instead of remounted. -->
+						<TerminalPane
+							sessionId={child.sessionId}
+							focused={child.sessionId === focusedPaneId}
+							{active}
+							onFocus={() => onFocusPane(child.sessionId)}
+							onExit={() => onClosePane(child.sessionId)}
+						/>
+						<div class="pane-toolbar">
+							<button aria-label="Split right" onclick={() => onSplitPane(child.sessionId, "row")}>⬌</button>
+							<button aria-label="Split down" onclick={() => onSplitPane(child.sessionId, "column")}>⬍</button>
+						</div>
+						{#if dropZone && dropZone.sessionId === child.sessionId}
+							<div class="drop-zone-overlay drop-zone-{dropZone.zone}" aria-hidden="true"></div>
+						{/if}
+					</div>
+				</div>
+			{:else}
 				<PaneNodeView
 					node={child}
 					{tabId}
 					{focusedPaneId}
+					{active}
 					{dragSource}
 					{onFocusPane}
 					{onSplitPane}
@@ -201,22 +233,22 @@
 					{onResizeSplit}
 					{onDrop}
 				/>
-			</div>
-			{#if i < node.children.length - 1}
-				<!-- svelte-ignore a11y_no_noninteractive_tabindex -- WAI-ARIA "window splitter" pattern: a focusable, keyboard-resizable separator is the documented accessible pattern here -->
-				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -- same: pointer/keyboard handlers are required for this pattern -->
-				<div
-					class="divider divider-{node.direction}"
-					role="separator"
-					aria-orientation={node.direction === "row" ? "vertical" : "horizontal"}
-					tabindex="0"
-					onpointerdown={(e) => startDrag(node, i, e)}
-					onkeydown={(e) => handleDividerKeydown(node, i, e)}
-				></div>
 			{/if}
-		{/each}
-	</div>
-{/if}
+		</div>
+		{#if isRealSplit && i < items.length - 1}
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex -- WAI-ARIA "window splitter" pattern: a focusable, keyboard-resizable separator is the documented accessible pattern here -->
+			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -- same: pointer/keyboard handlers are required for this pattern -->
+			<div
+				class="divider divider-{direction}"
+				role="separator"
+				aria-orientation={direction === "row" ? "vertical" : "horizontal"}
+				tabindex="0"
+				onpointerdown={(e) => startDrag(node as Extract<PaneNode, { type: "split" }>, i, e)}
+				onkeydown={(e) => handleDividerKeydown(node as Extract<PaneNode, { type: "split" }>, i, e)}
+			></div>
+		{/if}
+	{/each}
+</div>
 
 <style>
 	.leaf {

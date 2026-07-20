@@ -7,21 +7,54 @@
 	import { WebglAddon } from "@xterm/addon-webgl";
 	import "@xterm/xterm/css/xterm.css";
 	import { writeTerminal, resizeTerminal } from "$lib/api";
+	import { getThemePreset } from "$lib/theme-presets";
+	import { matchesCombo } from "$lib/keybindings";
+	import { settingsStore } from "$lib/stores/settings.svelte";
 
 	let {
 		sessionId,
 		focused = false,
+		active = true,
 		onFocus,
+		onExit,
 	}: {
 		sessionId: string;
 		focused?: boolean;
+		/** Whether this pane's tab is the one currently shown in the terminal
+		 *  area (see TerminalArea.svelte — every open tab's tree stays mounted
+		 *  so a backgrounded session's xterm.js buffer is never lost, only the
+		 *  active tab's is visible). Gates the focus effect below so a
+		 *  backgrounded pane can't steal real browser keyboard focus, and so
+		 *  switching back to a tab re-focuses its pane even though `focused`
+		 *  itself didn't change while it was hidden. */
+		active?: boolean;
 		onFocus: () => void;
+		/** Called when the shell exits on its own (user typed `exit`, the
+		 *  shell crashed, etc.) — the backend has no scrollback to replay and
+		 *  will send no more output, so the pane should close the same way it
+		 *  would if the user clicked "Close pane" themselves. */
+		onExit: () => void;
 	} = $props();
 
 	let containerEl: HTMLDivElement | undefined = $state();
 	let term: Terminal | undefined;
 	let fitAddon: FitAddon | undefined;
+	/** FR-13 follow-up (terminal.zoomIn/zoomOut, architecture.md §5.6):
+	 *  per-pane, not persisted. Falls out naturally from where the keyboard
+	 *  handler already lives — `attachCustomKeyEventHandler` only fires for
+	 *  whichever pane actually has focus, so zoom is inherently per-pane with
+	 *  no extra coordination needed; Ctrl+Scroll is separately hover-scoped
+	 *  (a wheel listener on this pane's own container), independent of
+	 *  keyboard focus, same as how wheel scrolling works anywhere else.
+	 *  Ephemeral by design (resets on next launch) — consistent with
+	 *  appStore.sidebarHidden also not persisting, unlike the theme preset,
+	 *  which does (settingsStore/settings_store). */
+	const FONT_SIZE_MIN = 8;
+	const FONT_SIZE_MAX = 32;
+	const FONT_SIZE_STEP = 1;
+	let fontSize = 13;
 	let unlisten: (() => void) | undefined;
+	let unlistenExit: (() => void) | undefined;
 	let resizeObserver: ResizeObserver | undefined;
 	/** Serializes this pane's writes to the backend: `invoke()` calls are
 	 *  independent, concurrent IPC round-trips with no ordering guarantee
@@ -55,19 +88,34 @@
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	}
 
+	/** Shared by the terminal.zoomIn/zoomOut keybindings (below) and the
+	 *  Ctrl+Scroll gesture (template) — clamped so it can't reach a
+	 *  degenerate (unreadable, or 0-row/0-col) size. Re-fits and reports the
+	 *  new row/col count to the backend PTY the same way any other resize
+	 *  does (reportResize, inside onMount) — the shell needs to know its
+	 *  dimensions actually changed. */
+	function applyZoom(delta: number) {
+		if (!term || !fitAddon) return;
+		const next = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, fontSize + delta));
+		if (next === fontSize) return;
+		fontSize = next;
+		term.options.fontSize = fontSize;
+		fitAddon.fit();
+		resizeTerminal(sessionId, term.rows, term.cols).catch((err) =>
+			console.error(`resizeTerminal(${sessionId}) failed:`, err),
+		);
+	}
+
+
 	onMount(() => {
 		term = new Terminal({
 			fontFamily: cssVar("--font-family-mono"),
-			fontSize: 13,
-			theme: {
-				background: cssVar("--color-background"),
-				foreground: cssVar("--color-text"),
-				cursor: cssVar("--color-primary"),
-				cursorAccent: cssVar("--color-background"),
-				// ANSI 16-color palette is outside the design token system
-				// (tokens.css defines app chrome, not shell output colors) —
-				// unspecified: using xterm's defaults — review needed.
-			},
+			fontSize,
+			// FR-13/design.md §4.5: a named preset's full Theme (background,
+			// foreground, cursor, cursorAccent, all 16 ANSI colors) — replaces
+			// the old partial CSS-var-derived object that left the ANSI palette
+			// as xterm's unspecified defaults.
+			theme: getThemePreset(settingsStore.themePreset).theme,
 		});
 		fitAddon = new FitAddon();
 		term.loadAddon(fitAddon);
@@ -89,20 +137,35 @@
 		}
 
 		// Ctrl+C/Ctrl+V are already SIGINT and (in most shells) a no-op-ish
-		// paste-via-bracketed-paste is not universal, so this app uses the
-		// Ctrl+Shift+C/V convention most terminal emulators (incl. the
+		// paste-via-bracketed-paste is not universal, so this app defaults to
+		// the Ctrl+Shift+C/V convention most terminal emulators (incl. the
 		// user's prior Tilix) use for clipboard, to avoid colliding with the
-		// PTY's own use of the unshifted combo.
+		// PTY's own use of the unshifted combo — but FR-13 lets the user
+		// rebind it, so the actual combo checked here comes from
+		// settingsStore, not a hardcoded modifier check.
 		term.attachCustomKeyEventHandler((event) => {
-			if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey) return true;
+			if (event.type !== "keydown") return true;
 
-			if (event.code === "KeyC") {
+			if (matchesCombo(event, settingsStore.keybindings["clipboard.copy"])) {
+				// preventDefault: returning false below only tells xterm.js to
+				// skip its own default keydown handling — it does NOT suppress
+				// the DOM event, since this is an addEventListener callback
+				// (not an inline onkeydown), so the browser/webview's own
+				// default action for the key combo still runs otherwise.
+				event.preventDefault();
 				const selection = term?.getSelection();
 				if (selection) writeText(selection).catch((err) => console.error("clipboard write failed:", err));
 				return false;
 			}
 
-			if (event.code === "KeyV") {
+			if (matchesCombo(event, settingsStore.keybindings["clipboard.paste"])) {
+				// Without this, WebKitGTK's native "Paste" edit action for
+				// Ctrl+Shift+V still fires and dispatches its own `paste`
+				// ClipboardEvent at xterm's hidden textarea — which xterm.js
+				// handles itself via its own built-in paste listener,
+				// inserting the same clipboard text a second time (the
+				// "paste happens twice" bug).
+				event.preventDefault();
 				// term.paste() (not a raw queueWrite) — it wraps the data in
 				// bracketed-paste markers when the shell has that mode on, so
 				// a multi-line paste is inserted as one block for the user to
@@ -118,7 +181,38 @@
 				return false;
 			}
 
+			if (matchesCombo(event, settingsStore.keybindings["terminal.zoomIn"])) {
+				event.preventDefault();
+				applyZoom(FONT_SIZE_STEP);
+				return false;
+			}
+
+			if (matchesCombo(event, settingsStore.keybindings["terminal.zoomOut"])) {
+				event.preventDefault();
+				applyZoom(-FONT_SIZE_STEP);
+				return false;
+			}
+
 			return true;
+		});
+
+		// Ctrl+Scroll — a fixed gesture (architecture.md §5.6), not a
+		// rebindable registry entry. This MUST be xterm's own
+		// attachCustomWheelEventHandler hook (code review B1), not a separate
+		// DOM `wheel` listener on an ancestor element: xterm registers its own
+		// wheel listener directly on its own viewport, which runs first and
+		// (with no scrollback — the common case: a fresh prompt, or any
+		// program using the alternate screen like vim/less/htop) converts an
+		// un-intercepted wheel into literal ESC[A/ESC[B arrow keys sent to the
+		// shell — an ancestor's bubble-phase preventDefault() runs too late to
+		// stop that. Returning `false` here skips xterm's default wheel
+		// handling entirely, exactly like attachCustomKeyEventHandler does for
+		// keydown, above.
+		term.attachCustomWheelEventHandler((event) => {
+			if (!event.ctrlKey) return true;
+			event.preventDefault();
+			applyZoom(event.deltaY < 0 ? FONT_SIZE_STEP : -FONT_SIZE_STEP);
+			return false;
 		});
 
 		if (containerEl) term.open(containerEl);
@@ -135,8 +229,22 @@
 		// always recalculates layout before running rAF callbacks, and a
 		// callback scheduled from inside one rAF is guaranteed to run in the
 		// *next* frame, after that frame's own layout is done.
+		//
+		// `active` gates this the same way it gates the focus effect below:
+		// TerminalArea.svelte backgrounds a tab via `display: none`, which
+		// collapses this pane's container to 0x0 — the ResizeObserver fires
+		// for that collapse exactly like any other resize. Without this
+		// guard, backgrounding a tab would fit()/resize() the terminal (and
+		// the backend PTY) down toward that degenerate size, then have to
+		// resize it straight back up when the tab is reactivated; switching
+		// tabs quickly let that shrink-then-grow race land mid-flight,
+		// visibly flashing the terminal at the wrong size before it settled
+		// (regression). Reactivating a tab still refits correctly: the same
+		// display:none -> flex flip fires a genuine ResizeObserver
+		// notification for the real size, by which point `active` is already
+		// true again.
 		function reportResize() {
-			if (!fitAddon || !term) return;
+			if (!fitAddon || !term || !active) return;
 			fitAddon.fit();
 			resizeTerminal(sessionId, term.rows, term.cols)
 				.catch((err) => console.error(`resizeTerminal(${sessionId}) failed:`, err))
@@ -155,18 +263,36 @@
 			unlisten = fn;
 		});
 
+		// No payload: the shell's end of the pty just closed on its own (the
+		// user typed `exit`, the shell crashed, etc.) — there's no more
+		// output coming and nothing to replay, so react exactly as if the
+		// user had clicked this pane's own "Close pane" button.
+		listen(`pty://exit/${sessionId}`, () => {
+			onExit();
+		}).then((fn) => {
+			unlistenExit = fn;
+		});
+
 		resizeObserver = new ResizeObserver(reportResize);
 		if (containerEl) resizeObserver.observe(containerEl);
 	});
 
 	onDestroy(() => {
 		unlisten?.();
+		unlistenExit?.();
 		resizeObserver?.disconnect();
 		term?.dispose();
 	});
 
 	$effect(() => {
-		if (focused) term?.focus();
+		if (focused && active) term?.focus();
+	});
+
+	// FR-13: applies the newly-selected preset to this (already-open) pane
+	// immediately, per the acceptance criteria — no separate "Apply" step.
+	$effect(() => {
+		const preset = getThemePreset(settingsStore.themePreset);
+		if (term) term.options.theme = preset.theme;
 	});
 </script>
 

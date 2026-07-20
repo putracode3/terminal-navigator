@@ -53,6 +53,11 @@
 	let menuAnchor = $state<{ x: number; y: number } | null>(null);
 	let showInvalidMessage = $state(false);
 	let dragging = $state(false);
+	/** JS-tracked rather than pure CSS `:hover`: some webviews (WebKitGTK on
+	 *  Linux) leave `:hover` stuck on the right-clicked row after its native
+	 *  contextmenu handling, even once the popup closes and the pointer has
+	 *  moved on. Tracking it ourselves lets `handleMenuClose` force it off. */
+	let hovering = $state(false);
 
 	const mode = $derived<"empty" | "single" | "grouped">(
 		sessions.length === 0 ? "empty" : sessions.length === 1 ? "single" : "grouped",
@@ -61,9 +66,6 @@
 	const isActive = $derived(!!singleSession && singleSession.id === activeTabId);
 	const hasOpenTab = $derived(mode === "single");
 	const draggable = $derived(mode !== "grouped" && !invalid);
-	/** components.md v1.4 — project-scope "is anything running here", not
-	 *  tab-scope "is this the one on screen" (that's isActive/hasOpenTab). */
-	const hasOpenSession = $derived(mode !== "empty");
 
 	const menuItems: MenuItemDef[] = $derived([
 		{ label: "Open in new tab", onSelect: onForceNewTab },
@@ -96,6 +98,15 @@
 		menuOpen = !menuOpen;
 	}
 
+	function handleMenuClose() {
+		// menuAnchor is only set for the right-click (context) variant —
+		// openAnchoredMenu always nulls it first. Force hover off just for
+		// that variant, since that's the one that leaves it stuck (see the
+		// `hovering` declaration above).
+		if (menuAnchor) hovering = false;
+		menuOpen = false;
+	}
+
 	function handleDragStart(e: DragEvent) {
 		if (!draggable) {
 			e.preventDefault();
@@ -121,6 +132,7 @@
 	class:grouped={mode === "grouped"}
 	class:invalid
 	class:dragging
+	class:hovering
 	role={mode === "grouped" ? undefined : "button"}
 	tabindex={mode === "grouped" ? undefined : 0}
 	draggable={draggable}
@@ -128,10 +140,11 @@
 	onclick={handleClick}
 	onkeydown={(e) => e.key === "Enter" && handleClick()}
 	oncontextmenu={handleContextMenu}
+	onmouseenter={() => (hovering = true)}
+	onmouseleave={() => (hovering = false)}
 	ondragstart={handleDragStart}
 	ondragend={handleDragEnd}
 >
-	<span class="dot" class:dot-open={hasOpenSession} aria-hidden="true"></span>
 	<div class="text">
 		<div class="name">{project.name}</div>
 		{#if showInvalidMessage}<div class="invalid-message">This path no longer exists on disk.</div>{/if}
@@ -140,7 +153,7 @@
 		<button class="menu-btn" aria-label={`More actions for ${project.name}`} onclick={openAnchoredMenu}>
 			⋮
 		</button>
-		<Menu open={menuOpen} items={menuItems} anchorPosition={menuAnchor} onClose={() => (menuOpen = false)} />
+		<Menu open={menuOpen} items={menuItems} anchorPosition={menuAnchor} onClose={handleMenuClose} />
 	</div>
 	<div class="path-tooltip" class:path-invalid={invalid} aria-hidden="true">{project.path}</div>
 </div>
@@ -171,7 +184,7 @@
 		cursor: pointer;
 	}
 
-	.item:hover {
+	.item.hovering {
 		background: var(--color-surface-elevated);
 	}
 
@@ -195,18 +208,6 @@
 
 	.item.dragging {
 		opacity: 0.4;
-	}
-
-	.dot {
-		flex-shrink: 0;
-		width: var(--space-2);
-		height: var(--space-2);
-		border-radius: var(--radius-full);
-		background: transparent;
-	}
-
-	.dot-open {
-		background: var(--color-security);
 	}
 
 	.text {
@@ -249,8 +250,13 @@
 		z-index: var(--z-tooltip);
 	}
 
-	.item:hover .path-tooltip,
-	.item:focus-within .path-tooltip {
+	/* :focus-visible, not :focus-within: the latter also matches when a
+	 * descendant is focused (the overflow menu's autofocused first item, or
+	 * the row itself after a plain mouse click) and pops the tooltip up next
+	 * to a menu that's clearly already telling the user what they clicked.
+	 * :focus-visible reflects the browser's own keyboard-vs-pointer heuristic
+	 * — same reasoning as `.item:focus-visible`'s outline above. */
+	.item:focus-visible .path-tooltip {
 		display: block;
 	}
 
@@ -278,7 +284,7 @@
 		visibility: hidden;
 	}
 
-	.item:hover .menu-btn,
+	.item.hovering .menu-btn,
 	.item:focus-within .menu-btn {
 		visibility: visible;
 	}

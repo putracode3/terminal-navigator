@@ -59,12 +59,19 @@ impl PtyManager {
     /// Spawns a plain shell at `cwd` under `session_id`. `on_output` is called
     /// from a background thread every time the shell produces output — it
     /// must be cheap and non-blocking (e.g. forward to a channel or emit a
-    /// Tauri event), never block waiting on the caller.
+    /// Tauri event), never block waiting on the caller. `on_exit` is called
+    /// exactly once, from that same background thread, when the shell's end
+    /// of the pty closes (the user typed `exit`, the shell crashed, etc.) —
+    /// this manager does not remove the session from `sessions` or kill the
+    /// (already-dead) child itself; the caller is expected to react by
+    /// calling `close` (mirroring a user-initiated close), same as it would
+    /// for a manual "Close pane" — see architecture.md's PTY exit note.
     pub fn spawn(
         &self,
         session_id: Uuid,
         cwd: &Path,
         mut on_output: impl FnMut(&str) + Send + 'static,
+        on_exit: impl FnOnce() + Send + 'static,
     ) -> Result<(), PtyError> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -101,6 +108,7 @@ impl PtyManager {
                     Err(_) => break,
                 }
             }
+            on_exit();
         });
 
         let mut sessions = self.sessions.lock().unwrap();
@@ -115,8 +123,9 @@ impl PtyManager {
         session_id: Uuid,
         project: &Project,
         on_output: impl FnMut(&str) + Send + 'static,
+        on_exit: impl FnOnce() + Send + 'static,
     ) -> Result<(), PtyError> {
-        self.spawn(session_id, &project.path, on_output)?;
+        self.spawn(session_id, &project.path, on_output, on_exit)?;
         command_runner::run_setup_commands(project, |s| {
             self.write(session_id, s).map_err(|_| CommandRunnerError::WriteFailed)
         })?;
@@ -204,9 +213,14 @@ mod tests {
         let (tx, rx) = mpsc::channel::<String>();
 
         manager
-            .spawn(session_id, dir.path(), move |chunk| {
-                let _ = tx.send(chunk.to_string());
-            })
+            .spawn(
+                session_id,
+                dir.path(),
+                move |chunk| {
+                    let _ = tx.send(chunk.to_string());
+                },
+                || {},
+            )
             .unwrap();
 
         manager.write(session_id, "echo TERM-IS-[$TERM]\n").unwrap();
@@ -227,9 +241,14 @@ mod tests {
         let (tx, rx) = mpsc::channel::<String>();
 
         manager
-            .spawn(session_id, dir.path(), move |chunk| {
-                let _ = tx.send(chunk.to_string());
-            })
+            .spawn(
+                session_id,
+                dir.path(),
+                move |chunk| {
+                    let _ = tx.send(chunk.to_string());
+                },
+                || {},
+            )
             .unwrap();
 
         manager.write(session_id, "echo pty-manager-test-marker\n").unwrap();
@@ -261,9 +280,14 @@ mod tests {
         };
 
         manager
-            .spawn_for_project(session_id, &project, move |chunk| {
-                let _ = tx.send(chunk.to_string());
-            })
+            .spawn_for_project(
+                session_id,
+                &project,
+                move |chunk| {
+                    let _ = tx.send(chunk.to_string());
+                },
+                || {},
+            )
             .unwrap();
 
         assert!(
@@ -293,7 +317,7 @@ mod tests {
         let manager = PtyManager::new();
         let dir = tempdir().unwrap();
         let session_id = Uuid::new_v4();
-        manager.spawn(session_id, dir.path(), |_| {}).unwrap();
+        manager.spawn(session_id, dir.path(), |_| {}, || {}).unwrap();
 
         manager.close(session_id).unwrap();
 
@@ -307,13 +331,38 @@ mod tests {
         let dir = tempdir().unwrap();
         let session_a = Uuid::new_v4();
         let session_b = Uuid::new_v4();
-        manager.spawn(session_a, dir.path(), |_| {}).unwrap();
-        manager.spawn(session_b, dir.path(), |_| {}).unwrap();
+        manager.spawn(session_a, dir.path(), |_| {}, || {}).unwrap();
+        manager.spawn(session_b, dir.path(), |_| {}, || {}).unwrap();
 
         manager.close(session_a).unwrap();
 
         // Closing session_a must not affect session_b.
         assert!(manager.write(session_b, "echo still-alive\n").is_ok());
         manager.close(session_b).unwrap();
+    }
+
+    #[test]
+    fn shell_exiting_on_its_own_calls_on_exit() {
+        // Regression: the background reader thread used to just `break` and
+        // silently vanish when the shell's end of the pty closed (user typed
+        // `exit`, shell crashed, etc.) — nothing ever told the caller the
+        // session had ended, so the frontend pane never closed even though
+        // the shell process was long gone.
+        let manager = PtyManager::new();
+        let dir = tempdir().unwrap();
+        let session_id = Uuid::new_v4();
+        let (exit_tx, exit_rx) = mpsc::channel::<()>();
+
+        manager
+            .spawn(session_id, dir.path(), |_| {}, move || {
+                let _ = exit_tx.send(());
+            })
+            .unwrap();
+
+        manager.write(session_id, "exit\n").unwrap();
+
+        exit_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("on_exit should fire once the shell exits on its own");
     }
 }

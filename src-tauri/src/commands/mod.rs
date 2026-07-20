@@ -13,14 +13,18 @@ use crate::config_sync;
 use crate::error::AppError;
 use crate::project_store::{Project, ProjectInput, ProjectStore};
 use crate::pty_manager::PtyManager;
+use crate::settings_store::{self, Settings, SidebarPosition};
 
 /// Shared app state: `None` while locked, `Some(store)` once unlocked with the
 /// master password. `data_file` is resolved once at startup (see lib.rs).
 /// `pty_manager` needs no lock/unlock state — terminal sessions are runtime-only
 /// (architecture.md §5.3) and independent of whether the project store is open.
+/// `settings_file` is deliberately outside `store`'s lock/unlock lifecycle
+/// (ADR-0009/NFR-8) — settings commands never check `store`.
 pub struct AppState {
     pub store: Mutex<Option<ProjectStore>>,
     pub data_file: PathBuf,
+    pub settings_file: PathBuf,
     pub pty_manager: PtyManager,
 }
 
@@ -32,6 +36,15 @@ fn parse_uuid(raw: &str) -> Result<Uuid, AppError> {
 /// `terminal_view` for that pane only ever hears its own session (architecture.md §5.6).
 fn output_event_name(session_id: Uuid) -> String {
     format!("pty://output/{session_id}")
+}
+
+/// Fired once, with no payload, when the shell's end of the pty closes on its
+/// own (the user typed `exit`, the shell crashed, etc.) — the frontend reacts
+/// exactly as it would to the user clicking a pane's own "Close pane" button,
+/// since `pty_manager` never removes the session or kills the (already-dead)
+/// child by itself (see `PtyManager::spawn`'s doc comment).
+fn exit_event_name(session_id: Uuid) -> String {
+    format!("pty://exit/{session_id}")
 }
 
 #[derive(Debug, Serialize)]
@@ -72,6 +85,38 @@ impl From<ProjectInputDto> for ProjectInput {
             path: PathBuf::from(dto.path),
             setup_commands: dto.setup_commands,
             notes: dto.notes,
+        }
+    }
+}
+
+/// FR-13 — the non-sensitive preferences DTO. Same shape as `Settings`
+/// (settings_store has no internal fields to hide), kept as a distinct DTO
+/// anyway to match this project's existing convention of never serializing
+/// domain structs directly across the IPC boundary.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDto {
+    pub theme_preset: String,
+    pub keybindings: std::collections::HashMap<String, String>,
+    pub sidebar_position: SidebarPosition,
+}
+
+impl From<Settings> for SettingsDto {
+    fn from(s: Settings) -> Self {
+        Self {
+            theme_preset: s.theme_preset,
+            keybindings: s.keybindings,
+            sidebar_position: s.sidebar_position,
+        }
+    }
+}
+
+impl From<SettingsDto> for Settings {
+    fn from(dto: SettingsDto) -> Self {
+        Self {
+            theme_preset: dto.theme_preset,
+            keybindings: dto.keybindings,
+            sidebar_position: dto.sidebar_position,
         }
     }
 }
@@ -143,11 +188,20 @@ pub fn open_terminal(
         .ok_or_else(|| AppError { kind: "not_found", message: "Project not found".to_string() })?;
 
     let event_name = output_event_name(session_id);
+    let exit_event_name = exit_event_name(session_id);
+    let exit_app = app.clone();
     state
         .pty_manager
-        .spawn_for_project(session_id, project, move |chunk| {
-            let _ = app.emit(&event_name, chunk);
-        })?;
+        .spawn_for_project(
+            session_id,
+            project,
+            move |chunk| {
+                let _ = app.emit(&event_name, chunk);
+            },
+            move || {
+                let _ = exit_app.emit(&exit_event_name, ());
+            },
+        )?;
     Ok(())
 }
 
@@ -167,11 +221,18 @@ pub fn split_pane(
     state.store.lock().unwrap().as_ref().ok_or_else(AppError::locked)?;
     let session_id = parse_uuid(&session_id)?;
     let event_name = output_event_name(session_id);
-    state
-        .pty_manager
-        .spawn(session_id, std::path::Path::new(&cwd), move |chunk| {
+    let exit_event_name = exit_event_name(session_id);
+    let exit_app = app.clone();
+    state.pty_manager.spawn(
+        session_id,
+        std::path::Path::new(&cwd),
+        move |chunk| {
             let _ = app.emit(&event_name, chunk);
-        })?;
+        },
+        move || {
+            let _ = exit_app.emit(&exit_event_name, ());
+        },
+    )?;
     Ok(())
 }
 
@@ -232,6 +293,42 @@ pub fn import_config(
     let projects = store.list().iter().map(ProjectDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(projects)
+}
+
+/// Reads current settings (FR-13). Deliberately does **not** check
+/// `state.store` — settings must be readable before `unlock` is ever called
+/// (NFR-8), unlike every project-data command above.
+#[tauri::command]
+pub fn get_settings(state: State<AppState>) -> Result<SettingsDto, AppError> {
+    let settings = settings_store::load(&state.settings_file)?;
+    Ok(settings.into())
+}
+
+/// Saves settings wholesale (FR-13) — same whole-object style as
+/// `update_project`, not per-field patches. Validates keybinding conflicts
+/// (settings_store::save) before writing. No unlock check, same reasoning
+/// as `get_settings`.
+#[tauri::command]
+pub fn save_settings(settings: SettingsDto, state: State<AppState>) -> Result<SettingsDto, AppError> {
+    let settings: Settings = settings.into();
+    settings_store::save(&state.settings_file, &settings)?;
+    Ok(settings.into())
+}
+
+/// Rotates the master password (FR-13, ADR-0010). Unlike settings commands,
+/// this requires the store to already be unlocked — it operates on the
+/// live `ProjectStore`, not a file path, since rotation needs the
+/// currently-held key/salt in memory (project_store::change_password).
+#[tauri::command]
+pub fn change_master_password(
+    current_password: String,
+    new_password: String,
+    state: State<AppState>,
+) -> Result<(), AppError> {
+    let mut guard = state.store.lock().unwrap();
+    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    store.change_password(&current_password, &new_password)?;
+    Ok(())
 }
 
 #[cfg(test)]
