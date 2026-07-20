@@ -1,7 +1,7 @@
 # Runbook — Terminal Navigator
 
-> Version 1.0 · 2026-07-20 · Infra: none — local desktop app (Tauri), installed manually as a `.deb` on the author's own Debian 12 machine. No server, no CI, no remote users.
-> Rehearsal log: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–5) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · restore (config export/import) ✅ 2026-07-20 · rollback — not yet rehearsed
+> Version 1.1 · 2026-07-21 · Infra: none — local desktop app (Tauri), installed manually as a `.deb` on the author's own Debian 12 machine. No server, no CI, no remote users.
+> Rehearsal log: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–4, predating the FR-13 Settings step 5 added in v1.1) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · restore (config export/import) ✅ 2026-07-20 · rollback — not yet rehearsed · §2 step 5 (Settings smoke-check) — not yet rehearsed, added this version
 
 This app has no server-side deployment. "Deploy" here means: build a `.deb` locally, verify it, and install it to replace the copy you use every day. Sections below are scoped to that reality — see §9 for what a normal server runbook would have that doesn't apply here, and why.
 
@@ -11,6 +11,7 @@ This app has no server-side deployment. "Deploy" here means: build a `.deb` loca
 - **Installed binary:** `/usr/bin/terminal-navigator` (installed by the `.deb`; `dpkg -L terminal-navigator` lists all installed files).
 - **Desktop launcher:** `/usr/share/applications/Terminal Navigator.desktop` — this is a *second, independent launch path* with its own process environment (see §2 pre-flight rules; this is exactly what caused the TERM-env bug fixed in commit `ec19eff`).
 - **User data (per-user, not part of the app package):** `~/.local/share/com.dennysetiawisnugraha.terminal-navigator/projects.enc` — the single encrypted file holding the project list, notes, and setup commands (AES-GCM, key derived from the master password via Argon2 — see ADR-0005). PTY sessions themselves are runtime-only and never persisted (ADR-0007).
+- **User preferences (FR-13, since v1.1 of this runbook):** `~/.local/share/com.dennysetiawisnugraha.terminal-navigator/settings.json` — theme preset, keybinding rebinds, sidebar position. Deliberately **unencrypted plaintext** (ADR-0009, NFR-8: none of this is sensitive, and it must be readable before the app is unlocked so chrome renders correctly at the unlock screen). Lives in the same directory as `projects.enc` but is a wholly separate file/format — **§4/§5's export/import does not touch it at all** (see the callout there).
 - **Source of truth for what's installed:** `git log --oneline -1` in this repo at build time, plus the version in `src-tauri/tauri.conf.json` / `package.json` / `src-tauri/Cargo.toml` (kept in sync manually — see §2 versioning).
 - **No secrets to manage:** this app has no API keys, no server credentials, nothing in a `.env`. The only secret is the user's own master password, which is never stored (only used to derive the encryption key at unlock time).
 
@@ -60,9 +61,10 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/*.deb
 2. **Launch from the GNOME application launcher** (search "Terminal Navigator" in the activities overview, or click its icon) — **not** from a terminal this time. This is the launch path that has no parent terminal and therefore a different process environment (this is exactly how the TERM-unset bug was found — a fix that only gets exercised by this specific launch path).
 3. In the launcher-launched instance: open a fresh terminal pane, type a letter, press Backspace, type another letter. Confirm the display matches what you actually typed — no duplicated/garbled characters, no phantom spaces. This is the regression check for the class of bug fixed in `ec19eff`.
 4. Try a split pane, closing a pane, and switching between two open project tabs — quick smoke pass on FR-08.
-5. If anything in steps 1–4 looks wrong: **do not keep using this build.** Go to §3.
+5. Open **Settings** (gear icon, sidebar footer) — smoke pass on FR-13: switch theme preset and confirm the open terminal's colors actually change, toggle sidebar position and confirm it moves, then close the modal (Escape or Done). No need to exercise keybinding rebinding or master-password change every release — those are covered by the automated suite (`docs/qa/test-plan.md` §3.4); this step exists to catch real-rendering issues jsdom can't (same reasoning as step 3).
+6. If anything in steps 1–5 looks wrong: **do not keep using this build.** Go to §3.
 
-If all four pass, this build is now your verified daily driver. Keep the `.deb` you just saved in `~/terminal-navigator-releases/` — that's your rollback point if a *future* build breaks something.
+If all five pass, this build is now your verified daily driver. Keep the `.deb` you just saved in `~/terminal-navigator-releases/` — that's your rollback point if a *future* build breaks something.
 
 ## 3. Rollback
 
@@ -91,6 +93,8 @@ This app has a built-in export feature (FR-07) — that *is* the backup mechanis
 - **Schedule:** manual, whenever your project list changes meaningfully (new project added, setup commands edited). No automation exists for this today — a "remind me to export" habit is the current mitigation.
 - **Off-site copy:** whatever you export to (git remote, cloud-synced folder) — if you only ever export to another folder on the same disk, you don't have real off-site coverage. Worth doing at least once to a git remote or cloud storage.
 
+**Not covered by this backup:** `settings.json` (theme/keybindings/sidebar position, FR-13) is a separate file that `export_config` never reads — exporting/restoring your project list has no effect on it either way. If you reinstall on a new machine or wipe `~/.local/share/com.dennysetiawisnugraha.terminal-navigator` (§7), your preferences reset to defaults even if you restore `projects.enc` from an export. There's no export path for settings today — if that ever matters enough to fix, the natural approach is copying `settings.json` alongside your `projects.enc` export manually (it's already plaintext JSON, so no password/decryption step needed).
+
 ## 5. Restore
 
 1. Open the app, get to the unlock screen.
@@ -99,7 +103,9 @@ This app has a built-in export feature (FR-07) — that *is* the backup mechanis
 4. Confirm the replace-and-import dialog (import **replaces** the current project list wholesale — it does not merge, per ADR-0008).
 5. Verify: the project list matches what you expect; open one project's terminal to confirm setup commands still run correctly.
 
-**Rehearsal status:** ✅ rehearsed 2026-07-20 — export/import round-trip confirmed working by the author.
+**Your theme/keybindings/sidebar position are untouched by this** — import only ever writes `projects.enc`; whatever's currently in `settings.json` on this machine stays exactly as it was before the import, regardless of what the export's source machine had. If you're restoring onto a brand-new/wiped install, you'll get FR-13's defaults, not whatever preferences you'd set before.
+
+**Rehearsal status:** ✅ rehearsed 2026-07-20 — export/import round-trip confirmed working by the author (before FR-13 existed; the settings-file exclusion above hasn't itself been hands-on rehearsed, just verified by reading `config_sync`'s code — see docs/security/audit-2026-07-20.md's sensitive-data map).
 
 ## 6. Incident first moves
 
@@ -120,10 +126,11 @@ There's no "site down" here — the closest equivalents:
   ```bash
   sudo apt remove terminal-navigator
   ```
-  (or `sudo dpkg -r terminal-navigator`). This removes the binary and desktop launcher entry only — it does **not** touch your project data at `~/.local/share/com.dennysetiawisnugraha.terminal-navigator/projects.enc`, since that's user data, not part of the package. Reinstalling later picks the project list back up automatically. For a full wipe including data, **export first** (§4), then:
+  (or `sudo dpkg -r terminal-navigator`). This removes the binary and desktop launcher entry only — it does **not** touch your project data at `~/.local/share/com.dennysetiawisnugraha.terminal-navigator/projects.enc`, since that's user data, not part of the package. The same applies to `settings.json` (FR-13) — same directory, same reasoning, also left in place. Reinstalling later picks both the project list and your preferences back up automatically. For a full wipe including data, **export first** (§4) — remembering §4's callout that this only saves `projects.enc`, not your settings — then:
   ```bash
   rm -rf ~/.local/share/com.dennysetiawisnugraha.terminal-navigator
   ```
+  This removes both files; a fresh install afterward starts with an empty project list and FR-13's default settings.
 
 ## 8. Monitoring & alerts
 
@@ -144,3 +151,4 @@ These exist in the standard runbook template but don't apply at this project's c
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-07-20 | Initial runbook — written after discovering and fixing a launch-environment-dependent bug (missing `TERM` when launched from a desktop launcher, commit `ec19eff`) that a documented release-verification checklist would have caught before it reached daily use. |
+| 1.1 | 2026-07-21 | Catch-up for FR-13 (Settings Panel, shipped in a prior session but not yet reflected here): documented the new unencrypted `settings.json` file in §1; added explicit callouts in §4/§5 that export/import only ever covers `projects.enc` — settings are neither backed up nor restored by that mechanism, and reset to defaults on a fresh install; noted in §7 that uninstall leaves `settings.json` in place same as `projects.enc`; added a Settings smoke-check as step 5 of §2's release verification. No code changed — documentation only, per this project's CLAUDE.md rule that contract docs stay true alongside the code they govern. |
