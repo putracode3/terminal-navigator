@@ -19,6 +19,7 @@ beforeEach(() => {
 	appStore.locked = true;
 	appStore.projects = [];
 	appStore.password = "";
+	appStore.sidebarHidden = false;
 });
 
 describe("appStore", () => {
@@ -69,5 +70,13 @@ describe("appStore", () => {
 		appStore.removeProject("does-not-exist");
 
 		expect(appStore.projects.map((p) => p.id)).toEqual(["a"]);
+	});
+
+	it("toggleSidebar() flips sidebarHidden each call", () => {
+		expect(appStore.sidebarHidden).toBe(false);
+		appStore.toggleSidebar();
+		expect(appStore.sidebarHidden).toBe(true);
+		appStore.toggleSidebar();
+		expect(appStore.sidebarHidden).toBe(false);
 	});
 });

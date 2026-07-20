@@ -156,9 +156,9 @@
 
 ### Anatomy
 1. Container — full-width row
-2. Status dot (leading) — small circle indicating path validity (see States) — validity only, never overloaded to mean "has an open tab" (see the left-edge bar below for that)
+2. Status dot (leading) — small circle indicating this project has **1+ open sessions** (any mode other than `empty`), regardless of whether one of them is the tab currently showing in the terminal area — that's a project-scope "is anything running here" signal, deliberately distinct from the left-edge bar's tab-scope "am I looking at it right now" signal (see States). Rendered fully transparent/hidden when the project has no open session — not a different color, no dot presence at all. As of v1.4 this dot no longer carries path-validity meaning (see Path below).
 3. Project name — `--text-sm` / `--weight-medium`
-4. Path (secondary line, truncated) — `--text-xs` / `--font-family-mono` / `--color-text-muted`
+4. Path (hover/focus reveal only, not part of the row's resting layout) — shown in a small floating tooltip anchored below the name when the row is hovered or keyboard-focused, `--text-xs` / `--font-family-mono`, full path (untruncated; wraps if it doesn't fit rather than truncating, since the tooltip isn't width-constrained like the row). Text color signals path validity now that the dot no longer does: `--color-text` when valid, `--color-text-muted` when invalid (de-emphasized, not alarmed — `--color-danger` is reserved for the inline error message only, see States). Tooltip uses `--z-tooltip`.
 5. Overflow menu button (trailing, appears on hover/focus) — opens the Menu component (anchored variant)
 6. Session count (implicit, not rendered as its own element) — determines the row's behavior mode below; when it's 2+, a list of `Sidebar Session Sub-item`s renders directly beneath this row, indented, as part of the same list flow (no wrapping box/border — see that component's spec)
 
@@ -171,18 +171,18 @@
 ### Sizes
 | Size | Height | Padding |
 |---|---|---|
-| default | auto (two text lines + `--space-2` vertical padding) | `--space-3` horizontal |
+| default | auto (single text line + `--space-2` vertical padding — the path no longer occupies a permanent second line, see Anatomy) | `--space-3` horizontal |
 
 ### States
 | State | Visual change |
 |---|---|
-| default | bg transparent, status dot `--color-security` (path valid) |
-| hover | bg `--color-surface-elevated`; overflow menu button becomes visible (only in the 0/1-session modes — see Behavior) |
-| focus-visible | outline 2px `--color-focus`, offset -2px (inset, since the row is full-width) |
+| default (no open session) | bg transparent, status dot hidden |
+| has open session (1+ sessions open for this project, any mode) | status dot `--color-security` — lit independent of the `open`/`active`/`grouped` states below, and independent of which project's tab is currently focused on screen |
+| hover / focus-visible | bg `--color-surface-elevated`; overflow menu button becomes visible (only in the 0/1-session modes — see Behavior); path tooltip appears (`--z-tooltip`); focus-visible additionally gets outline 2px `--color-focus`, offset -2px (inset, since the row is full-width) |
 | open (exactly 1 session open, and it is not the currently active tab) | left edge gets a `--border-width-sm` `--color-border-strong` bar — a quiet hint that left-clicking here will *switch*, not open a duplicate |
 | active (exactly 1 session open, and it is the currently active tab) | left edge gets a `--border-width-md` `--color-primary` bar (supersedes the `open` bar); bg `--color-surface-elevated` |
 | grouped (2+ sessions open) | no left-edge bar of its own (an individual sub-item carries `active` instead — see Sidebar Session Sub-item); row loses hover/pointer affordances that imply direct clickability, since it no longer performs a switch action itself |
-| invalid | status dot `--color-danger`; path text `--color-danger`; row remains clickable but clicking shows an inline message instead of opening a tab |
+| invalid | path tooltip text `--color-text-muted` (see Anatomy); row remains clickable but clicking shows an inline message instead of opening a tab; does not affect the status dot, which only ever reflects open-session state |
 
 ### Behavior — three modes by session count (FR-08 v1.4)
 This component's interactivity depends entirely on how many tabs are currently open for it. The transition between modes is automatic (recomputed from `terminalStore.tabs` on every change) — there is no manual expand/collapse the user has to operate.
@@ -204,15 +204,18 @@ This component's interactivity depends entirely on how many tabs are currently o
 
 ### Accessibility
 - Row is a single focusable, actionable element (`role="button"` or native list-item button) in the 0/1-session modes; in `grouped` mode it is still focusable (for its Menu) but is not a button performing a switch action — its accessible role/behavior should reflect that it's inert for activation purposes (e.g. it can remain a heading-like static element with just its Menu control focusable within it).
-- Status (`valid`/`invalid`) is conveyed by both color and text (the path line itself, or an inline error), never by color alone.
-- The `open`/`active` left-edge bars are a supplementary hint, not the only signal of tab state.
+- The full path is always available to assistive tech via an `aria-label`/`aria-describedby` on the row (e.g. `"${name}, ${path}"`), independent of the hover/focus-visible tooltip — a screen reader user should never need to trigger a hover state to learn the path. The visual tooltip itself is `aria-hidden` (it would otherwise duplicate that announcement).
+- Path validity (`valid`/`invalid`) is conveyed by both the tooltip text color and the inline error message shown on click, never by color alone.
+- The status dot (has-open-session) and the `open`/`active` left-edge bars are supplementary hints, not the only signal of their respective states.
 - Drag has no keyboard equivalent — acceptable only because every outcome it can produce (spawn-into-split, move-into-split) is also reachable via `Split Pane Container`'s existing toolbar split buttons once a tab is already active, same rule as the original drag-to-split pattern.
 
 ### Do / Don't
-- ✅ Do: truncate long paths in the middle (e.g. `/home/user/…/my-project`) rather than at the end, since the end of a path is usually the most identifying part (the folder name).
+- ✅ Do: keep the status dot lit for as long as any session under this project is open, even while a different project's tab is the one currently focused/visible on screen — it answers "is anything running here", not "am I looking at it right now" (that's the left-edge bar's job).
+- ✅ Do: reveal the path only on hover/focus, anchored near the row, not inline in the resting layout — keeps the row visually calm at rest (design.md Principle 1); the full, untruncated path is fine to show there since the tooltip isn't width-constrained like the row itself.
 - ✅ Do: recompute the session-count mode reactively — a row must flip from `open`/`active` to `grouped` the instant a second session opens (e.g. via Menu → "Open in new tab"), not on next render/reload.
-- ❌ Don't: reuse the "invalid path" red for the `open`/`active` states — they must stay visually distinct (see States table).
-- ❌ Don't: let the status dot (validity) and the left-edge bar (open/active) collapse into one signal — they answer different questions and must stay two separate visual channels.
+- ❌ Don't: use `--color-danger` for path invalidity anymore — de-emphasize with `--color-text-muted` instead, and reserve `--color-danger` for the inline "path no longer exists" error message only (v1.4 change — see States).
+- ❌ Don't: reuse the `open`/`active` left-edge bar treatment for anything else — they must stay visually distinct from both the status dot and the invalid-path signal.
+- ❌ Don't: let the status dot (project-scope: has an open session) and the left-edge bar (tab-scope: open/active) collapse into one signal — a project can have an open session (dot lit) while a *different* project's tab is the one currently active (no bar on this row) — they answer different questions and must stay two separate visual channels.
 - ❌ Don't: make the `grouped` parent row draggable "just in case" — an ambiguous drag source is worse than no drag source; the sub-items exist precisely to remove that ambiguity.
 
 ---
@@ -475,7 +478,14 @@ Field order top-to-bottom: Name (Input, default), Path (Input, path variant — 
 No tab bar (removed v1.4). The active tab's `Split Pane Container` fills the *entire* main content area, edge to edge, from the top of the window down. Switching which tab is active (via the sidebar) swaps the entire pane grid instantly (panes belonging to inactive tabs keep their PTY sessions alive in the background per architecture.md §5.3 — switching must never feel like "loading", reinforcing NFR-7). When no tab is open at all (fresh unlock, nothing clicked yet), this area shows an empty state: centered text, `--color-text-muted`, `--text-sm`, e.g. "Select a project from the sidebar to open a terminal here."
 
 ### Sidebar layout
-Fixed width 260px (collapses to a 56px icon-only rail below `--bp-sidebar-collapse`). Top-to-bottom: search input (compact `Input`, sm size), scrollable list of `Sidebar Project List Item`s (each optionally followed by its `Sidebar Session Sub-item` list when it has 2+ open sessions — the list's total height is therefore dynamic, not fixed-row-height; the scroll container already handles this, no extra layout work needed), pinned footer with a ghost `Button` ("+ Add project").
+Fixed width 260px. Spec calls for collapsing to a 56px icon-only rail below `--bp-sidebar-collapse` (automatic, no manual control) — **❌ not yet implemented**: the token is defined in tokens.css but as of v1.4 nothing in `src/` reads it (no media query/logic wires it up). Treat this as a known gap, not a working baseline to build on top of, until it's actually built. Top-to-bottom: search input (compact `Input`, sm size) with a ghost icon `Button` ("Hide sidebar", ◀) at its trailing edge, scrollable list of `Sidebar Project List Item`s (each optionally followed by its `Sidebar Session Sub-item` list when it has 2+ open sessions — the list's total height is therefore dynamic, not fixed-row-height; the scroll container already handles this, no extra layout work needed), pinned footer with a ghost `Button` ("+ Add project").
+
+### Sidebar show/hide toggle (v1.4)
+A manual, user-driven, fully-implemented control — intentionally on a separate axis from the (currently unimplemented, see Sidebar layout above) breakpoint collapse: that one is "narrow window, still present as an icon rail", this one is "fully hidden, 0px, gone until brought back." When the breakpoint collapse above does get built, it and this toggle should keep working independently of each other. Two triggers, same state:
+1. A ghost icon `Button` inside the sidebar itself (trailing edge of the search row) — only reachable while the sidebar is visible; hides it.
+2. A small floating ghost icon `Button` (▶), fixed to the top-left corner of the app shell, `--z-dropdown`, rendered only while the sidebar is hidden — the sole way to bring it back once hidden, since nothing inside a hidden sidebar can be clicked.
+
+No animation requirement beyond the existing transition tokens (Principle 1: perceived speed over decoration) — an instant width/visibility change is preferable to a slide that delays the terminal area reclaiming the space.
 
 ### Sidebar drag-to-split (renamed in v1.4 — was "Tab drag-to-split")
 1. User presses and moves a `Sidebar Project List Item` (in its 0- or 1-session mode) or a `Sidebar Session Sub-item` past the browser's native drag threshold → the dragged element enters its `dragging` state (opacity 0.4); a translucent drag image follows the cursor. A `Sidebar Project List Item` in its `grouped` (2+ session) mode is not draggable at all — see that component's Behavior.

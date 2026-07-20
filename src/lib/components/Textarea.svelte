@@ -90,6 +90,7 @@
 	}
 
 	textarea:focus-visible {
+		outline: none;
 		border-color: var(--color-primary);
 	}
 

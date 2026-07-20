@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
 	import { listen } from "@tauri-apps/api/event";
+	import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 	import { Terminal } from "@xterm/xterm";
 	import { FitAddon } from "@xterm/addon-fit";
 	import { WebglAddon } from "@xterm/addon-webgl";
@@ -78,6 +79,48 @@
 			// renderer if WebGL context creation fails on this system.
 		}
 
+		/** Serializes a write onto `writeQueue` — shared by typed input
+		 *  (onData below) and a Ctrl+Shift+V paste, so a paste can never race
+		 *  ahead of/behind keystrokes typed just before or after it. */
+		function queueWrite(data: string) {
+			writeQueue = writeQueue
+				.then(() => writeTerminal(sessionId, data))
+				.catch((err) => console.error(`writeTerminal(${sessionId}) failed:`, err));
+		}
+
+		// Ctrl+C/Ctrl+V are already SIGINT and (in most shells) a no-op-ish
+		// paste-via-bracketed-paste is not universal, so this app uses the
+		// Ctrl+Shift+C/V convention most terminal emulators (incl. the
+		// user's prior Tilix) use for clipboard, to avoid colliding with the
+		// PTY's own use of the unshifted combo.
+		term.attachCustomKeyEventHandler((event) => {
+			if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey) return true;
+
+			if (event.code === "KeyC") {
+				const selection = term?.getSelection();
+				if (selection) writeText(selection).catch((err) => console.error("clipboard write failed:", err));
+				return false;
+			}
+
+			if (event.code === "KeyV") {
+				// term.paste() (not a raw queueWrite) — it wraps the data in
+				// bracketed-paste markers when the shell has that mode on, so
+				// a multi-line paste is inserted as one block for the user to
+				// review rather than each embedded newline being read as an
+				// Enter press and executing intermediate lines immediately.
+				// It still funnels through the same term.onData → queueWrite
+				// path registered below, so write ordering is unaffected.
+				readText()
+					.then((text) => {
+						if (text) term?.paste(text);
+					})
+					.catch((err) => console.error("clipboard read failed:", err));
+				return false;
+			}
+
+			return true;
+		});
+
 		if (containerEl) term.open(containerEl);
 
 		// Do NOT call fitAddon.fit() synchronously here: term.open() just
@@ -104,11 +147,7 @@
 			requestAnimationFrame(reportResize);
 		});
 
-		term.onData((data) => {
-			writeQueue = writeQueue
-				.then(() => writeTerminal(sessionId, data))
-				.catch((err) => console.error(`writeTerminal(${sessionId}) failed:`, err));
-		});
+		term.onData((data) => queueWrite(data));
 
 		listen<string>(`pty://output/${sessionId}`, (event) => {
 			term?.write(event.payload);

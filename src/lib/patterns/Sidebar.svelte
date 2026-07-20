@@ -154,6 +154,9 @@
 <aside class="sidebar">
 	<div class="search-wrap">
 		<Input id="project-search" label="Search" placeholder="Search projects…" bind:value={search} />
+		<Button variant="ghost" size="icon" ariaLabel="Hide sidebar" onclick={() => appStore.toggleSidebar()}>
+			◀
+		</Button>
 	</div>
 	<div class="list">
 		{#each filtered as project (project.id)}
@@ -250,7 +253,15 @@
 	}
 
 	.search-wrap {
+		display: flex;
+		align-items: flex-end;
+		gap: var(--space-2);
 		padding: var(--space-3);
+	}
+
+	.search-wrap > :global(.field) {
+		flex: 1;
+		min-width: 0;
 	}
 
 	.list {

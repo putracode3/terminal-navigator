@@ -45,8 +45,19 @@ beforeEach(() => {
 	pathExistsMock.mockResolvedValue(true);
 	appStore.projects = [];
 	appStore.password = "master-pw";
+	appStore.sidebarHidden = false;
 	terminalStore.tabs = [];
 	terminalStore.activeTabId = null;
+});
+
+describe("Sidebar — show/hide toggle", () => {
+	it("clicking 'Hide sidebar' sets appStore.sidebarHidden", async () => {
+		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+
+		expect(appStore.sidebarHidden).toBe(true);
+	});
 });
 
 describe("Sidebar — invalid path indicator (FR-01 edge case)", () => {

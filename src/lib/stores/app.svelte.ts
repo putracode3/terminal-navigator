@@ -9,6 +9,14 @@ class AppStore {
 	 *  re-validate on import (ADR-0008); never persisted, never sent anywhere
 	 *  except back to the same `unlock`/`import_config` IPC calls. */
 	password = $state("");
+	/** Manual full hide/show (v1.4 "Sidebar show/hide toggle") — layered on
+	 *  top of, not replacing, the automatic breakpoint icon-rail collapse
+	 *  that Sidebar.svelte's own CSS still handles independently. */
+	sidebarHidden = $state(false);
+
+	toggleSidebar() {
+		this.sidebarHidden = !this.sidebarHidden;
+	}
 
 	unlockWith(password: string, projects: ProjectDto[]) {
 		this.password = password;

@@ -61,6 +61,9 @@
 	const isActive = $derived(!!singleSession && singleSession.id === activeTabId);
 	const hasOpenTab = $derived(mode === "single");
 	const draggable = $derived(mode !== "grouped" && !invalid);
+	/** components.md v1.4 — project-scope "is anything running here", not
+	 *  tab-scope "is this the one on screen" (that's isActive/hasOpenTab). */
+	const hasOpenSession = $derived(mode !== "empty");
 
 	const menuItems: MenuItemDef[] = $derived([
 		{ label: "Open in new tab", onSelect: onForceNewTab },
@@ -68,12 +71,6 @@
 		{ label: "Edit", onSelect: onEdit },
 		{ label: "Delete", onSelect: onDelete, danger: true },
 	]);
-
-	function truncateMiddle(path: string, max = 34): string {
-		if (path.length <= max) return path;
-		const half = Math.floor((max - 1) / 2);
-		return `${path.slice(0, half)}…${path.slice(path.length - half)}`;
-	}
 
 	function handleClick() {
 		// Grouped rows are inert for activation — switching/closing/dragging
@@ -127,16 +124,16 @@
 	role={mode === "grouped" ? undefined : "button"}
 	tabindex={mode === "grouped" ? undefined : 0}
 	draggable={draggable}
+	aria-label={`${project.name}, ${project.path}`}
 	onclick={handleClick}
 	onkeydown={(e) => e.key === "Enter" && handleClick()}
 	oncontextmenu={handleContextMenu}
 	ondragstart={handleDragStart}
 	ondragend={handleDragEnd}
 >
-	<span class="dot" class:dot-invalid={invalid} aria-hidden="true"></span>
+	<span class="dot" class:dot-open={hasOpenSession} aria-hidden="true"></span>
 	<div class="text">
 		<div class="name">{project.name}</div>
-		<div class="path" class:path-invalid={invalid}>{truncateMiddle(project.path)}</div>
 		{#if showInvalidMessage}<div class="invalid-message">This path no longer exists on disk.</div>{/if}
 	</div>
 	<div class="menu-wrap">
@@ -145,6 +142,7 @@
 		</button>
 		<Menu open={menuOpen} items={menuItems} anchorPosition={menuAnchor} onClose={() => (menuOpen = false)} />
 	</div>
+	<div class="path-tooltip" class:path-invalid={invalid} aria-hidden="true">{project.path}</div>
 </div>
 
 {#if mode === "grouped"}
@@ -204,6 +202,10 @@
 		width: var(--space-2);
 		height: var(--space-2);
 		border-radius: var(--radius-full);
+		background: transparent;
+	}
+
+	.dot-open {
 		background: var(--color-security);
 	}
 
@@ -221,21 +223,39 @@
 		text-overflow: ellipsis;
 	}
 
-	.path {
+	.path-tooltip {
+		display: none;
+		position: absolute;
+		top: 100%;
+		left: var(--space-3);
+		margin-top: var(--space-1);
+		/* Bounded to the row's own width (not a fixed px value): `.list`
+		 * (this row's scroll-container ancestor) sets `overflow-y: auto`,
+		 * which per the CSS overflow spec forces its computed overflow-x to
+		 * `auto` too — so anything wider than `.item` gets clipped instead
+		 * of floating over the terminal area, defeating the reveal-on-hover
+		 * point for exactly the long paths it exists for. */
+		max-width: calc(100% - var(--space-3));
+		padding: var(--space-1) var(--space-2);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface-elevated);
+		border: var(--border-width-sm) solid var(--color-border);
+		box-shadow: var(--shadow-md);
 		font-family: var(--font-family-mono);
 		font-size: var(--text-xs);
+		color: var(--color-text);
+		white-space: normal;
+		overflow-wrap: anywhere;
+		z-index: var(--z-tooltip);
+	}
+
+	.item:hover .path-tooltip,
+	.item:focus-within .path-tooltip {
+		display: block;
+	}
+
+	.path-tooltip.path-invalid {
 		color: var(--color-text-muted);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.dot-invalid {
-		background: var(--color-danger);
-	}
-
-	.path-invalid {
-		color: var(--color-danger);
 	}
 
 	.invalid-message {

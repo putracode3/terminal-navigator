@@ -76,6 +76,21 @@ describe("SidebarProjectListItem — 0-session mode", () => {
 		const { container } = render(SidebarProjectListItem, baseProps());
 		expect(container.querySelector(".item")).toHaveAttribute("draggable", "true");
 	});
+
+	it("status dot is not lit (no open session)", () => {
+		const { container } = render(SidebarProjectListItem, baseProps());
+		expect(container.querySelector(".dot")).not.toHaveClass("dot-open");
+	});
+
+	it("full path is exposed via aria-label; the tooltip copy is hidden from assistive tech", () => {
+		const { container } = render(SidebarProjectListItem, baseProps());
+		expect(container.querySelector(".item")).toHaveAttribute(
+			"aria-label",
+			"my-project, /home/user/my-project",
+		);
+		expect(container.querySelector(".path-tooltip")).toHaveAttribute("aria-hidden", "true");
+		expect(container.querySelector(".path-tooltip")).toHaveTextContent("/home/user/my-project");
+	});
 });
 
 describe("SidebarProjectListItem — 1-session mode", () => {
@@ -120,6 +135,14 @@ describe("SidebarProjectListItem — 1-session mode", () => {
 		const { container } = render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1)] }));
 		expect(container.querySelector(".sub-items")).toBeNull();
 	});
+
+	it("status dot is lit — a session is open even if a different tab is currently active", () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sessions: [session("tab-1", 1)], activeTabId: "some-other-tab" }),
+		);
+		expect(container.querySelector(".dot")).toHaveClass("dot-open");
+	});
 });
 
 describe("SidebarProjectListItem — grouped (2+ session) mode (FR-08 v1.4)", () => {
@@ -137,6 +160,11 @@ describe("SidebarProjectListItem — grouped (2+ session) mode (FR-08 v1.4)", ()
 	it("the parent row is not draggable", () => {
 		const { container } = render(SidebarProjectListItem, baseProps({ sessions }));
 		expect(container.querySelector(".item")).toHaveAttribute("draggable", "false");
+	});
+
+	it("status dot is lit — the group has open sessions", () => {
+		const { container } = render(SidebarProjectListItem, baseProps({ sessions }));
+		expect(container.querySelector(".dot")).toHaveClass("dot-open");
 	});
 
 	it("renders one Sidebar Session Sub-item per open session, labeled by stable ordinal", () => {

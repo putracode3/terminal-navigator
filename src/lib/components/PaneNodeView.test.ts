@@ -8,12 +8,28 @@ const focusMock = vi.fn();
 const listenMock = vi.fn().mockResolvedValue(() => {});
 vi.mock("@xterm/xterm", () => ({
 	Terminal: vi.fn(function Terminal() {
-		return { loadAddon: vi.fn(), open: openMock, onData: vi.fn(), dispose: vi.fn(), focus: focusMock, write: vi.fn(), rows: 24, cols: 80 };
+		return {
+			loadAddon: vi.fn(),
+			open: openMock,
+			onData: vi.fn(),
+			dispose: vi.fn(),
+			focus: focusMock,
+			write: vi.fn(),
+			attachCustomKeyEventHandler: vi.fn(),
+			getSelection: vi.fn(),
+			paste: vi.fn(),
+			rows: 24,
+			cols: 80,
+		};
 	}),
 }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return { fit: vi.fn() }; }) }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: vi.fn(function WebglAddon() { return {}; }) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: (...args: unknown[]) => listenMock(...args) }));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+	writeText: vi.fn().mockResolvedValue(undefined),
+	readText: vi.fn().mockResolvedValue(""),
+}));
 vi.mock("$lib/api", () => ({
 	resizeTerminal: vi.fn().mockResolvedValue(undefined),
 	writeTerminal: vi.fn().mockResolvedValue(undefined),

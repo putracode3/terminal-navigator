@@ -2,6 +2,7 @@
 	import UnlockScreen from "$lib/patterns/UnlockScreen.svelte";
 	import Sidebar from "$lib/patterns/Sidebar.svelte";
 	import TerminalArea from "$lib/patterns/TerminalArea.svelte";
+	import Button from "$lib/components/Button.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
 	import { terminalStore } from "$lib/stores/terminal.svelte";
 	import { openTerminal, errorMessage, type ProjectDto } from "$lib/api";
@@ -41,7 +42,24 @@
 	<UnlockScreen />
 {:else}
 	<div class="app-shell">
-		<Sidebar onOpenProject={handleOpenProject} onForceNewTab={forceOpenNewTab} />
+		{#if !appStore.sidebarHidden}
+			<Sidebar onOpenProject={handleOpenProject} onForceNewTab={forceOpenNewTab} />
+		{:else}
+			<div class="reveal-sidebar-wrap">
+				<Button variant="ghost" size="icon" ariaLabel="Show sidebar" onclick={() => appStore.toggleSidebar()}>
+					▶
+				</Button>
+			</div>
+		{/if}
 		<TerminalArea />
 	</div>
 {/if}
+
+<style>
+	.reveal-sidebar-wrap {
+		position: fixed;
+		top: var(--space-3);
+		left: var(--space-3);
+		z-index: var(--z-dropdown);
+	}
+</style>

@@ -11,6 +11,9 @@ const fitMock = vi.fn();
 const openMock = vi.fn();
 const disposeMock = vi.fn();
 let onDataCallback: ((data: string) => void) | undefined;
+let keyEventHandler: ((event: KeyboardEvent) => boolean) | undefined;
+const getSelectionMock = vi.fn();
+const pasteMock = vi.fn();
 const termInstance = {
 	loadAddon: vi.fn(),
 	open: openMock,
@@ -20,6 +23,11 @@ const termInstance = {
 	dispose: disposeMock,
 	focus: vi.fn(),
 	write: vi.fn(),
+	attachCustomKeyEventHandler: vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+		keyEventHandler = handler;
+	}),
+	getSelection: getSelectionMock,
+	paste: pasteMock,
 	rows: 24,
 	cols: 80,
 };
@@ -47,6 +55,13 @@ vi.mock("@tauri-apps/api/event", () => ({
 	listen: (...args: unknown[]) => listenMock(...args),
 }));
 
+const writeTextMock = vi.fn().mockResolvedValue(undefined);
+const readTextMock = vi.fn().mockResolvedValue("");
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+	writeText: (...args: unknown[]) => writeTextMock(...args),
+	readText: (...args: unknown[]) => readTextMock(...args),
+}));
+
 const resizeTerminalMock = vi.fn();
 const writeTerminalMock = vi.fn();
 vi.mock("$lib/api", () => ({
@@ -65,7 +80,16 @@ beforeEach(() => {
 	writeTerminalMock.mockClear();
 	writeTerminalMock.mockReset();
 	writeTerminalMock.mockResolvedValue(undefined);
+	writeTextMock.mockClear();
+	writeTextMock.mockReset();
+	writeTextMock.mockResolvedValue(undefined);
+	readTextMock.mockClear();
+	readTextMock.mockReset();
+	readTextMock.mockResolvedValue("");
+	getSelectionMock.mockReset();
+	pasteMock.mockClear();
 	onDataCallback = undefined;
+	keyEventHandler = undefined;
 	// Reduce requestAnimationFrame to a fake-timer-controllable primitive
 	// rather than relying on sinon's rAF-specific fake-timer support.
 	vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
@@ -168,5 +192,63 @@ describe("TerminalPane — initial-resize gating (regression: keystrokes typed r
 		await Promise.resolve();
 
 		expect(writeTerminalMock).toHaveBeenCalledWith("s1", "t");
+	});
+});
+
+describe("TerminalPane — Ctrl+Shift+C/V clipboard shortcuts", () => {
+	function keydown(code: string, overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
+		return { type: "keydown", ctrlKey: true, shiftKey: true, code, ...overrides } as KeyboardEvent;
+	}
+
+	it("Ctrl+Shift+C copies the current selection and swallows the keystroke", async () => {
+		getSelectionMock.mockReturnValue("selected text");
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		expect(keyEventHandler).toBeDefined();
+
+		const handled = keyEventHandler!(keydown("KeyC"));
+
+		expect(handled).toBe(false);
+		expect(writeTextMock).toHaveBeenCalledWith("selected text");
+	});
+
+	it("Ctrl+Shift+C with no selection does not touch the clipboard", () => {
+		getSelectionMock.mockReturnValue("");
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+
+		keyEventHandler!(keydown("KeyC"));
+
+		expect(writeTextMock).not.toHaveBeenCalled();
+	});
+
+	it("Ctrl+Shift+V reads the clipboard and hands it to term.paste() (not a raw write) so bracketed-paste mode applies", async () => {
+		readTextMock.mockResolvedValue("pasted text");
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		await vi.runAllTimersAsync(); // let the initial resize resolve so the write queue opens
+
+		const handled = keyEventHandler!(keydown("KeyV"));
+		await vi.runAllTimersAsync();
+
+		expect(handled).toBe(false);
+		expect(pasteMock).toHaveBeenCalledWith("pasted text");
+	});
+
+	it("Ctrl+Shift+V with an empty clipboard does not call term.paste()", async () => {
+		readTextMock.mockResolvedValue("");
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		keyEventHandler!(keydown("KeyV"));
+		await vi.runAllTimersAsync();
+
+		expect(pasteMock).not.toHaveBeenCalled();
+	});
+
+	it("does not intercept a plain Ctrl+C (SIGINT stays untouched)", () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn() });
+
+		const handled = keyEventHandler!(keydown("KeyC", { shiftKey: false }));
+
+		expect(handled).toBe(true);
+		expect(writeTextMock).not.toHaveBeenCalled();
 	});
 });
