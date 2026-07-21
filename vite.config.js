@@ -15,32 +15,44 @@ export default defineConfig(async () => ({
   // @ts-expect-error process is a nodejs global
   resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
 
-  // Debugger session 2026-07-22: `npm run tauri build`'s production bundle
-  // (esbuild minification, Vite's default for `vite build`) corrupts
-  // @xterm/xterm's InputHandler.requestMode() — valid, correct source
-  // (verified by rebuilding with minify:false and reading the output: a
-  // perfectly ordinary `requestMode(e, i) { let r; (...)(r || (r = {})); ...
-  // return i ? ... }`, no undeclared variables) comes out of esbuild's
-  // minifier throwing `ReferenceError: Can't find variable: i` at runtime —
-  // every time, reproduced across multiple clean rebuilds. requestMode()
-  // runs whenever PTY output includes a DECRQM "request mode" query, which
-  // is near-universal startup terminal-capability negotiation for
-  // full-screen TUIs (vim, htop, less, top, opencode, ...) — the exception
-  // is thrown mid-parse inside the write pipeline
-  // (_innerWrite → parse → parse → requestMode), corrupting the terminal's
-  // parser state, leaving the pane blank and unresponsive to input for the
-  // rest of that session. `npm run tauri dev` never hits this: Vite's dev
-  // server uses esbuild for dependency *pre-bundling* only, a materially
-  // different code path from `vite build`'s minification pass.
-  // This is a bundler/minifier bug, not anything under this app's control —
-  // disabling minification sidesteps it entirely. Cost is a larger local JS
-  // bundle, irrelevant for a single-developer desktop app bundled into an
-  // 18MB+ binary (no network transfer to optimize for). Revisit if a Vite
-  // upgrade demonstrably fixes the minifier bug (verify by re-enabling
-  // minify and confirming requestMode() still works via
-  // docs/qa/test-plan.md's launch-environment charter §5.1, not just by
-  // reading the changelog).
-  build: { minify: false },
+  // Minify with terser instead of Vite's default (esbuild). Debugger session
+  // 2026-07-22: esbuild's minifier miscompiles @xterm/xterm's
+  // InputHandler.requestMode(). The source is an ordinary TS enum-shim
+  // pattern —
+  //     requestMode(e, i) { let r; ((P) => (...))(r || (r = {})); ... }
+  // — but esbuild's minifier constant-folds the *read* of the never-
+  // previously-assigned `r` to `void 0`, drops the `let r` declaration as
+  // dead, yet leaves the *write* as an assignment to a bare `i`
+  // (`(void 0 || (i = {}))`) — a name no longer in scope (the `i` param was
+  // renamed to `t`). In an ES module (strict mode) that throws
+  // `ReferenceError: Can't find variable: i` at runtime. requestMode() runs
+  // whenever PTY output includes a DECRQM "request mode" query — near-
+  // universal startup terminal-capability negotiation for full-screen TUIs
+  // (vim, htop, less, top, opencode, ...) — so the exception is thrown mid-
+  // parse inside the write pipeline (_innerWrite → parse → requestMode),
+  // corrupting the parser and leaving the pane blank and unresponsive to
+  // input for the rest of that session. `npm run tauri dev` never hit this:
+  // Vite's dev server runs esbuild only for dependency *pre-bundling*, a
+  // different code path from `vite build`'s minify pass.
+  //
+  // terser (verified: rebuilt, grepped the output, and ran the actual .deb
+  // with a real TUI) minifies the same method correctly — it keeps the
+  // enum-var declaration (`let i; var s; (s = i || (i = {}))`), so the
+  // assignment target is declared and nothing throws. Bundle size is
+  // identical to esbuild's (~512 KB, vs ~812 KB unminified) — so this keeps
+  // full minification / NFR-7 (lightweight, memory-friendly), unlike the
+  // earlier stop-gap of disabling minification entirely (commit c10a2f5,
+  // superseded by this). Requires the `terser` devDependency.
+  //
+  // Revisit only if a future Vite/esbuild upgrade is confirmed to fix the
+  // esbuild bug — verify by switching back to esbuild AND running a real
+  // full-screen TUI in the built .deb per docs/qa/test-plan.md §5.1a, never
+  // by reading a changelog alone.
+  // JSDoc cast (this is a .js file, so no `as const`): without pinning the
+  // literal, TS widens "terser" to `string`, which doesn't match Vite's
+  // `minify: 'esbuild' | 'terser' | boolean` union and makes svelte-check
+  // error on the config-function overload.
+  build: { minify: /** @type {"terser"} */ ("terser") },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
