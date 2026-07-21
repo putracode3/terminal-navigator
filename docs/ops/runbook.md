@@ -62,9 +62,10 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/*.deb
 3. In the launcher-launched instance: open a fresh terminal pane, type a letter, press Backspace, type another letter. Confirm the display matches what you actually typed — no duplicated/garbled characters, no phantom spaces. This is the regression check for the class of bug fixed in `ec19eff`.
 4. Try a split pane, closing a pane, and switching between two open project tabs — quick smoke pass on FR-08.
 5. Open **Settings** (gear icon, sidebar footer) — smoke pass on FR-13: switch theme preset and confirm the open terminal's colors actually change, toggle sidebar position and confirm it moves, then close the modal (Escape or Done). No need to exercise keybinding rebinding or master-password change every release — those are covered by the automated suite (`docs/qa/test-plan.md` §3.4); this step exists to catch real-rendering issues jsdom can't (same reasoning as step 3).
-6. If anything in steps 1–5 looks wrong: **do not keep using this build.** Go to §3.
+6. **Run a full-screen TUI program** (`vim` is enough) inside a pane. Confirm it actually renders (not blank) and keystrokes are reflected. This is the regression check for a `tauri build`-only bug found 2026-07-22 (`docs/qa/test-plan.md` §5.1a): Vite's production minification corrupted `@xterm/xterm`'s terminal-capability-query handling in a way that only a real full-screen TUI triggers — plain typing (step 3) never hit it, and `tauri dev` never reproduced it at all. A green `tauri dev` session is not equivalent verification for this class of bug; it has to be checked against the actual `.deb`.
+7. If anything in steps 1–6 looks wrong: **do not keep using this build.** Go to §3.
 
-If all five pass, this build is now your verified daily driver. Keep the `.deb` you just saved in `~/terminal-navigator-releases/` — that's your rollback point if a *future* build breaks something.
+If all six pass, this build is now your verified daily driver. Keep the `.deb` you just saved in `~/terminal-navigator-releases/` — that's your rollback point if a *future* build breaks something.
 
 ## 3. Rollback
 
@@ -113,8 +114,9 @@ There's no "site down" here — the closest equivalents:
 
 1. **App won't unlock / crashes on unlock** → check you're using the current master password; check the data file isn't corrupted: `file ~/.local/share/com.dennysetiawisnugraha.terminal-navigator/projects.enc` should report it as data, not zero-length. If corrupted and you have an export, restore it (§5). If you have no valid export, the data is unrecoverable — a real gap, see §9.
 2. **A terminal pane shows garbled/wrong input after a normal-looking build** → this is the bug class fixed in `ec19eff`. First check: does it happen when launched from a terminal AND from the desktop launcher? If only from the launcher, suspect the process environment again (compare `env` between the two launch methods, same technique used to find the TERM issue) before assuming a code regression.
-3. **Build fails** → re-run the pre-flight gate (§2) individually (`cargo test`, `vitest run`, `svelte-check`) to isolate which one is red; don't force a build past a failing gate.
-4. **Something else looks broken** → superpowers:systematic-debugging / the `debugger` skill, not this runbook.
+3. **A terminal pane goes blank and stops accepting input, specifically when running a full-screen program (vim, htop, an AI CLI, ...)** → check whether it also happens under `npm run tauri dev`. If it only happens in the actual built `.deb`/binary, this is the bug class found 2026-07-22 (`docs/qa/test-plan.md` §5.1a — a Vite production-minification bug, fixed by disabling minification). If a similar symptom recurs after a future Vite/`@xterm/xterm` upgrade, first try rebuilding with `minify: false` in `vite.config.js` to confirm whether it's the same minifier-corruption pattern before assuming a new root cause.
+4. **Build fails** → re-run the pre-flight gate (§2) individually (`cargo test`, `vitest run`, `svelte-check`) to isolate which one is red; don't force a build past a failing gate.
+5. **Something else looks broken** → superpowers:systematic-debugging / the `debugger` skill, not this runbook.
 
 ## 7. Routine operations
 
@@ -152,3 +154,4 @@ These exist in the standard runbook template but don't apply at this project's c
 |---|---|---|
 | 1.0 | 2026-07-20 | Initial runbook — written after discovering and fixing a launch-environment-dependent bug (missing `TERM` when launched from a desktop launcher, commit `ec19eff`) that a documented release-verification checklist would have caught before it reached daily use. |
 | 1.1 | 2026-07-21 | Catch-up for FR-13 (Settings Panel, shipped in a prior session but not yet reflected here): documented the new unencrypted `settings.json` file in §1; added explicit callouts in §4/§5 that export/import only ever covers `projects.enc` — settings are neither backed up nor restored by that mechanism, and reset to defaults on a fresh install; noted in §7 that uninstall leaves `settings.json` in place same as `projects.enc`; added a Settings smoke-check as step 5 of §2's release verification. No code changed — documentation only, per this project's CLAUDE.md rule that contract docs stay true alongside the code they govern. |
+| 1.2 | 2026-07-22 | Added step 6 to §2's release verification (run a full-screen TUI in a pane, e.g. `vim`) and a new §6 troubleshooting entry, after a debugger session found a `tauri build`-only bug (Vite production minification corrupting `@xterm/xterm`'s terminal-capability-query handling — full root cause in `docs/qa/test-plan.md` §5.1a and `vite.config.js`'s own comment) that steps 1–5 could not have caught: it never reproduced under `tauri dev`, and plain typing (step 3) never exercised the specific code path that broke. Fixed by disabling minification. |
