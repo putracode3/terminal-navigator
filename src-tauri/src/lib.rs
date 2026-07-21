@@ -72,10 +72,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::unlock,
-            commands::list_projects,
+            commands::list_sidebar_entries,
             commands::add_project,
             commands::update_project,
             commands::delete_project,
+            commands::merge_projects,
+            commands::move_project,
+            commands::reorder_folder,
+            commands::rename_folder,
             commands::open_terminal,
             commands::split_pane,
             commands::write_terminal,

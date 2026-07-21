@@ -4,11 +4,13 @@
 	import Button from "$lib/components/Button.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import SidebarProjectListItem from "$lib/components/SidebarProjectListItem.svelte";
+	import SidebarFolder from "$lib/components/SidebarFolder.svelte";
 	import ProjectFormModal from "./ProjectFormModal.svelte";
 	import SettingsModal from "./SettingsModal.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
 	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { terminalStore, type TabState } from "$lib/stores/terminal.svelte";
+	import type { SidebarDropBand } from "$lib/sidebar-drop-zones";
 	import {
 		deleteProject,
 		exportConfig,
@@ -16,7 +18,13 @@
 		pathExists,
 		closeTerminal,
 		errorMessage,
+		mergeProjects,
+		moveProject,
+		reorderFolder,
+		renameFolder,
+		listSidebarEntries,
 		type ProjectDto,
+		type MoveDestinationDto,
 	} from "$lib/api";
 	import { disposeTerminalHandle } from "$lib/terminal-registry";
 
@@ -39,9 +47,11 @@
 	let invalidProjectIds = $state<Set<string>>(new Set());
 
 	// FR-01 edge case: a project's folder may have moved/been deleted since
-	// it was added. Re-check whenever the project list changes.
+	// it was added. Re-check whenever the sidebar tree changes. Uses
+	// `allProjects` (every project regardless of folder membership, FR-11) —
+	// path validity doesn't care where in the tree a project sits.
 	$effect(() => {
-		const projects = appStore.projects;
+		const projects = appStore.allProjects;
 		Promise.all(projects.map((p) => pathExists(p.path).then((exists) => [p.id, exists] as const))).then(
 			(results) => {
 				invalidProjectIds = new Set(results.filter(([, exists]) => !exists).map(([id]) => id));
@@ -61,10 +71,17 @@
 		}, 3000);
 	}
 
-	const filtered = $derived(
-		search.trim()
-			? appStore.projects.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
-			: appStore.projects,
+	// FR-11: while searching, folders/grouping are set aside in favor of a
+	// flat, name-filtered project list — the design spec doesn't define how
+	// search should interact with folder nesting (out of FR-11's stated
+	// scope), so this is a deliberate simplification, not an oversight: a
+	// flat "search mode" is simple to reason about and doesn't require
+	// inventing nested-match-highlighting UI this pass wasn't asked for.
+	const searching = $derived(search.trim().length > 0);
+	const filteredProjects = $derived(
+		searching
+			? appStore.allProjects.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+			: [],
 	);
 
 	function openAddForm() {
@@ -143,8 +160,8 @@
 		if (!pendingImportSource) return;
 		syncing = true;
 		try {
-			const projects = await importConfig(pendingImportSource, appStore.password);
-			appStore.setProjects(projects);
+			const entries = await importConfig(pendingImportSource, appStore.password);
+			appStore.setEntries(entries);
 			pendingImportSource = undefined;
 			flashStatus("Imported — project list replaced");
 		} catch (e) {
@@ -154,7 +171,107 @@
 			syncing = false;
 		}
 	}
+
+	/** FR-11: resolves a drop on any sidebar row (a project or a folder
+	 *  header) into the right backend call, then refreshes the whole tree
+	 *  from the backend rather than replaying the same tree surgery
+	 *  client-side — simpler and impossible to drift from the source of
+	 *  truth (`project_store`'s own move/merge/reorder logic), at this app's
+	 *  personal-scale data size a full refetch per drag is effectively free.
+	 *  `targetId` is only used for the merge case — the backend's own
+	 *  `merge_or_join` resolves whether it's a project or a folder id. */
+	async function handleSidebarDrop(
+		band: SidebarDropBand,
+		targetId: string,
+		destination: MoveDestinationDto,
+		indexInList: number,
+	) {
+		const dragged = appStore.sidebarDrag;
+		appStore.stopDraggingSidebarEntry();
+		if (!dragged || dragged.id === targetId) return;
+
+		try {
+			if (band === "merge") {
+				if (dragged.kind === "folder") return; // folders never merge — the UI already prevents offering this
+				await mergeProjects(dragged.id, targetId);
+			} else {
+				const index = band === "before" ? indexInList : indexInList + 1;
+				if (dragged.kind === "folder") {
+					await reorderFolder(dragged.id, index);
+				} else {
+					await moveProject(dragged.id, destination, index);
+				}
+			}
+			appStore.setEntries(await listSidebarEntries());
+		} catch (e) {
+			syncError = errorMessage(e);
+		}
+	}
+
+	async function handleRenameFolder(folderId: string, name: string) {
+		try {
+			await renameFolder(folderId, name);
+			appStore.setEntries(await listSidebarEntries());
+		} catch (e) {
+			syncError = errorMessage(e);
+		}
+	}
+
+	/** FR-11: dropping on genuinely empty list space (below the last row) —
+	 *  the "ungrouped" drop target — moves a dragged project back to the very
+	 *  end of the top level. Row-level drops call `stopPropagation()` so this
+	 *  only ever fires for a drop that no row itself claimed. */
+	function handleListDragOver(e: DragEvent) {
+		if (!appStore.sidebarDrag) return;
+		e.preventDefault();
+	}
+
+	async function handleListDrop(e: DragEvent) {
+		e.preventDefault();
+		const dragged = appStore.sidebarDrag;
+		appStore.stopDraggingSidebarEntry();
+		if (!dragged || dragged.kind !== "project") return;
+		try {
+			await moveProject(dragged.id, { type: "topLevel" }, appStore.entries.length);
+			appStore.setEntries(await listSidebarEntries());
+		} catch (e) {
+			syncError = errorMessage(e);
+		}
+	}
 </script>
+
+{#snippet memberRow(project: ProjectDto, index: number, destination: MoveDestinationDto)}
+	{@const sessions = sessionsFor(project)}
+	<SidebarProjectListItem
+		{project}
+		{sessions}
+		activeTabId={terminalStore.activeTabId}
+		invalid={invalidProjectIds.has(project.id)}
+		onOpen={() => onOpenProject(project)}
+		onForceNewTab={() => onForceNewTab(project)}
+		onSwitchSession={(tabId) => terminalStore.setActiveTab(tabId)}
+		onCloseTerminal={() => sessions[0] && closeSession(sessions[0].id)}
+		onCloseSession={(tabId) => closeSession(tabId)}
+		onEdit={() => openEditForm(project)}
+		onDelete={() => {
+			pendingDelete = project;
+			deleteError = "";
+		}}
+		onDragStart={() => {
+			if (sessions.length === 0) terminalStore.startDraggingSpawn(project.id, project.name, project.path);
+			else terminalStore.startDraggingTab(sessions[0].id);
+			appStore.startDraggingSidebarEntry("project", project.id);
+		}}
+		onSessionDragStart={(tabId) => terminalStore.startDraggingTab(tabId)}
+		onDragEnd={() => {
+			terminalStore.stopDragging();
+			appStore.stopDraggingSidebarEntry();
+		}}
+		sidebarDragId={appStore.sidebarDrag?.id ?? null}
+		sidebarDragKind={appStore.sidebarDrag?.kind ?? null}
+		onSidebarDrop={(band) => handleSidebarDrop(band, project.id, destination, index)}
+	/>
+{/snippet}
 
 <aside class="sidebar">
 	<div class="search-wrap">
@@ -163,34 +280,35 @@
 			☰
 		</Button>
 	</div>
-	<div class="list">
-		{#each filtered as project (project.id)}
-			{@const sessions = sessionsFor(project)}
-			<SidebarProjectListItem
-				{project}
-				{sessions}
-				activeTabId={terminalStore.activeTabId}
-				invalid={invalidProjectIds.has(project.id)}
-				onOpen={() => onOpenProject(project)}
-				onForceNewTab={() => onForceNewTab(project)}
-				onSwitchSession={(tabId) => terminalStore.setActiveTab(tabId)}
-				onCloseTerminal={() => sessions[0] && closeSession(sessions[0].id)}
-				onCloseSession={(tabId) => closeSession(tabId)}
-				onEdit={() => openEditForm(project)}
-				onDelete={() => {
-					pendingDelete = project;
-					deleteError = "";
-				}}
-				onDragStart={() =>
-					sessions.length === 0
-						? terminalStore.startDraggingSpawn(project.id, project.name, project.path)
-						: terminalStore.startDraggingTab(sessions[0].id)}
-				onSessionDragStart={(tabId) => terminalStore.startDraggingTab(tabId)}
-				onDragEnd={() => terminalStore.stopDragging()}
-			/>
-		{/each}
-		{#if filtered.length === 0}
-			<p class="empty">No projects yet. Click <strong>+ Add project</strong> to get started.</p>
+	<!-- svelte-ignore a11y_no_static_element_interactions -- FR-11 "ungrouped" drop target: a project dragged onto genuinely empty list space (below the last row) moves back to top level. Drag has no keyboard equivalent anywhere in this app (documented gap, components.md Sidebar Folder Accessibility) — this container is a drop *target* only, never itself clicked/focused. -->
+	<div class="list" ondragover={handleListDragOver} ondrop={handleListDrop}>
+		{#if searching}
+			{#each filteredProjects as project, i (project.id)}
+				{@render memberRow(project, i, { type: "topLevel" })}
+			{/each}
+			{#if filteredProjects.length === 0}
+				<p class="empty">No matching projects.</p>
+			{/if}
+		{:else}
+			{#each appStore.entries as entry, topIndex (entry.id)}
+				{#if entry.type === "project"}
+					{@render memberRow(entry, topIndex, { type: "topLevel" })}
+				{:else}
+					<SidebarFolder
+						folder={entry}
+						sidebarDragId={appStore.sidebarDrag?.id ?? null}
+						sidebarDragKind={appStore.sidebarDrag?.kind ?? null}
+						onSidebarDrop={(band) => handleSidebarDrop(band, entry.id, { type: "topLevel" }, topIndex)}
+						onDragStart={() => appStore.startDraggingSidebarEntry("folder", entry.id)}
+						onDragEnd={() => appStore.stopDraggingSidebarEntry()}
+						onRename={(name) => handleRenameFolder(entry.id, name)}
+						{memberRow}
+					/>
+				{/if}
+			{/each}
+			{#if appStore.entries.length === 0}
+				<p class="empty">No projects yet. Click <strong>+ Add project</strong> to get started.</p>
+			{/if}
 		{/if}
 	</div>
 	<div class="footer">

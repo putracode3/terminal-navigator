@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) scoped 2026-07-20, implementation pending | **Version:** 1.5 | **Date:** 2026-07-20 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) scoped 2026-07-20, implementation pending; FR-11 (Sidebar Folders) scoped 2026-07-21, implementation pending | **Version:** 1.6 | **Date:** 2026-07-21 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 
@@ -48,6 +48,7 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 - **US-06** — As the user, I want to export/import my project list (or sync it via a git-committed config file), so that I can carry my setup across devices.
 - **US-07** — As the user, I want to remove or edit an existing project entry, so that my list stays accurate as projects come and go.
 - **US-08** — As the user, I want a single Settings panel to customize terminal theme, rebind any keyboard shortcut, change my master password, and switch which side the sidebar sits on, so that I can adjust the app to my preference without hand-editing config files.
+- **US-09** — As the user, I want to organize related projects into folders via drag-and-drop in the sidebar, so that I can navigate a growing project list without scrolling through one long flat list.
 
 ---
 
@@ -152,8 +153,28 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - Master password change interrupted mid-way (app crash/close) must not leave the data blob partially re-encrypted/unreadable — system-architect to define a safe rotation strategy (e.g. write-new-then-swap)
   - Rebinding a shortcut to a combination the OS/webview treats as a native command (e.g. Ctrl+Shift+V's native "Paste" action — see the `TerminalPane.svelte` clipboard double-paste bug fixed 2026-07-20) is a real risk surface for custom keybindings in general; system-architect/ui-ux-designer should account for it, not just the one shortcut already fixed
 
+#### FR-11: Sidebar Folders (Project Grouping via Drag & Drop)
+- **Description:** User-defined folders let the sidebar's project list be organized into named categories, managed entirely by dragging project rows onto each other/onto folders. Promoted directly to MVP per user decision (2026-07-21), absorbing and superseding the old FR-11 placeholder ("Project grouping/folders — organize the list into categories"). Deliberately called a **"Folder"**, not a "Group" — `docs/design/components.md` already uses "grouped (2+ sessions open)" for the unrelated automatic display mode where a project's sidebar row expands to show one sub-item per open session; a Folder is a distinct, user-organized concept and both can apply to the same project at once (see acceptance criteria below).
+- **Acceptance Criteria:**
+  - [ ] Dragging one top-level project row onto another creates a new Folder containing both, auto-named (e.g. after the first project)
+  - [ ] The folder header's name can be renamed inline (click/double-click), same interaction pattern as renaming a project
+  - [ ] Folders are flat only — a folder cannot contain another folder — and a project belongs to exactly one folder, or none (shown at top level)
+  - [ ] Dragging a project row onto a folder header adds/moves that project into it, regardless of whether it was previously ungrouped or in a different folder
+  - [ ] Dragging a project row onto empty list space (or a dedicated top-level "ungrouped" drop target) moves it back out to top level
+  - [ ] Dropping a project row **between** two existing rows (a drop-indicator line, not directly onto a row) reorders it to that position instead of merging/moving it into whatever row it was dropped near — the same drag gesture serves both reordering and folder membership changes, disambiguated by exactly where the drop lands
+  - [ ] A folder that loses its last member (dragged out, or the project deleted per FR-01) is automatically deleted — no empty folders persist
+  - [ ] A project inside a folder that also has 2+ open terminal sessions still renders its automatic "grouped (2+ sessions)" sub-item list beneath it (FR-08), simply nested one level deeper inside the folder — the two concepts compose rather than conflict
+  - [ ] Folder membership and names persist across app restarts, stored in the encrypted project-data blob (extends FR-06/NFR-3 — folder names are user-authored text and get the same at-rest protection as project notes/commands)
+  - [ ] Each folder's expanded/collapsed state persists across app restarts, stored in the existing unencrypted preferences store (same mechanism FR-13/NFR-8 already uses for non-sensitive UI state — collapse state is not sensitive data and must render even at the unlock screen's sidebar chrome)
+  - [ ] A folder header is **not** a drag-to-split source (cannot be dragged onto a terminal pane) — same ambiguity rule `components.md` already applies to the automatic "grouped" parent row, since a folder has no single session to unambiguously drag. Only the individual project rows and session sub-items inside it remain draggable onto a pane, unchanged from FR-08.
+- **Edge cases:**
+  - Dropping a project onto itself, or onto the folder it's already directly in with no position change → no-op, no rename/reorder triggered
+  - Renaming a folder to an empty string → reverts to its previous name rather than saving a blank label
+  - Dragging the second-to-last member out of a 2-member folder leaves a 1-member folder, which per the empty-folder rule is NOT yet auto-deleted (only a fully empty folder is) — that lone remaining project stays inside the folder until explicitly dragged out too
+  - Deleting a project (FR-01) that is a folder's last member triggers the same auto-delete-when-empty behavior as manually dragging it out
+
 ### 4.2 Next Iteration (Should Have)
-- **FR-11:** Project grouping/folders — organize the list into categories
+- ~~**FR-11:** Project grouping/folders — organize the list into categories~~ — promoted to MVP (2026-07-21), see §4.1
 - ~~**FR-12:** Terminal theme customization~~ — superseded by FR-13 (2026-07-20)
 
 ### 4.3 Future Backlog
@@ -246,6 +267,8 @@ User wants a properly installed package from the start (not just running from so
 - [ ] [Q4] Tab/pane close UX when a long-running foreground process is active — Owner: ui-ux-designer / design phase
 - [ ] [Q5] Exact format/location of the unencrypted preferences store (FR-13/NFR-8) and the master-password-rotation strategy for the encrypted blob — Owner: system-architect
 - [ ] [Q6] Which specific preset themes ship for FR-13 theme customization — Owner: ui-ux-designer
+- [ ] [Q7] Exact visual treatment distinguishing a "reorder between rows" drop target from a "merge/move into this row or folder" drop target in the sidebar (FR-11) — Owner: ui-ux-designer
+- [ ] [Q8] Data model/schema for folder membership + name within the encrypted project-data blob (FR-11, extends FR-06) — Owner: system-architect
 
 ---
 
@@ -272,3 +295,4 @@ User wants a properly installed package from the start (not just running from so
 | 1.3 | 2026-07-19 | FR-08 acceptance criteria revised: left-click on a sidebar project now switches to its existing tab instead of always opening a duplicate; right-click opens a context menu with an explicit "Open in new tab" action for that case. Replaces the old "always opens a new tab" behavior. |
 | 1.4 | 2026-07-19 | FR-08 revised again: the horizontal tab-bar widget is removed entirely — sidebar becomes the sole way to open/switch/close/drag tabs. Added: automatic sub-session list when a project has 2+ open tabs (no manual expand/collapse), "Close terminal" Menu action (replaces the tab bar's per-tab close button), drag-to-split now sourced from sidebar rows/sub-items instead of tab-bar tabs (and can spawn a fresh session directly into a split if the source had none open yet). Added an edge case: deleting a project with open sessions closes them first. |
 | 1.5 | 2026-07-20 | Added FR-13 (Settings Panel: theme presets, master password change, full keybinding customization with conflict detection, sidebar left/right position), promoted straight to MVP per user decision, superseding the old FR-12 placeholder. Added US-08, NFR-8 (non-sensitive settings stored unencrypted, separate from FR-06's blob), and Q5/Q6 open questions for system-architect/ui-ux-designer. |
+| 1.6 | 2026-07-21 | Added FR-11 (Sidebar Folders: drag-and-drop project grouping, flat/single-membership, auto-delete-when-empty, one drag gesture for both reordering and folder membership changes), fully specified and promoted straight to MVP per user decision, superseding the old one-line FR-11 placeholder. Deliberately termed "Folder" (not "Group") to avoid collision with the existing automatic "grouped (2+ sessions)" sidebar display mode — the two compose rather than conflict. Added US-09 and Q7/Q8 open questions for ui-ux-designer/system-architect. |

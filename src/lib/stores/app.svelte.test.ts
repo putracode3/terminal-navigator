@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { appStore } from "./app.svelte";
-import type { ProjectDto } from "$lib/api";
+import type { ProjectDto, SidebarEntryDto, FolderDto } from "$lib/api";
 
 function project(overrides: Partial<ProjectDto> = {}): ProjectDto {
 	return {
@@ -13,63 +13,140 @@ function project(overrides: Partial<ProjectDto> = {}): ProjectDto {
 	};
 }
 
+function projectEntry(overrides: Partial<ProjectDto> = {}): SidebarEntryDto {
+	return { type: "project", ...project(overrides) };
+}
+
+function folderEntry(overrides: Partial<FolderDto> = {}): SidebarEntryDto {
+	return { type: "folder", id: "folder-1", name: "My Folder", members: [], ...overrides };
+}
+
 // appStore is a module-level singleton — reset it before every test so
 // tests never depend on execution order (qa-tester principle 5).
 beforeEach(() => {
 	appStore.locked = true;
-	appStore.projects = [];
+	appStore.entries = [];
 	appStore.password = "";
 	appStore.sidebarHidden = false;
+	appStore.sidebarDrag = null;
 });
 
 describe("appStore", () => {
-	it("starts locked with no projects", () => {
+	it("starts locked with no entries", () => {
 		expect(appStore.locked).toBe(true);
-		expect(appStore.projects).toEqual([]);
+		expect(appStore.entries).toEqual([]);
+		expect(appStore.allProjects).toEqual([]);
 	});
 
-	it("unlockWith() unlocks, stores the password, and sets the project list", () => {
-		const projects = [project({ id: "a" }), project({ id: "b" })];
-		appStore.unlockWith("hunter2", projects);
+	it("unlockWith() unlocks, stores the password, and sets the sidebar tree", () => {
+		const entries = [projectEntry({ id: "a" }), projectEntry({ id: "b" })];
+		appStore.unlockWith("hunter2", entries);
 
 		expect(appStore.locked).toBe(false);
 		expect(appStore.password).toBe("hunter2");
-		expect(appStore.projects).toEqual(projects);
+		expect(appStore.entries).toEqual(entries);
 	});
 
-	it("setProjects() replaces the list wholesale", () => {
-		appStore.setProjects([project({ id: "a" })]);
-		appStore.setProjects([project({ id: "b" })]);
-		expect(appStore.projects.map((p) => p.id)).toEqual(["b"]);
+	it("setEntries() replaces the tree wholesale", () => {
+		appStore.setEntries([projectEntry({ id: "a" })]);
+		appStore.setEntries([projectEntry({ id: "b" })]);
+		expect(appStore.entries.map((e) => e.id)).toEqual(["b"]);
 	});
 
-	it("upsertProject() appends a new project not already in the list", () => {
-		appStore.setProjects([project({ id: "a" })]);
-		appStore.upsertProject(project({ id: "b", name: "new one" }));
+	describe("allProjects — flattens top-level projects and every folder's members", () => {
+		it("returns only top-level projects when there are no folders", () => {
+			appStore.setEntries([projectEntry({ id: "a" }), projectEntry({ id: "b" })]);
+			expect(appStore.allProjects.map((p) => p.id)).toEqual(["a", "b"]);
+		});
 
-		expect(appStore.projects.map((p) => p.id)).toEqual(["a", "b"]);
+		it("includes projects nested inside folders alongside top-level ones", () => {
+			appStore.setEntries([
+				projectEntry({ id: "a" }),
+				folderEntry({ id: "f1", members: [project({ id: "b" }), project({ id: "c" })] }),
+			]);
+			expect(appStore.allProjects.map((p) => p.id)).toEqual(["a", "b", "c"]);
+		});
 	});
 
-	it("upsertProject() replaces an existing project in place, preserving order", () => {
-		appStore.setProjects([project({ id: "a" }), project({ id: "b" }), project({ id: "c" })]);
-		appStore.upsertProject(project({ id: "b", name: "renamed" }));
+	describe("upsertProject()", () => {
+		it("appends a brand-new project at top level", () => {
+			appStore.setEntries([projectEntry({ id: "a" })]);
+			appStore.upsertProject(project({ id: "b", name: "new one" }));
 
-		expect(appStore.projects.map((p) => p.id)).toEqual(["a", "b", "c"]);
-		expect(appStore.projects[1].name).toBe("renamed");
+			expect(appStore.entries.map((e) => e.id)).toEqual(["a", "b"]);
+			expect(appStore.entries[1]).toEqual(projectEntry({ id: "b", name: "new one" }));
+		});
+
+		it("replaces an existing top-level project in place, preserving order", () => {
+			appStore.setEntries([projectEntry({ id: "a" }), projectEntry({ id: "b" }), projectEntry({ id: "c" })]);
+			appStore.upsertProject(project({ id: "b", name: "renamed" }));
+
+			expect(appStore.entries.map((e) => e.id)).toEqual(["a", "b", "c"]);
+			expect((appStore.entries[1] as { name: string }).name).toBe("renamed");
+		});
+
+		it("replaces a project nested inside a folder in place, without touching its siblings", () => {
+			appStore.setEntries([
+				folderEntry({ id: "f1", members: [project({ id: "a" }), project({ id: "b" })] }),
+			]);
+			appStore.upsertProject(project({ id: "a", name: "renamed" }));
+
+			const folder = appStore.entries[0] as FolderDto & { type: "folder" };
+			expect(folder.members.map((m) => m.name)).toEqual(["renamed", "demo"]);
+		});
 	});
 
-	it("removeProject() removes exactly the matching project", () => {
-		appStore.setProjects([project({ id: "a" }), project({ id: "b" })]);
-		appStore.removeProject("a");
+	describe("removeProject()", () => {
+		it("removes exactly the matching top-level project", () => {
+			appStore.setEntries([projectEntry({ id: "a" }), projectEntry({ id: "b" })]);
+			appStore.removeProject("a");
 
-		expect(appStore.projects.map((p) => p.id)).toEqual(["b"]);
+			expect(appStore.entries.map((e) => e.id)).toEqual(["b"]);
+		});
+
+		it("with an unknown id is a no-op", () => {
+			appStore.setEntries([projectEntry({ id: "a" })]);
+			appStore.removeProject("does-not-exist");
+
+			expect(appStore.entries.map((e) => e.id)).toEqual(["a"]);
+		});
+
+		it("removes a project nested inside a folder, leaving the folder intact if members remain", () => {
+			appStore.setEntries([
+				folderEntry({ id: "f1", members: [project({ id: "a" }), project({ id: "b" })] }),
+			]);
+			appStore.removeProject("a");
+
+			const folder = appStore.entries[0] as FolderDto & { type: "folder" };
+			expect(folder.members.map((m) => m.id)).toEqual(["b"]);
+		});
+
+		it("prunes a folder client-side the instant its last member is removed (mirrors the backend invariant)", () => {
+			appStore.setEntries([
+				projectEntry({ id: "outside" }),
+				folderEntry({ id: "f1", members: [project({ id: "a" })] }),
+			]);
+			appStore.removeProject("a");
+
+			expect(appStore.entries.map((e) => e.id)).toEqual(["outside"]);
+		});
 	});
 
-	it("removeProject() with an unknown id is a no-op", () => {
-		appStore.setProjects([project({ id: "a" })]);
-		appStore.removeProject("does-not-exist");
+	describe("sidebar drag tracking (FR-11)", () => {
+		it("starts null", () => {
+			expect(appStore.sidebarDrag).toBeNull();
+		});
 
-		expect(appStore.projects.map((p) => p.id)).toEqual(["a"]);
+		it("startDraggingSidebarEntry() records the kind and id", () => {
+			appStore.startDraggingSidebarEntry("project", "proj-1");
+			expect(appStore.sidebarDrag).toEqual({ kind: "project", id: "proj-1" });
+		});
+
+		it("stopDraggingSidebarEntry() clears it", () => {
+			appStore.startDraggingSidebarEntry("folder", "folder-1");
+			appStore.stopDraggingSidebarEntry();
+			expect(appStore.sidebarDrag).toBeNull();
+		});
 	});
 
 	it("toggleSidebar() flips sidebarHidden each call", () => {

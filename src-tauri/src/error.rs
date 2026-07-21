@@ -29,7 +29,8 @@ impl From<ProjectStoreError> for AppError {
         let kind = match &err {
             ProjectStoreError::EmptyName
             | ProjectStoreError::PathNotFound(_)
-            | ProjectStoreError::EmptyPassword => "invalid_input",
+            | ProjectStoreError::EmptyPassword
+            | ProjectStoreError::SelfMerge => "invalid_input",
             ProjectStoreError::NotFound(_) => "not_found",
             ProjectStoreError::Crypto(_) => "crypto",
             ProjectStoreError::Io(_) => "io",

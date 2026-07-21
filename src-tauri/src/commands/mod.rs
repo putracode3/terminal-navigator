@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::config_sync;
 use crate::error::AppError;
-use crate::project_store::{Project, ProjectInput, ProjectStore};
+use crate::project_store::{Folder, MoveDestination, Project, ProjectInput, ProjectStore, SidebarEntry};
 use crate::pty_manager::PtyManager;
 use crate::settings_store::{self, Settings, SidebarPosition};
 
@@ -89,6 +89,58 @@ impl From<ProjectInputDto> for ProjectInput {
     }
 }
 
+/// FR-11 (ADR-0011): a folder's ordered members, DTO-shaped the same way
+/// `ProjectDto` already is (never serialize domain structs directly across
+/// the IPC boundary — see `ProjectDto`'s own precedent).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderDto {
+    pub id: String,
+    pub name: String,
+    pub members: Vec<ProjectDto>,
+}
+
+impl From<&Folder> for FolderDto {
+    fn from(f: &Folder) -> Self {
+        Self {
+            id: f.id.to_string(),
+            name: f.name.clone(),
+            members: f.members.iter().map(ProjectDto::from).collect(),
+        }
+    }
+}
+
+/// FR-11: the sidebar's top-level tree, replacing the pre-FR-11 flat
+/// `Vec<ProjectDto>` — internally tagged so the frontend can discriminate
+/// `{"type": "project", ...}` from `{"type": "folder", ...}` without a
+/// separate wrapper shape.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum SidebarEntryDto {
+    Project(ProjectDto),
+    Folder(FolderDto),
+}
+
+impl From<&SidebarEntry> for SidebarEntryDto {
+    fn from(entry: &SidebarEntry) -> Self {
+        match entry {
+            SidebarEntry::Project(p) => SidebarEntryDto::Project(p.into()),
+            SidebarEntry::Folder(f) => SidebarEntryDto::Folder(f.into()),
+        }
+    }
+}
+
+/// FR-11: where `move_project` sends a project — mirrors
+/// `project_store::MoveDestination`, translated from a raw `folderId` string
+/// (fallible — must be parsed) rather than deriving `Deserialize` on the
+/// domain type directly, same reasoning as every other *Dto in this file.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum MoveDestinationDto {
+    TopLevel,
+    Folder { folder_id: String },
+}
+
 /// FR-13 — the non-sensitive preferences DTO. Same shape as `Settings`
 /// (settings_store has no internal fields to hide), kept as a distinct DTO
 /// anyway to match this project's existing convention of never serializing
@@ -122,18 +174,21 @@ impl From<SettingsDto> for Settings {
 }
 
 #[tauri::command]
-pub fn unlock(password: String, state: State<AppState>) -> Result<Vec<ProjectDto>, AppError> {
+pub fn unlock(password: String, state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
     let store = ProjectStore::unlock(state.data_file.clone(), &password)?;
-    let projects = store.list().iter().map(ProjectDto::from).collect();
+    let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
-    Ok(projects)
+    Ok(entries)
 }
 
+/// FR-11: renamed from `list_projects` — the sidebar tree now includes
+/// folders, not just a flat project list, so `list_projects` would
+/// undersell what this returns.
 #[tauri::command]
-pub fn list_projects(state: State<AppState>) -> Result<Vec<ProjectDto>, AppError> {
+pub fn list_sidebar_entries(state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
     let guard = state.store.lock().unwrap();
     let store = guard.as_ref().ok_or_else(AppError::locked)?;
-    Ok(store.list().iter().map(ProjectDto::from).collect())
+    Ok(store.entries().iter().map(SidebarEntryDto::from).collect())
 }
 
 #[tauri::command]
@@ -166,6 +221,75 @@ pub fn delete_project(id: String, state: State<AppState>) -> Result<(), AppError
     Ok(())
 }
 
+/// FR-11 "drop onto a row's merge band": creates a new folder or joins an
+/// existing one, per `ProjectStore::merge_or_join`'s own doc comment for
+/// exactly which case applies. Returns the resulting folder so the frontend
+/// can render/auto-expand it without a separate round trip.
+#[tauri::command]
+pub fn merge_projects(
+    dragged_id: String,
+    target_id: String,
+    state: State<AppState>,
+) -> Result<FolderDto, AppError> {
+    let dragged_id = parse_uuid(&dragged_id)?;
+    let target_id = parse_uuid(&target_id)?;
+    let mut guard = state.store.lock().unwrap();
+    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let folder_id = store.merge_or_join(dragged_id, target_id)?;
+    let folder = store
+        .entries()
+        .iter()
+        .find_map(|e| match e {
+            SidebarEntry::Folder(f) if f.id == folder_id => Some(f),
+            _ => None,
+        })
+        .expect("merge_or_join returns the id of a folder it just created or joined");
+    Ok(folder.into())
+}
+
+/// FR-11 "drop onto a reorder band, or move between folders/top level":
+/// relocates a project to `destination` at `index` — see
+/// `ProjectStore::move_project`'s own doc comment.
+#[tauri::command]
+pub fn move_project(
+    project_id: String,
+    destination: MoveDestinationDto,
+    index: usize,
+    state: State<AppState>,
+) -> Result<(), AppError> {
+    let project_id = parse_uuid(&project_id)?;
+    let destination = match destination {
+        MoveDestinationDto::TopLevel => MoveDestination::TopLevel,
+        MoveDestinationDto::Folder { folder_id } => MoveDestination::Folder(parse_uuid(&folder_id)?),
+    };
+    let mut guard = state.store.lock().unwrap();
+    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    store.move_project(project_id, destination, index)?;
+    Ok(())
+}
+
+/// FR-11: repositions a folder header within the sidebar's top level.
+#[tauri::command]
+pub fn reorder_folder(folder_id: String, index: usize, state: State<AppState>) -> Result<(), AppError> {
+    let folder_id = parse_uuid(&folder_id)?;
+    let mut guard = state.store.lock().unwrap();
+    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    store.reorder_folder(folder_id, index)?;
+    Ok(())
+}
+
+/// FR-11: renames a folder. Returns the name actually saved — a
+/// blank/whitespace-only `name` silently reverts to the previous name
+/// (`ProjectStore::rename_folder`'s own doc comment), so the frontend can
+/// tell that happened instead of assuming its own input was applied verbatim.
+#[tauri::command]
+pub fn rename_folder(folder_id: String, name: String, state: State<AppState>) -> Result<String, AppError> {
+    let folder_id = parse_uuid(&folder_id)?;
+    let mut guard = state.store.lock().unwrap();
+    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    Ok(store.rename_folder(folder_id, name)?)
+}
+
 /// Opens a new terminal pane at `project_id`'s path and runs its setup
 /// commands (FR-03, FR-04). `session_id` is generated by the frontend when
 /// the pane is created (ADR-0007) — one pane maps 1:1 to one PTY session.
@@ -182,9 +306,7 @@ pub fn open_terminal(
     let guard = state.store.lock().unwrap();
     let store = guard.as_ref().ok_or_else(AppError::locked)?;
     let project = store
-        .list()
-        .iter()
-        .find(|p| p.id == project_id)
+        .find_project(project_id)
         .ok_or_else(|| AppError { kind: "not_found", message: "Project not found".to_string() })?;
 
     let event_name = output_event_name(session_id);
@@ -287,12 +409,12 @@ pub fn import_config(
     source: String,
     password: String,
     state: State<AppState>,
-) -> Result<Vec<ProjectDto>, AppError> {
+) -> Result<Vec<SidebarEntryDto>, AppError> {
     config_sync::import(&PathBuf::from(source), &state.data_file, &password)?;
     let store = ProjectStore::unlock(state.data_file.clone(), &password)?;
-    let projects = store.list().iter().map(ProjectDto::from).collect();
+    let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
-    Ok(projects)
+    Ok(entries)
 }
 
 /// Reads current settings (FR-13). Deliberately does **not** check

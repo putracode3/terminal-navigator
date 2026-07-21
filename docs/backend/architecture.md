@@ -1,9 +1,9 @@
 # System Architecture — Terminal Navigator
 
-> Version 1.3 · 2026-07-20 · Status: approved
+> Version 1.5 · 2026-07-21 · Status: approved
 > Package: architecture.md (this file) · adr/ (decision records)
 > Downstream: db-schema-designer → §5 (optional/light-touch — see note) · backend-implementer → all · design-implementer → §5.7 + §7 (frontend structure)
-> Source PRD: docs/prd-terminal-navigator.md (v1.5)
+> Source PRD: docs/prd-terminal-navigator.md (v1.6)
 
 ## 1. System overview
 
@@ -52,10 +52,11 @@ graph TB
 ## 5. Module decomposition
 
 ### 5.1 project_store (Rust)
-- **Responsibility:** CRUD for project entries; holds the in-memory + persisted list of projects.
-- **Owns entities:** `Project` (id, name, path, setup_commands, notes, created_at/updated_at — field-level detail is backend-implementer's concern, not architecture's).
+- **Responsibility:** CRUD for project entries; holds the in-memory + persisted sidebar tree of projects and folders.
+- **Owns entities:** `Project` (id, name, path, setup_commands, notes, created_at/updated_at — field-level detail is backend-implementer's concern, not architecture's); `Folder` (id, name, ordered `members: Vec<Project>` — FR-11, v1.4/ADR-0011).
 - **Depends on:** `crypto` (to encrypt/decrypt its persisted data).
-- **Notes:** Sole owner of `Project`. No other module reads/writes project data directly — `pty_manager` and `command_runner` go through this module to read a project's path/commands.
+- **Notes:** Sole owner of `Project` and `Folder`. No other module reads/writes project or folder data directly — `pty_manager` and `command_runner` go through this module (a `find_project(id)` lookup, not a flat list index — see below) to read a project's path/commands.
+- **FR-11, v1.4 (ADR-0011):** persisted root is `Vec<SidebarEntry>` (`SidebarEntry::Project` | `SidebarEntry::Folder`), replacing the pre-FR-11 bare `Vec<Project>` — a `Folder` owns its members directly (`Vec<Project>`), so a Vec's own order *is* position (top-level and within a folder alike), flat-only nesting is enforced by the type system (a `Folder` cannot contain a `SidebarEntry`, only a `Project`), and an empty folder is removed by filtering rather than by a referential-integrity sweep. The encrypted plaintext now carries a magic-byte version marker ahead of the `bincode` payload so `unlock` can tell a pre-FR-11 file (bare `Vec<Project>`, no marker) from the new `StoreData` shape and transparently upgrade it in memory, immediately re-persisting in the new marked format from within `unlock` itself (not deferred to whatever mutating call happens to come next) — no explicit migration step, and a purely read-only session still upgrades the file on disk. `list()`'s old flat-slice accessor is gone; downstream consumers use `entries()` (for the IPC tree DTO) and `find_project(id)` (for `command_runner`/`pty_manager`'s existing by-id reads) instead.
 
 ### 5.2 crypto (Rust)
 - **Responsibility:** Derive the encryption key from the master password; encrypt/decrypt the app's data blob.
@@ -151,6 +152,7 @@ graph LR
 | Background jobs | None needed | — | — |
 | Caching | None needed (personal-scale in-memory data) | NFR-4 | — |
 | File storage | Single encrypted file (JSON/bincode + AES-GCM), doubles as the git-trackable/export artifact | NFR-5, NFR-6 | 0004 |
+| Envelope schema evolution | Magic-byte version marker ahead of the `bincode` payload; unmarked files are the pre-FR-11 legacy shape, auto-upgraded on load and rewritten in the new format on next save | FR-11, NFR-3 | 0011 |
 | Terminal rendering | `xterm.js` + WebGL renderer addon | NFR-7 | 0006 |
 | Notifications | N/A | — | — |
 | Logging & errors | `tracing` crate → local log file, for the author's own debugging while learning Rust | NFR-6, CON-2 | — |
@@ -166,7 +168,7 @@ graph LR
 | App shell | Tauri | User's explicit choice; produces a far lighter binary than Electron (NFR-7) with no bundled Chromium |
 | Backend | Rust | Fixed by user's choice; also Tauri's native language |
 | Frontend framework | Svelte | Compiles away the framework at build time — no virtual DOM, smaller bundle, lower runtime memory than React — directly serves NFR-7 with FR-08's many concurrent panes. See ADR-0002 |
-| Terminal renderer | `xterm.js` + `@xterm/addon-webgl` | Industry standard (VS Code, Hyper); WebGL addon keeps multi-pane rendering cheap on CPU/memory (NFR-7). See ADR-0006 |
+| Terminal renderer | `xterm.js`, default (non-WebGL) renderer | Industry standard (VS Code, Hyper). `@xterm/addon-webgl` was tried for cheaper multi-pane CPU/memory (NFR-7) but disabled 2026-07-21 after proving it never actually paints — see ADR-0006's revisit |
 | PTY | `portable-pty` (WezTerm project) | Mature, cross-platform (Linux/macOS/Windows via ConPTY), proven in production. See ADR-0003 |
 | Storage | Single encrypted file (`bincode`/`serde_json` + `aes-gcm` crate) | Simplest for a Rust beginner (NFR-6); pure-Rust, no C-library linking; file itself satisfies NFR-5. See ADR-0004 |
 | Crypto | `argon2` (key derivation) + `aes-gcm` (RustCrypto) | Pure-Rust, no OpenSSL/C linking pain (NFR-6); standard modern recipe. See ADR-0005 |
@@ -182,7 +184,7 @@ One box: the author's own Linux machine, running the AppImage or `.deb` package 
 ## 9. Risks & open questions
 
 1. **Compounding first-Rust-project risk.** PTY handling, multi-pane multiplexing (FR-08), and encryption are each individually nontrivial for a first Rust/Tauri project; doing all three at once risks stalling momentum. *Mitigation:* no architectural blocker — implement incrementally (single-tab/single-pane first, then tabs, then split-panes) since CON-1/CON-3 impose no deadline. Revisit if the author reports being stuck for multiple sessions on any one module.
-2. **WebGL renderer availability.** `@xterm/addon-webgl` requires a working WebGL context in the webview; Tauri's Linux webview (WebKitGTK) generally supports this, but should be verified early. *Revisit if:* WebGL context creation fails on the target system — fall back to xterm.js's default canvas renderer (still acceptable, just less optimal for NFR-7).
+2. **WebGL renderer availability.** ~~`@xterm/addon-webgl` requires a working WebGL context in the webview...~~ **Resolved 2026-07-21 (ADR-0006 revisit):** the risk materialized, but not as originally framed — WebGL context creation succeeded (no errors, not lost), yet the addon never issued a single visible draw call, confirmed via `gl.readPixels()` on the framebuffer. Not a context-availability problem the `try/catch` fallback could catch. Disabled app-wide; xterm.js's default renderer is now the only path. Revisit only once a newer `@xterm/addon-webgl` release is confirmed (by the same read-pixels method, not just absence of console errors) to actually paint.
 3. **Import replace-only (ADR-0008) may feel limiting later** if the author wants to merge project lists from two devices rather than fully replace. *Revisit if:* this friction is actually felt in practice — add merge logic as a next-iteration feature at that point, not before.
 4. **Windows/macOS support (CON-5, optional)** is not blocked by any decision here — `portable-pty` and Tauri both support all three OSes — but has not been tested. *Revisit when/if the author actually wants to run on those platforms.*
 5. **User-rebound keybindings colliding with OS/webview-native commands (FR-13).** The clipboard shortcut bug fixed 2026-07-20 (`TerminalPane.svelte`'s Ctrl+Shift+V silently double-firing because the browser/webview's own native paste action wasn't suppressed) is one instance of a general class: once users can rebind shortcuts to arbitrary combinations, any combo the OS/WebKitGTK treats as a native command is a similar risk, not just the one already fixed. *Mitigation:* design-implementer/backend-implementer should call `event.preventDefault()` for every custom-handled combo (not just the two already covered), and ui-ux-designer should consider warning the user in the rebind UI if a chosen combo is a common OS-reserved one. No architectural blocker — this is an implementation-discipline risk, not a structural one.
@@ -193,7 +195,7 @@ You are working within this architecture. Follow these rules:
 
 1. **Source-of-truth order:** `adr/` (rationale) → this file (structure) → downstream docs for their own domains. On conflict, report it; don't silently pick.
 2. **Respect module boundaries.** Code for one module never reaches into another module's entities directly (e.g., frontend `terminal_view` never reads `project_store` data except through the IPC layer; `pty_manager` never persists data itself — that's `project_store`'s job via `crypto`). New cross-module dependencies require updating §5 + an ADR.
-3. **Entity ownership is exclusive.** Only `project_store` reads/writes `Project`; only `pty_manager` creates/destroys `PtySession`; only `settings_store` reads/writes `Settings` (theme/keybindings/sidebar position) — it has no `crypto` dependency and must stay that way (NFR-8).
+3. **Entity ownership is exclusive.** Only `project_store` reads/writes `Project` and `Folder`; only `pty_manager` creates/destroys `PtySession`; only `settings_store` reads/writes `Settings` (theme/keybindings/sidebar position) — it has no `crypto` dependency and must stay that way (NFR-8).
 4. **Cross-cutting concerns use §6's decisions** — never introduce a second storage format, crypto scheme, or terminal-rendering approach without a new ADR.
 5. **Uncovered cases:** follow the nearest decision's pattern, flag as "unspecified — architecture review needed" in your summary.
 6. **Do not modify this package** unless explicitly asked; propose changes as draft ADRs instead.
@@ -209,3 +211,4 @@ You are working within this architecture. Follow these rules:
 | 1.2 | 2026-07-20 | Keybinding registry extended to 10 actions (§5.6): added `terminal.zoomIn` (Ctrl+=) / `terminal.zoomOut` (Ctrl+-), confirming the registry's designed extensibility. Registry-only change (settings_store Rust defaults + frontend registry/type widening) — the actual zoom mechanism (font-size adjustment, refit, Ctrl+Scroll wheel gesture) is a separate, not-yet-implemented design-implementer pass. |
 | 1.3 | 2026-07-20 | Keybinding registry extended to 12 actions (§5.6): added `terminal.nextTab` (Ctrl+Tab) / `terminal.previousTab` (Ctrl+Shift+Tab) for tab-cycling (distinct from `pane.moveFocus*`, which is within-tab pane focus). Registry-only change again — tab-cycling logic itself is a pending design-implementer pass. Found and documented (not fixed) a real gap while adding these: `KeybindingRow.svelte`'s rebind-capture logic can never actually capture a Tab-containing combo (its Tab-cancels-recording check doesn't look at modifiers), so `terminal.nextTab`/`previousTab` work correctly as defaults but can't currently be rebound via the Settings UI — left as a documented failing test, fix deferred to whoever implements the tab-cycling behavior next. |
 | 1.4 | 2026-07-21 | `terminal_view` (§5.7) amended: fixed the perpendicular-split remount bug (test-plan.md's formerly-accepted gap) by decoupling the xterm.js `Terminal`/scrollback/PTY subscriptions from `<TerminalPane>`'s own component lifecycle into a session-keyed registry (`$lib/terminal-registry`) — the root cause was structural (Svelte's keyed `{#each}` reconciliation cannot preserve a component instance across a leaf being wrapped in a brand-new ancestor node, for any choice of keys), so the fix makes the remount harmless instead of trying to prevent it. Disposal is now centralized to `TerminalArea.svelte`'s `handleClosePane`/`Sidebar.svelte`'s `closeSession`, not the component's own `onDestroy`. |
+| 1.5 | 2026-07-21 | FR-11 (Sidebar Folders, PRD v1.6): resolved data model for `project_store` (§5.1) — root persisted type becomes `Vec<SidebarEntry>` (nested `Project`/`Folder` ownership, order-as-position, flat nesting enforced by the type system) instead of adding `folder_id`/`position` fields to a flat `Vec<Project>` + separate `Vec<Folder>` join. Added ADR-0011 (schema shape + a magic-byte envelope version marker so pre-FR-11 files auto-upgrade on load, since `bincode`'s root type is changing and the format isn't self-describing). Added a cross-cutting "Envelope schema evolution" row (§6). `list()`'s flat accessor is replaced by `entries()` + `find_project(id)` — noted as a `project_store`-internal contract change only (§10.2 module-boundary rule); IPC/DTO and frontend store changes are backend-implementer/design-implementer's follow-up, out of scope here. |

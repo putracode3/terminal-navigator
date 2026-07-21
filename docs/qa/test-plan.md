@@ -121,21 +121,23 @@ Not applicable — no refactor/migration is currently planned (SAFETY-NET mode n
 
 **Findings log:** record results directly in this table (date + pass/fail) and in `docs/ops/runbook.md`'s rehearsal log — don't maintain a third location.
 
-### 5.2 WebGL renderer fallback (low priority)
+### 5.2 WebGL renderer fallback — RESOLVED 2026-07-21, superseded by this charter
 
-**Goal:** confirm the `try/catch` around `WebglAddon` construction (`TerminalPane.svelte`) actually results in a usable (if less optimal) terminal when WebGL is unavailable — architecture.md §9 risk 2 flags this as unverified.
+**Original goal:** confirm the `try/catch` around `WebglAddon` construction (`TerminalPane.svelte`) actually results in a usable (if less optimal) terminal when WebGL is unavailable — architecture.md §9 risk 2 flagged this as unverified.
 
-**Scope:** on the current dev machine, temporarily force a WebGL failure (e.g. via `WEBKIT_DISABLE_COMPOSITING_MODE=1` or a debug flag that skips the WebGL addon) and confirm the terminal still renders and accepts input correctly using the default renderer.
+**What actually happened (debugger session, bug report: any full-screen TUI CLI rendering blank in a pane):** this charter's premise — that the risk was *context-creation failing* — was wrong. Context creation always succeeded; the addon simply never painted anything, ever, regardless of content. The `try/catch` fallback never had a chance to trigger because nothing threw. Confirmed with a standalone `xterm.js`+`@xterm/addon-webgl` harness outside Tauri, using `gl.readPixels()` on the framebuffer (not just visual inspection or console-error absence) — see ADR-0006's "2026-07-21 revisit" section for the full evidence trail.
 
-**Time-box:** 10 minutes, one-time — this only needs re-checking if `@xterm/addon-webgl` or the Tauri/WebKitGTK version changes meaningfully.
+**Resolution:** `@xterm/addon-webgl` is no longer loaded at all (`TerminalPane.svelte`); xterm.js's default renderer is used app-wide. `TerminalPane.test.ts` has a regression test asserting only the fit addon is loaded.
 
-**Cadence:** once now (not yet done — see §6), then only on major dependency bumps to xterm.js/Tauri.
+**Residual manual charter (replaces the above):** if `@xterm/addon-webgl` is ever reintroduced (e.g. after an upstream fix), re-verify it with the `gl.readPixels()`-on-the-framebuffer method — not just "no console errors" or a glance at the screen, both of which this bug slipped past. A blank pane can look identical to an empty/just-cleared one at a glance.
+
+**Cadence:** only if `@xterm/addon-webgl` is reintroduced.
 
 ## 6. Accepted gaps
 
 | Gap | Reason | Revisit trigger |
 |---|---|---|
-| §5.2 (WebGL fallback) not yet actually run | Lower priority than §5.1; the fallback code path exists and is simple (`try { … } catch {}`) | Before the next `@xterm/addon-webgl` or Tauri version bump, or if a rendering bug report ever surfaces |
+| WebGL renderer performance headroom not re-measured after §5.2's fix (default renderer app-wide) | NFR-7's CPU/memory motivation for WebGL is no longer met by rendering; not yet a reported problem | If FR-08's multi-pane scenario (several simultaneous panes) is ever reported as sluggish |
 | No automated test for the Rust `commands/mod.rs` Tauri command handlers themselves (`open_terminal`, `write_terminal`, etc.) beyond `path_exists` | They're thin wrappers (architecture.md §10 rule 2: "no business logic lives here") delegating to already-tested `pty_manager`/`project_store` — the risk lives in the delegated modules, which are covered. **Caveat found by `docs/security/audit-2026-07-20.md` (M1):** this reasoning doesn't cover each handler's *own* lock-state gate — `split_pane` was missing its check despite every delegated module being fine, since the gate itself lives in the handler, not in what it delegates to. Testing this properly needs `tauri::test`'s app-mocking utilities, not yet set up in this project — a disproportionate addition for one line today, so this remains a manual-review item per handler until/unless more handler-level logic accumulates | If a command handler ever grows real logic of its own, or if a second lock-state gating gap is ever found (pattern, not one-off) |
 | No cross-platform (Windows/macOS) testing | architecture.md §9 risk 4 — not blocked, just not attempted; this app only runs on the author's own Debian 12 machine today | If/when the author actually wants to run this on another OS |
 | No CI pipeline running any of this automatically | Personal project, no git remote configured yet (see `docs/ops/runbook.md` §9) | If this repo ever gets a public/shared remote |

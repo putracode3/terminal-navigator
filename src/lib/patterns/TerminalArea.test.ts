@@ -12,6 +12,7 @@ type FakeTerm = {
 	onData: ReturnType<typeof vi.fn>;
 	dispose: ReturnType<typeof vi.fn>;
 	focus: ReturnType<typeof vi.fn>;
+	refresh: ReturnType<typeof vi.fn>;
 	write: ReturnType<typeof vi.fn>;
 	attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
 	attachCustomWheelEventHandler: ReturnType<typeof vi.fn>;
@@ -31,6 +32,7 @@ vi.mock("@xterm/xterm", () => ({
 			onData: vi.fn(),
 			dispose: vi.fn(),
 			focus: vi.fn(),
+			refresh: vi.fn(),
 			write: vi.fn(),
 			attachCustomKeyEventHandler: vi.fn(),
 			attachCustomWheelEventHandler: vi.fn(),
@@ -45,7 +47,6 @@ vi.mock("@xterm/xterm", () => ({
 	}),
 }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return { fit: vi.fn() }; }) }));
-vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: vi.fn(function WebglAddon() { return {}; }) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: (...args: unknown[]) => listenMock(...args) }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 	writeText: vi.fn().mockResolvedValue(undefined),

@@ -14,8 +14,8 @@
 		loading = true;
 		error = "";
 		try {
-			const projects = await unlock(password);
-			appStore.unlockWith(password, projects);
+			const entries = await unlock(password);
+			appStore.unlockWith(password, entries);
 		} catch (e) {
 			error = errorMessage(e);
 		} finally {

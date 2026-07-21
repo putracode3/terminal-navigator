@@ -14,6 +14,24 @@ const project: ProjectDto = {
 
 const flush = () => new Promise((r) => setTimeout(r, 10));
 
+/** jsdom has no layout engine — `getBoundingClientRect` always returns
+ * zeros, so FR-11's band-hit-testing needs a stubbed rect to exercise at
+ * all (same limitation TerminalPane.test.ts's own comment notes for its
+ * layout-dependent fit() behavior). */
+function stubRect(el: HTMLElement, top: number, height: number) {
+	vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+		top,
+		height,
+		bottom: top + height,
+		left: 0,
+		right: 100,
+		width: 100,
+		x: 0,
+		y: top,
+		toJSON() {},
+	} as DOMRect);
+}
+
 function session(id: string, ordinal: number): TabState {
 	return {
 		id,
@@ -257,6 +275,158 @@ describe("SidebarProjectListItem — Menu (right-click context + overflow anchor
 
 		expect(screen.queryByRole("menu")).toBeNull();
 		document.body.removeChild(outside);
+	});
+});
+
+describe("SidebarProjectListItem — FR-11 sidebar drop bands (reorder/merge, components.md Sidebar Folder)", () => {
+	// jsdom has no real DragEvent implementation — @testing-library's
+	// `fireEvent.dragOver(el, { clientY })` silently drops `clientY` (it
+	// comes back `undefined` in the handler), so the band-hit-testing this
+	// feature depends on can't be exercised through it. Dispatching a plain
+	// `Event` with `clientY` assigned directly as an own property survives
+	// intact, since the handler only ever reads `e.clientY`/`e.currentTarget`,
+	// never anything DragEvent-specific like `dataTransfer`.
+	function dragOverAt(row: HTMLElement, clientY: number) {
+		const event = new Event("dragover", { bubbles: true, cancelable: true });
+		Object.assign(event, { clientY });
+		row.dispatchEvent(event);
+	}
+
+	it("shows no drop band when no sidebar drag is in progress", async () => {
+		const { container } = render(SidebarProjectListItem, baseProps());
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+
+		await dragOverAt(row, 20);
+
+		expect(row).not.toHaveClass("drop-before");
+		expect(row).not.toHaveClass("drop-merge");
+		expect(row).not.toHaveClass("drop-after");
+	});
+
+	it("ignores itself as a drop target (dragging a row onto itself is a no-op)", async () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: project.id, sidebarDragKind: "project" }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+
+		await dragOverAt(row, 20);
+
+		expect(row).not.toHaveClass("drop-merge");
+	});
+
+	it("top ~25% band shows the 'before' reorder indicator", async () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: "other-project", sidebarDragKind: "project" }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+
+		await dragOverAt(row, 5); // 5/40 = 12.5%
+
+		expect(row).toHaveClass("drop-before");
+	});
+
+	it("middle ~50% band shows the merge indicator", async () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: "other-project", sidebarDragKind: "project" }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+
+		await dragOverAt(row, 20); // 50%
+
+		expect(row).toHaveClass("drop-merge");
+	});
+
+	it("bottom ~25% band shows the 'after' reorder indicator", async () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: "other-project", sidebarDragKind: "project" }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+
+		await dragOverAt(row, 35); // 87.5%
+
+		expect(row).toHaveClass("drop-after");
+	});
+
+	it("a dragged folder never shows the merge indicator — folders can't nest", async () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: "folder-1", sidebarDragKind: "folder" }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+
+		await dragOverAt(row, 20);
+
+		expect(row).not.toHaveClass("drop-merge");
+	});
+
+	it("a dragged folder still shows reorder bands on a project row (reordering a folder past a project is valid)", async () => {
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: "folder-1", sidebarDragKind: "folder" }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+
+		await dragOverAt(row, 5);
+
+		expect(row).toHaveClass("drop-before");
+	});
+
+	it("dropping in a valid band calls onSidebarDrop with that band and clears the indicator", async () => {
+		const onSidebarDrop = vi.fn();
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: "other-project", sidebarDragKind: "project", onSidebarDrop }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+		await dragOverAt(row, 20);
+
+		await fireEvent.drop(row);
+
+		expect(onSidebarDrop).toHaveBeenCalledWith("merge");
+		expect(row).not.toHaveClass("drop-merge");
+	});
+
+	it("dropping a self-drag calls nothing (no-op, not even with an invalid band)", async () => {
+		const onSidebarDrop = vi.fn();
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: project.id, sidebarDragKind: "project", onSidebarDrop }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+		await dragOverAt(row, 20);
+
+		await fireEvent.drop(row);
+
+		expect(onSidebarDrop).not.toHaveBeenCalled();
+	});
+
+	it("dragleave clears the indicator without calling onSidebarDrop", async () => {
+		const onSidebarDrop = vi.fn();
+		const { container } = render(
+			SidebarProjectListItem,
+			baseProps({ sidebarDragId: "other-project", sidebarDragKind: "project", onSidebarDrop }),
+		);
+		const row = container.querySelector(".item") as HTMLElement;
+		stubRect(row, 0, 40);
+		await dragOverAt(row, 20);
+
+		await fireEvent.dragLeave(row);
+
+		expect(row).not.toHaveClass("drop-merge");
+		expect(onSidebarDrop).not.toHaveBeenCalled();
 	});
 });
 

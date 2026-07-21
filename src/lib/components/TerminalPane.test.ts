@@ -16,6 +16,7 @@ let wheelEventHandler: ((event: WheelEvent) => boolean) | undefined;
 let resizeObserverCallback: (() => void) | undefined;
 const getSelectionMock = vi.fn();
 const pasteMock = vi.fn();
+const refreshMock = vi.fn();
 const termInstance = {
 	loadAddon: vi.fn(),
 	open: openMock,
@@ -24,6 +25,7 @@ const termInstance = {
 	}),
 	dispose: disposeMock,
 	focus: vi.fn(),
+	refresh: refreshMock,
 	write: vi.fn(),
 	attachCustomKeyEventHandler: vi.fn((handler: (event: KeyboardEvent) => boolean) => {
 		keyEventHandler = handler;
@@ -47,12 +49,6 @@ vi.mock("@xterm/xterm", () => ({
 vi.mock("@xterm/addon-fit", () => ({
 	FitAddon: vi.fn(function FitAddon() {
 		return { fit: fitMock };
-	}),
-}));
-
-vi.mock("@xterm/addon-webgl", () => ({
-	WebglAddon: vi.fn(function WebglAddon() {
-		return {};
 	}),
 }));
 
@@ -91,6 +87,7 @@ beforeEach(() => {
 	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
 	termInstance.options = {};
 	(Terminal as unknown as ReturnType<typeof vi.fn>).mockClear();
+	termInstance.loadAddon.mockClear();
 	fitMock.mockClear();
 	openMock.mockClear();
 	resizeTerminalMock.mockClear();
@@ -107,6 +104,7 @@ beforeEach(() => {
 	readTextMock.mockResolvedValue("");
 	getSelectionMock.mockReset();
 	pasteMock.mockClear();
+	refreshMock.mockClear();
 	listenMock.mockClear();
 	onDataCallback = undefined;
 	keyEventHandler = undefined;
@@ -139,6 +137,11 @@ describe("TerminalPane — initial fit timing (see the code comment above the fi
 	it("opens the terminal into its container on mount", () => {
 		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		expect(openMock).toHaveBeenCalledOnce();
+	});
+
+	it("loads only the fit addon, never @xterm/addon-webgl (ADR-0006 revisit: WebGL creates a healthy context but never actually paints — debugger session 2026-07-21, see docs/qa/test-plan.md §5.1)", () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		expect(termInstance.loadAddon).toHaveBeenCalledOnce();
 	});
 
 	it("does NOT call fit() synchronously on mount", () => {
@@ -504,6 +507,31 @@ describe("TerminalPane — background/foreground resize gating (regression: swit
 
 		expect(fitMock).toHaveBeenCalledOnce();
 		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
+	});
+});
+
+describe("TerminalPane — repaint on reactivation (regression: switching tabs away and back left a backgrounded split's non-focused pane blank, only repainting once clicked — reportResize's fit() is a no-op when the container's size didn't actually change, which is the common case for a tab regaining visibility, so the only thing that happened to repaint the *focused* pane was term.focus() incidentally forcing a fresh render frame; a pane that wasn't focused never got that side effect)", () => {
+	it("forces a full repaint when a backgrounded pane's tab becomes active again, even though this pane isn't the focused one", async () => {
+		const { rerender } = render(TerminalPane, {
+			sessionId: "s1",
+			focused: false,
+			active: false,
+			onFocus: vi.fn(),
+			onExit: vi.fn(),
+		});
+		await vi.runAllTimersAsync();
+		refreshMock.mockClear();
+
+		await rerender({ sessionId: "s1", focused: false, active: true, onFocus: vi.fn(), onExit: vi.fn() });
+
+		expect(refreshMock).toHaveBeenCalledWith(0, termInstance.rows - 1);
+	});
+
+	it("does not force a repaint just from being backgrounded (active stays false)", async () => {
+		render(TerminalPane, { sessionId: "s1", focused: false, active: false, onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		expect(refreshMock).not.toHaveBeenCalled();
 	});
 });
 

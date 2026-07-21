@@ -36,7 +36,7 @@
 	const duplicateWarning = $derived.by(() => {
 		const trimmed = path.trim();
 		if (!trimmed) return "";
-		const clash = appStore.projects.find((p) => p.path === trimmed && p.id !== project?.id);
+		const clash = appStore.allProjects.find((p) => p.path === trimmed && p.id !== project?.id);
 		return clash ? `Another project ("${clash.name}") already uses this path.` : "";
 	});
 

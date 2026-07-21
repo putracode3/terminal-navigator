@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 // Imported after the mock so the module under test picks up the mocked `invoke`.
 import {
 	unlock,
-	listProjects,
+	listSidebarEntries,
 	addProject,
 	updateProject,
 	deleteProject,
@@ -20,6 +20,10 @@ import {
 	exportConfig,
 	importConfig,
 	pathExists,
+	mergeProjects,
+	moveProject,
+	reorderFolder,
+	renameFolder,
 	isAppError,
 	errorMessage,
 } from "./index";
@@ -42,9 +46,9 @@ describe("api/index — IPC command mapping", () => {
 		expect(invokeMock).toHaveBeenCalledWith("unlock", { password: "hunter2" });
 	});
 
-	it("listProjects() invokes 'list_projects' with no args", () => {
-		listProjects();
-		expect(invokeMock).toHaveBeenCalledWith("list_projects");
+	it("listSidebarEntries() invokes 'list_sidebar_entries' with no args", () => {
+		listSidebarEntries();
+		expect(invokeMock).toHaveBeenCalledWith("list_sidebar_entries");
 	});
 
 	it("addProject() invokes 'add_project' with the input under 'input'", () => {
@@ -108,6 +112,30 @@ describe("api/index — IPC command mapping", () => {
 	it("pathExists() passes path", () => {
 		pathExists("/tmp/some-project");
 		expect(invokeMock).toHaveBeenCalledWith("path_exists", { path: "/tmp/some-project" });
+	});
+
+	it("mergeProjects() passes draggedId and targetId", () => {
+		mergeProjects("drag-1", "target-1");
+		expect(invokeMock).toHaveBeenCalledWith("merge_projects", { draggedId: "drag-1", targetId: "target-1" });
+	});
+
+	it("moveProject() passes projectId, destination, and index", () => {
+		moveProject("proj-1", { type: "folder", folderId: "folder-1" }, 2);
+		expect(invokeMock).toHaveBeenCalledWith("move_project", {
+			projectId: "proj-1",
+			destination: { type: "folder", folderId: "folder-1" },
+			index: 2,
+		});
+	});
+
+	it("reorderFolder() passes folderId and index", () => {
+		reorderFolder("folder-1", 3);
+		expect(invokeMock).toHaveBeenCalledWith("reorder_folder", { folderId: "folder-1", index: 3 });
+	});
+
+	it("renameFolder() passes folderId and name", () => {
+		renameFolder("folder-1", "New name");
+		expect(invokeMock).toHaveBeenCalledWith("rename_folder", { folderId: "folder-1", name: "New name" });
 	});
 });
 

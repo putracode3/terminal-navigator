@@ -152,7 +152,7 @@
 
 ## Sidebar Project List Item
 
-**Purpose:** Represents one saved project in the sidebar list — the sole entry point for opening, switching, closing, and dragging its terminal session(s) (FR-08 v1.4: there is no tab bar; the sidebar does everything a tab bar used to). Also the entry point into editing a project (FR-01).
+**Purpose:** Represents one saved project in the sidebar list — the sole entry point for opening, switching, closing, and dragging its terminal session(s) (FR-08 v1.4: there is no tab bar; the sidebar does everything a tab bar used to). Also the entry point into editing a project (FR-01). May render at the sidebar's top level or nested one level inside a `Sidebar Folder` (FR-11, v1.8) — its own anatomy, states, and behavior are identical either way; only its list position/indentation changes.
 
 ### Anatomy
 1. Container — full-width row
@@ -258,6 +258,69 @@ This component's interactivity depends entirely on how many tabs are currently o
 ### Do / Don't
 - ✅ Do: keep sub-item numbering stable — renumbering on every close would make "Session 2" refer to a different actual terminal moments after the user memorized it.
 - ❌ Don't: give sub-items their own Menu/right-click — a single Close button is the only action they need; anything project-level (Edit, Delete, Open in new tab) stays on the parent row, which remains reachable even while sub-items are showing.
+
+---
+
+## Sidebar Folder (FR-11, v1.8)
+
+**Purpose:** A user-organized, flat (non-nesting) container for grouping related `Sidebar Project List Item`s in the sidebar, created and managed entirely by drag-and-drop. Deliberately distinct from — and composable with — the automatic **"grouped (2+ sessions open)"** display mode described in `Sidebar Project List Item`'s States: that mode is about *session count* on one project; a Folder is about *user-chosen categorization* across many projects. A project can be inside a Folder and independently be in its own session-count "grouped" mode at the same time — the two nest (see Anatomy), never conflict.
+
+### Anatomy
+1. Header row — full-width, same row rhythm as `Sidebar Project List Item` (`--space-2` vertical / `--space-3` horizontal padding)
+2. Expand/collapse chevron (leading) — "▾" expanded, "▸" collapsed, small icon-only control, same glyph-as-text convention as this app's other icons (✕, ⋮, ☰)
+3. Folder name — `--text-sm` / `--weight-medium`; becomes an inline editable text field in the `renaming` state (see States)
+4. Member count (trailing, muted) — e.g. "(3)", `--text-xs` / `--color-text-muted` — the one piece of wayfinding available while collapsed, since collapsing hides the member list entirely
+5. Member list (below the header, rendered only while expanded) — an ordered list of `Sidebar Project List Item`s, each keeping its own existing anatomy/behavior completely unchanged (including still rendering its own `Sidebar Session Sub-item` list beneath it if it has 2+ open sessions — now nested one level deeper), indented under the folder header the same way a `Sidebar Session Sub-item` is indented under its parent project row today (no wrapping box/border — same flat-list convention, just one more indent level)
+
+### Variants
+| Variant | When to use |
+|---|---|
+| expanded | Default; shows the member list |
+| collapsed | User has toggled the chevron; persists across restarts per folder (unencrypted preferences store — same mechanism FR-13's sidebar-position/theme prefs already use, per ADR-0011; the exact per-folder key shape is backend-implementer's concern) |
+
+### Sizes
+| Size | Height | Padding |
+|---|---|---|
+| default | auto (single text line + `--space-2` vertical padding — identical rhythm to `Sidebar Project List Item`) | `--space-3` horizontal |
+
+### States
+| State | Visual change |
+|---|---|
+| default | bg transparent |
+| hover / focus-visible | bg `--color-surface-elevated`; focus-visible additionally gets outline 2px `--color-focus`, offset -2px (inset) |
+| renaming | Folder name text is replaced by an inline text input, pre-filled with the current name and selected, `--border-width-sm` `--color-primary` border (same edit-affordance treatment as `Input`'s focus state) |
+| drop target — reorder band (top/bottom ~25% of the header's height) | thin `--border-width-md` `--color-primary` horizontal line at the row's top or bottom edge, whichever band is hovered |
+| drop target — merge band (middle ~50% of the header's height) | full header bg `--color-primary-bg-subtle`, `--border-width-md` `--color-primary` border around the whole header — **identical treatment to `Split Pane Container`'s drop-zone overlay**, reused deliberately rather than invented fresh (see Do/Don't) |
+| invalid drop target | no overlay at all, "not-allowed" cursor — applies whenever the drag source is a `grouped`-mode `Sidebar Project List Item`, a `Sidebar Session Sub-item`, or another Folder header being dropped on the merge band of anything (see Behavior) |
+
+### Behavior
+
+**Creation:** Dragging a `Sidebar Project List Item` in its 0- or 1-session mode onto the **merge band** of another top-level project row (also 0/1-session, also not already in a folder) creates a new Folder containing both. The new folder is named after the **target** row — the one the cursor released onto (e.g. dragging "frontend-app" onto "backend-api" creates a folder named "backend-api" containing both). This is a deliberate, arbitrary-but-consistent default — the row that "stays put" under the cursor becomes the anchor name — flagged here as a judgment call, not a PRD-specified detail; revisit if a different default (e.g. always "New Folder") reads better in practice.
+
+**Joining an existing folder:** Dragging a project row onto the merge band of **any** project row that already belongs to a folder, or onto a Folder header's merge band directly, adds the dragged project to that same folder — inserted immediately after the row it was dropped onto, or appended to the end if dropped on the folder header itself. This never creates a second, nested folder (folders are flat-only, ADR-0011) — it always resolves to "join this existing folder."
+
+**Reordering:** Dropping on the **reorder band** (top or bottom ~25%) of any row — a project row or a Folder header — inserts the dragged item at that position instead of merging, within whichever list the target row lives in (top-level, or inside a specific folder). A Folder header is itself draggable for reordering its own top-level position among other folders/ungrouped projects this way, but is never a drag-to-split source and can never be dropped onto another row's merge band (a folder cannot join or be nested inside another folder).
+
+**Moving out to top level:** Dragging a project row that's currently inside a folder onto empty list space below the last row, or a dedicated top-level "ungrouped" drop target at the top of the list, moves it back to top level (no longer any folder's member).
+
+**Auto-delete when empty:** The instant a folder's member list reaches zero (its last project dragged out, or deleted via FR-01), the Folder header disappears from the list immediately — no confirmation, no visible empty state, since an empty folder cannot exist even momentarily in the underlying data model (ADR-0011).
+
+**Rename:** Click or double-click the folder name enters `renaming`. `Enter` or blur commits the new name; `Escape` cancels, reverting to the previous name; committing an empty/whitespace-only name also reverts to the previous name rather than saving a blank label.
+
+**Expand/collapse:** Clicking the chevron, or the header body outside the name text/count, toggles `expanded`/`collapsed`. State persists per-folder across restarts.
+
+### Accessibility
+- The header exposes two distinct actions (toggle collapse, edit name) as separate focusable controls (the chevron as its own button; the name as its own clickable/double-clickable element) — never one ambiguous click target — so a keyboard user can reach rename without accidentally toggling collapse, and vice versa.
+- Member count is available to assistive tech via the header's accessible name (e.g. `aria-label="My Folder, 3 projects, collapsed"`), not conveyed by the visible "(3)" text alone.
+- ⚠️ TBD: drag has no keyboard equivalent, consistent with every other drag interaction in this app — but every drag-only outcome here (create folder, join folder, reorder, move out) needs a non-drag equivalent (e.g. Menu actions "Move to folder…" / "Remove from folder") before this ships, since the PRD's acceptance criteria describe only the drag path. Flagged for resolution during backend-implementer/design-implementer's pass, not silently dropped.
+
+### Do / Don't
+- ✅ Do: reuse `Split Pane Container`'s exact drop-zone token pairing (`--color-primary-bg-subtle` fill + `--color-primary` border) for the merge band — one visual vocabulary for "you're about to combine into this" app-wide, not a second one invented for the sidebar.
+- ✅ Do: distinguish reorder vs. merge by **geometry** (thin line vs. full-row fill), not color — both use the same `--color-primary` family, satisfying the "never convey state by color alone" accessibility rule for free (design.md §7).
+- ✅ Do: keep a `Sidebar Project List Item` inside a folder fully unchanged in its own anatomy/behavior/states — a folder is purely a list-position/grouping concept; it never wraps or restyles the project row itself.
+- ❌ Don't: make a `grouped`-mode (2+ open sessions) `Sidebar Project List Item` a folder drag source. It's already not a drag-to-split source for ambiguity reasons (that component's Behavior); this spec deliberately keeps "not draggable once grouped" a single uniform rule rather than making draggability conditional on which gesture is intended. Known limitation, accepted: the user must reduce a project to 0/1 open sessions before it can join or create a folder — one simple rule beats two purpose-conditional ones (design.md Principle 1); revisit only if this friction is actually felt in practice.
+- ❌ Don't: show any drop-zone overlay on a `Sidebar Session Sub-item` — folders group projects, not individual sessions; sub-items are never folder drop targets, merge or reorder.
+- ❌ Don't: invent a fourth drop geometry or a color-only reorder/merge distinction — the three-band split (top/middle/bottom) is the whole rule, the same discipline `Split Pane Container`'s Drop zones already applies by explicitly rejecting a fifth center zone.
 
 ---
 
@@ -603,7 +666,7 @@ Field order top-to-bottom: Name (Input, default), Path (Input, path variant — 
 No tab bar (removed v1.4). The active tab's `Split Pane Container` fills the *entire* main content area, edge to edge, from the top of the window down. Switching which tab is active (via the sidebar) swaps the entire pane grid instantly (panes belonging to inactive tabs keep their PTY sessions alive in the background per architecture.md §5.3 — switching must never feel like "loading", reinforcing NFR-7). When no tab is open at all (fresh unlock, nothing clicked yet), this area shows an empty state: centered text, `--color-text-muted`, `--text-sm`, e.g. "Select a project from the sidebar to open a terminal here."
 
 ### Sidebar layout
-Fixed width 260px. Spec calls for collapsing to a 56px icon-only rail below `--bp-sidebar-collapse` (automatic, no manual control) — **❌ not yet implemented**: the token is defined in tokens.css but as of v1.4 nothing in `src/` reads it (no media query/logic wires it up). Treat this as a known gap, not a working baseline to build on top of, until it's actually built. Top-to-bottom: search input (compact `Input`, sm size) with a ghost icon `Button` ("Hide sidebar", ◀) at its trailing edge, scrollable list of `Sidebar Project List Item`s (each optionally followed by its `Sidebar Session Sub-item` list when it has 2+ open sessions — the list's total height is therefore dynamic, not fixed-row-height; the scroll container already handles this, no extra layout work needed), pinned footer with a ghost `Button` ("+ Add project").
+Fixed width 260px. Spec calls for collapsing to a 56px icon-only rail below `--bp-sidebar-collapse` (automatic, no manual control) — **❌ not yet implemented**: the token is defined in tokens.css but as of v1.4 nothing in `src/` reads it (no media query/logic wires it up). Treat this as a known gap, not a working baseline to build on top of, until it's actually built. Top-to-bottom: search input (compact `Input`, sm size) with a ghost icon `Button` ("Hide sidebar", ◀) at its trailing edge, scrollable list of top-level entries — each either a `Sidebar Project List Item` (optionally followed by its `Sidebar Session Sub-item` list when it has 2+ open sessions) or a `Sidebar Folder` header (optionally followed by its own indented member list, per that component's Anatomy) interleaved in one user-orderable sequence (FR-11, v1.8) — the list's total height is therefore dynamic, not fixed-row-height; the scroll container already handles this, no extra layout work needed, pinned footer with a ghost `Button` ("+ Add project").
 
 ### Sidebar show/hide toggle (v1.4, icon updated post-FR-13)
 A manual, user-driven, fully-implemented control — intentionally on a separate axis from the (currently unimplemented, see Sidebar layout above) breakpoint collapse: that one is "narrow window, still present as an icon rail", this one is "fully hidden, 0px, gone until brought back." When the breakpoint collapse above does get built, it and this toggle should keep working independently of each other. Two triggers, same state, both a **hamburger icon (☰)** — a single consistent glyph regardless of hidden/shown state or sidebar position (left/right, FR-13), replacing the original direction-flipping ◀/▶ arrows (which had to swap depending on `settingsStore.sidebarPosition`; the hamburger convention needs no such swap, simpler and more standard for a sidebar/menu toggle):
@@ -613,6 +676,7 @@ A manual, user-driven, fully-implemented control — intentionally on a separate
 No animation requirement beyond the existing transition tokens (Principle 1: perceived speed over decoration) — an instant width/visibility change is preferable to a slide that delays the terminal area reclaiming the space.
 
 ### Sidebar drag-to-split (renamed in v1.4 — was "Tab drag-to-split")
+*Note: this is one of two things a sidebar drag can now mean — dropping over a `Split Pane Container` pane (this pattern) vs. dropping over another sidebar row (`Sidebar Folder`'s Behavior, FR-11 v1.8). Same drag gesture and drag source, disambiguated entirely by what's under the cursor at drop time, same as the reorder-vs-merge disambiguation within the folder pattern itself.*
 1. User presses and moves a `Sidebar Project List Item` (in its 0- or 1-session mode) or a `Sidebar Session Sub-item` past the browser's native drag threshold → the dragged element enters its `dragging` state (opacity 0.4); a translucent drag image follows the cursor. A `Sidebar Project List Item` in its `grouped` (2+ session) mode is not draggable at all — see that component's Behavior.
 2. As the cursor moves over any `Split Pane Container`, the pane directly under the cursor computes which of its four triangular zones (Split Pane Container's Drop zones table) the cursor is in, and shows that zone's overlay. Moving between panes, or between zones within one pane, updates the overlay live — only one overlay is ever visible at a time.
 3. If the drag source already has a live session and the cursor is over the pane holding that exact session, no overlay appears (invalid target, "not-allowed" cursor) — the same self-graft guard as before. A 0-session source has no such pane, so every pane is a valid target for it.

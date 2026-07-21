@@ -14,6 +14,7 @@ vi.mock("@xterm/xterm", () => ({
 			onData: vi.fn(),
 			dispose: vi.fn(),
 			focus: focusMock,
+			refresh: vi.fn(),
 			write: vi.fn(),
 			attachCustomKeyEventHandler: vi.fn(),
 			attachCustomWheelEventHandler: vi.fn(),
@@ -26,7 +27,6 @@ vi.mock("@xterm/xterm", () => ({
 	}),
 }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return { fit: vi.fn() }; }) }));
-vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: vi.fn(function WebglAddon() { return {}; }) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: (...args: unknown[]) => listenMock(...args) }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 	writeText: vi.fn().mockResolvedValue(undefined),

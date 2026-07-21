@@ -8,7 +8,7 @@ Paste this into your project's agent instructions file (`CLAUDE.md` / `AGENTS.md
 
 1. **Tokens** — import `tokens.css` globally in the Svelte app; confirm `:root` variables resolve (dark-only theme, no light-mode toggle needed for MVP).
 2. **Base/primitives** — Button, Input, Textarea, Security Badge (these compose into everything else).
-3. **App-shell components** — Sidebar Project List Item, Tab, Split Pane Container.
+3. **App-shell components** — Sidebar Project List Item, Sidebar Folder (v1.8, FR-11), Tab, Split Pane Container.
 4. **Modal/Dialog** + the two Patterns that use it (Add/Edit Project form, confirmations).
 5. **Full-page patterns** — Unlock screen, Terminal tab + split grid area, Sidebar layout — these compose everything above.
 6. **Settings Panel** (v1.6, FR-13) — Theme Preset Card, Keybinding Row, Segmented Control, then the Settings Panel pattern composing them with Modal/Input/Button/Security Badge. Build last — it depends on everything above.

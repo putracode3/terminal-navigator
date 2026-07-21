@@ -47,7 +47,7 @@ pub fn import(source: &Path, data_file: &Path, password: &str) -> Result<(), Con
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project_store::ProjectInput;
+    use crate::project_store::{ProjectInput, SidebarEntry};
     use tempfile::tempdir;
 
     #[test]
@@ -123,7 +123,14 @@ mod tests {
         import(&exported, &device_b_file, "shared-pw").unwrap();
 
         let reopened = ProjectStore::unlock(device_b_file, "shared-pw").unwrap();
-        let names: Vec<&str> = reopened.list().iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = reopened
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                SidebarEntry::Project(p) => Some(p.name.as_str()),
+                SidebarEntry::Folder(_) => None,
+            })
+            .collect();
         assert_eq!(names, vec!["from-device-a"], "import must replace, not merge (ADR-0008)");
     }
 }

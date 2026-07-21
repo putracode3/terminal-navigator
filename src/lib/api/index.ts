@@ -18,6 +18,23 @@ export interface ProjectInput {
 	notes: string;
 }
 
+/** FR-11 (ADR-0011): a folder's ordered members — order is display position,
+ * same as the top-level `SidebarEntryDto[]` array itself. */
+export interface FolderDto {
+	id: string;
+	name: string;
+	members: ProjectDto[];
+}
+
+/** FR-11: the sidebar's top-level tree, replacing the pre-FR-11 flat
+ * `ProjectDto[]` — discriminated by `type` so folders and ungrouped projects
+ * can interleave in one array. */
+export type SidebarEntryDto = ({ type: "project" } & ProjectDto) | ({ type: "folder" } & FolderDto);
+
+/** FR-11: where `moveProject` sends a project — mirrors the Rust
+ * `MoveDestination` enum. */
+export type MoveDestinationDto = { type: "topLevel" } | { type: "folder"; folderId: string };
+
 export interface AppError {
 	kind: string;
 	message: string;
@@ -34,12 +51,14 @@ export function errorMessage(e: unknown): string {
 	return String(e);
 }
 
-export function unlock(password: string): Promise<ProjectDto[]> {
+export function unlock(password: string): Promise<SidebarEntryDto[]> {
 	return invoke("unlock", { password });
 }
 
-export function listProjects(): Promise<ProjectDto[]> {
-	return invoke("list_projects");
+/** FR-11: renamed from `list_projects` on the Rust side — the sidebar tree
+ * now includes folders, not just a flat project list. */
+export function listSidebarEntries(): Promise<SidebarEntryDto[]> {
+	return invoke("list_sidebar_entries");
 }
 
 export function addProject(input: ProjectInput): Promise<ProjectDto> {
@@ -52,6 +71,34 @@ export function updateProject(id: string, input: ProjectInput): Promise<ProjectD
 
 export function deleteProject(id: string): Promise<void> {
 	return invoke("delete_project", { id });
+}
+
+/** FR-11 "drop onto a row's merge band": creates a new folder or joins an
+ * existing one depending on what `targetId` currently is — the backend
+ * resolves which case applies (see `merge_or_join`'s own doc comment in
+ * project_store); the frontend always calls this for any merge-band drop. */
+export function mergeProjects(draggedId: string, targetId: string): Promise<FolderDto> {
+	return invoke("merge_projects", { draggedId, targetId });
+}
+
+/** FR-11 "drop onto a reorder band, or move between folders/top level": one
+ * primitive for both — reordering-in-place and moving-to-a-different-list are
+ * the same operation with a different `destination`/`index`. */
+export function moveProject(projectId: string, destination: MoveDestinationDto, index: number): Promise<void> {
+	return invoke("move_project", { projectId, destination, index });
+}
+
+/** FR-11: repositions a folder header within the sidebar's top level. */
+export function reorderFolder(folderId: string, index: number): Promise<void> {
+	return invoke("reorder_folder", { folderId, index });
+}
+
+/** FR-11: renames a folder. Returns the name actually saved — a
+ * blank/whitespace-only `name` silently reverts server-side to the previous
+ * name, so callers should use the returned value rather than assume their
+ * own input was applied verbatim. */
+export function renameFolder(folderId: string, name: string): Promise<string> {
+	return invoke("rename_folder", { folderId, name });
 }
 
 export function openTerminal(projectId: string, sessionId: string): Promise<void> {
@@ -78,7 +125,7 @@ export function exportConfig(destination: string): Promise<void> {
 	return invoke("export_config", { destination });
 }
 
-export function importConfig(source: string, password: string): Promise<ProjectDto[]> {
+export function importConfig(source: string, password: string): Promise<SidebarEntryDto[]> {
 	return invoke("import_config", { source, password });
 }
 

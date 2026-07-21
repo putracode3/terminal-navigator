@@ -4,7 +4,6 @@
 	import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 	import { Terminal } from "@xterm/xterm";
 	import { FitAddon } from "@xterm/addon-fit";
-	import { WebglAddon } from "@xterm/addon-webgl";
 	import "@xterm/xterm/css/xterm.css";
 	import { writeTerminal, resizeTerminal } from "$lib/api";
 	import { getThemePreset } from "$lib/theme-presets";
@@ -119,12 +118,14 @@
 			const newFitAddon = new FitAddon();
 			newTerm.loadAddon(newFitAddon);
 
-			try {
-				newTerm.loadAddon(new WebglAddon());
-			} catch {
-				// ADR-0006 / architecture.md §9 risk 2: fall back to the default
-				// renderer if WebGL context creation fails on this system.
-			}
+			// ADR-0006's own pre-approved revisit trigger: WebGL proved unreliable
+			// (debugger session 2026-07-21) — @xterm/addon-webgl 0.19.0 paired with
+			// @xterm/xterm 6.0.0 creates a healthy WebGL2 context (no errors, correct
+			// size, isContextLost() false) but never actually issues a single visible
+			// draw call — confirmed via direct gl.readPixels() on the framebuffer,
+			// independent of write content (alt-screen vs plain text) and addon load
+			// order relative to term.open(). Falling back to the default renderer
+			// app-wide, as ADR-0006 anticipated, rather than the WebGL addon.
 
 			// A floating container, not `containerEl` itself: `term.open()` is
 			// only ever called once, here, at creation. Every mount (this one
@@ -331,6 +332,22 @@
 
 	$effect(() => {
 		if (focused && active) term?.focus();
+	});
+
+	/** Regression: switching tabs away and back left a backgrounded split's
+	 *  non-focused pane showing blank content, only repainting once the user
+	 *  clicked it. `reportResize`'s own fit()/resize() call above is *not* a
+	 *  reliable repaint trigger here — @xterm/addon-fit's `fit()` is a no-op
+	 *  (skips both `resize()` and the render service's `clear()`) whenever the
+	 *  container's size didn't actually change, which is the common case for
+	 *  a tab regaining visibility. The only thing that happened to repaint the
+	 *  *focused* pane was `term.focus()` above incidentally forcing a fresh
+	 *  render frame — a side effect this pane never got since it wasn't the
+	 *  focused one. Forcing a full-row refresh on every `active` transition to
+	 *  true, independent of focus, repaints every backgrounded pane a tab
+	 *  brings back, not just whichever one last had keyboard focus. */
+	$effect(() => {
+		if (active && term) term.refresh(0, term.rows - 1);
 	});
 
 	// FR-13: applies the newly-selected preset to this (already-open) pane

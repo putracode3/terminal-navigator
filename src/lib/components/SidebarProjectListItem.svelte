@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { ProjectDto } from "$lib/api";
 	import type { TabState } from "$lib/stores/terminal.svelte";
+	import type { SidebarDragKind } from "$lib/stores/app.svelte";
+	import { computeSidebarDropBand, type SidebarDropBand } from "$lib/sidebar-drop-zones";
 	import Menu, { type MenuItemDef } from "./Menu.svelte";
 	import SidebarSessionSubItem from "./SidebarSessionSubItem.svelte";
 
@@ -23,6 +25,9 @@
 		onDragStart,
 		onSessionDragStart,
 		onDragEnd,
+		sidebarDragId = null,
+		sidebarDragKind = null,
+		onSidebarDrop,
 	}: {
 		project: ProjectDto;
 		/** This project's open sessions, in creation order. */
@@ -47,12 +52,30 @@
 		/** Sub-item drag start (always a graft of that exact session). */
 		onSessionDragStart: (tabId: string) => void;
 		onDragEnd: () => void;
+		/** FR-11: id of whatever's currently being dragged for sidebar
+		 *  folder/reorder purposes (a project or a folder header), or null —
+		 *  kept prop-driven (not read from `appStore` directly) like every
+		 *  other piece of this component's state. */
+		sidebarDragId?: string | null;
+		sidebarDragKind?: SidebarDragKind | null;
+		/** Fires on a valid drop — "before"/"after" reorder this row's
+		 *  position in whichever list it lives in; "merge" creates/joins a
+		 *  folder with this row. Absent entirely (this component reused
+		 *  standalone/in tests) means this row simply isn't a drop target. */
+		onSidebarDrop?: (band: SidebarDropBand) => void;
 	} = $props();
 
 	let menuOpen = $state(false);
 	let menuAnchor = $state<{ x: number; y: number } | null>(null);
 	let showInvalidMessage = $state(false);
 	let dragging = $state(false);
+	/** FR-11: which of the three drop bands (before/merge/after) the cursor
+	 *  is currently over, while a valid sidebar drag hovers this row — null
+	 *  otherwise. A dragged folder can never validly land on "merge" (folders
+	 *  can't nest), so that combination is treated as no drop band at all,
+	 *  same as `Split Pane Container`'s own "show unavailable, don't just
+	 *  fail silently on drop" rule. */
+	let dropBand = $state<SidebarDropBand | null>(null);
 	/** JS-tracked rather than pure CSS `:hover`: some webviews (WebKitGTK on
 	 *  Linux) leave `:hover` stuck on the right-clicked row after its native
 	 *  contextmenu handling, even once the popup closes and the pointer has
@@ -66,6 +89,17 @@
 	const isActive = $derived(!!singleSession && singleSession.id === activeTabId);
 	const hasOpenTab = $derived(mode === "single");
 	const draggable = $derived(mode !== "grouped" && !invalid);
+	/** FR-11: this row is a valid *target* for sidebar drag-drop regardless
+	 *  of session count/invalid-path — those restrictions gate whether this
+	 *  row can be a drag *source* (see `draggable` above), not whether other
+	 *  rows can be dropped onto it. Only two things make it invalid: dropping
+	 *  onto itself (no-op), and a dragged folder landing on the merge band
+	 *  (folders can't merge into a project row — nesting is impossible). */
+	const validDropBand = $derived<SidebarDropBand | null>(
+		sidebarDragId && sidebarDragId !== project.id && !(dropBand === "merge" && sidebarDragKind === "folder")
+			? dropBand
+			: null,
+	);
 
 	const menuItems: MenuItemDef[] = $derived([
 		{ label: "Open in new tab", onSelect: onForceNewTab },
@@ -122,6 +156,29 @@
 		dragging = false;
 		onDragEnd();
 	}
+
+	/** FR-11: computes which band the cursor is over on every dragover tick —
+	 *  a `dragover` listener must call `preventDefault()` for `drop` to ever
+	 *  fire at all (same requirement `Split Pane Container`'s pane drop
+	 *  targets already follow). Only actually shows an overlay via
+	 *  `validDropBand`'s own gating above. */
+	function handleRowDragOver(e: DragEvent) {
+		if (!sidebarDragId) return;
+		e.preventDefault();
+		dropBand = computeSidebarDropBand((e.currentTarget as HTMLElement).getBoundingClientRect(), e.clientY);
+	}
+
+	function handleRowDragLeave() {
+		dropBand = null;
+	}
+
+	function handleRowDrop(e: DragEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		const band = validDropBand;
+		dropBand = null;
+		if (band) onSidebarDrop?.(band);
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- role/tabindex are a matched pair, both conditional on the same `mode`: in `grouped` mode neither is present (components.md: the row is inert for activation, only its Menu control stays focusable), otherwise both are, so the element is never tabindex-without-a-role — the linter just can't see that statically since `role` is a dynamic expression -->
@@ -133,6 +190,9 @@
 	class:invalid
 	class:dragging
 	class:hovering
+	class:drop-before={validDropBand === "before"}
+	class:drop-merge={validDropBand === "merge"}
+	class:drop-after={validDropBand === "after"}
 	role={mode === "grouped" ? undefined : "button"}
 	tabindex={mode === "grouped" ? undefined : 0}
 	draggable={draggable}
@@ -144,6 +204,9 @@
 	onmouseleave={() => (hovering = false)}
 	ondragstart={handleDragStart}
 	ondragend={handleDragEnd}
+	ondragover={handleRowDragOver}
+	ondragleave={handleRowDragLeave}
+	ondrop={handleRowDrop}
 >
 	<div class="text">
 		<div class="name">{project.name}</div>
@@ -208,6 +271,34 @@
 
 	.item.dragging {
 		opacity: 0.4;
+	}
+
+	/* FR-11 (components.md "Sidebar Folder" — reuses Split Pane Container's
+	 * exact drop-zone token pairing): merge is a full-row fill + border;
+	 * before/after are a thin insertion line at the row's top/bottom edge.
+	 * Distinguished by geometry, not color, so the color-alone accessibility
+	 * rule is satisfied for free (design.md §7). */
+	.item.drop-merge {
+		background: var(--color-primary-bg-subtle);
+		box-shadow: inset 0 0 0 var(--border-width-md) var(--color-primary);
+	}
+
+	.item.drop-before::before,
+	.item.drop-after::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		right: 0;
+		height: var(--border-width-md);
+		background: var(--color-primary);
+	}
+
+	.item.drop-before::before {
+		top: 0;
+	}
+
+	.item.drop-after::after {
+		bottom: 0;
 	}
 
 	.text {

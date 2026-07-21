@@ -29,7 +29,7 @@ const existingProject: ProjectDto = {
 beforeEach(() => {
 	addProjectMock.mockReset();
 	updateProjectMock.mockReset();
-	appStore.projects = [];
+	appStore.entries = [];
 });
 
 describe("ProjectFormModal — add mode", () => {
@@ -67,7 +67,7 @@ describe("ProjectFormModal — add mode", () => {
 		await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "x" } });
 		await fireEvent.click(screen.getByRole("button", { name: "Save project" }));
 
-		expect(appStore.projects.map((p) => p.id)).toContain("new-id");
+		expect(appStore.allProjects.map((p) => p.id)).toContain("new-id");
 		expect(onClose).toHaveBeenCalledOnce();
 	});
 
@@ -137,7 +137,7 @@ describe("ProjectFormModal — edit mode", () => {
 
 describe("ProjectFormModal — duplicate path warning (FR-01 edge case: warn, don't block)", () => {
 	it("warns when the entered path matches another existing project", async () => {
-		appStore.projects = [existingProject];
+		appStore.entries = [{ type: "project", ...existingProject }];
 		render(ProjectFormModal, { open: true, onClose: vi.fn() });
 
 		await fireEvent.input(screen.getByLabelText("Path"), {
@@ -150,14 +150,14 @@ describe("ProjectFormModal — duplicate path warning (FR-01 edge case: warn, do
 	});
 
 	it("does not warn when editing that same project and leaving its own path unchanged", () => {
-		appStore.projects = [existingProject];
+		appStore.entries = [{ type: "project", ...existingProject }];
 		render(ProjectFormModal, { open: true, onClose: vi.fn(), project: existingProject });
 
 		expect(screen.queryByText(/already uses this path/)).toBeNull();
 	});
 
 	it("does not block saving despite the warning", async () => {
-		appStore.projects = [existingProject];
+		appStore.entries = [{ type: "project", ...existingProject }];
 		addProjectMock.mockResolvedValue({ ...existingProject, id: "new-id", name: "dup" });
 		render(ProjectFormModal, { open: true, onClose: vi.fn() });
 
