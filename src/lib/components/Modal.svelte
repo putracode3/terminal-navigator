@@ -115,6 +115,16 @@
 		animation: dialog-in var(--duration-base) var(--ease-out);
 	}
 
+	/* FR-14 glass state (components.md, Modal). Gated on [data-glass="on"]
+	   rather than relying on --glass-intensity being 0, so that at zero the
+	   backdrop-filter property is absent entirely instead of computing to
+	   blur(0px) — which would still pay the compositing cost (NFR-9,
+	   design.md §4.6). The alpha floor lives in the token, not here. */
+	:global(:root[data-glass="on"]) .dialog {
+		background: var(--color-surface-elevated-glass);
+		backdrop-filter: blur(var(--glass-blur));
+	}
+
 	.dialog-form {
 		width: var(--modal-width-form);
 	}

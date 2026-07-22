@@ -71,6 +71,33 @@
   --color-backdrop: rgba(13, 15, 20, 0.7); /* composited from --color-background at 70% */
   --color-primary-bg-subtle: rgba(22, 116, 28, 0.18); /* green-600 at 18% — drop-zone fill, drag affordances */
 
+  /* ── Tier 2: Semantic — Glass surfaces (FR-14) ───────────
+     In-app compositing only: surfaces are translucent relative
+     to each other, never to the desktop (the app window stays
+     opaque — see design.md §4.6).
+
+     --glass-intensity is the ONLY value the app writes at
+     runtime (0..1, from the FR-13 Settings slider). Every
+     surface derives its own alpha from it via calc(), and each
+     range is clamped to a floor verified against §7's contrast
+     standards. Because the floors live inside these
+     expressions, no slider position can produce a failing
+     contrast — the unsafe configuration is unreachable by
+     construction, not by trusting the user to stop in time.
+
+     Only surfaces that float above VARYING content get glass.
+     Sidebar and terminal panes are deliberately excluded: they
+     sit on flat --color-background, and blurring a flat color
+     returns the same flat color (design.md §4.6, Finding 1). */
+  --glass-intensity: 0;  /* 0 = fully opaque; app default */
+
+  --glass-modal-alpha: calc(1 - 0.20 * var(--glass-intensity)); /* 1.00 → 0.80 */
+  --glass-menu-alpha:  calc(1 - 0.05 * var(--glass-intensity)); /* 1.00 → 0.95 */
+  --glass-blur: calc(var(--glass-intensity) * 12px);
+
+  --color-surface-elevated-glass: rgba(28, 32, 41, var(--glass-modal-alpha)); /* --ink-850 */
+  --color-menu-glass: rgba(28, 32, 41, var(--glass-menu-alpha));              /* --ink-850 */
+
   /* ── Tier 2: Semantic — Typography scale ─────────────────
      Modular scale, ratio ~1.2, rounded to practical pixel
      values for UI density (this is a dense developer tool,

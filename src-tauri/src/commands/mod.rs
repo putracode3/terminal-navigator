@@ -151,6 +151,10 @@ pub struct SettingsDto {
     pub theme_preset: String,
     pub keybindings: std::collections::HashMap<String, String>,
     pub sidebar_position: SidebarPosition,
+    /// FR-14 — see `settings_store::Settings::glass_intensity`. `default`
+    /// here too, so a frontend that predates this field still round-trips.
+    #[serde(default)]
+    pub glass_intensity: f32,
 }
 
 impl From<Settings> for SettingsDto {
@@ -159,6 +163,7 @@ impl From<Settings> for SettingsDto {
             theme_preset: s.theme_preset,
             keybindings: s.keybindings,
             sidebar_position: s.sidebar_position,
+            glass_intensity: s.glass_intensity,
         }
     }
 }
@@ -169,6 +174,7 @@ impl From<SettingsDto> for Settings {
             theme_preset: dto.theme_preset,
             keybindings: dto.keybindings,
             sidebar_position: dto.sidebar_position,
+            glass_intensity: dto.glass_intensity,
         }
     }
 }

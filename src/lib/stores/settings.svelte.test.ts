@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const getSettingsMock = vi.fn();
+const saveSettingsMock = vi.fn();
 vi.mock("$lib/api", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("$lib/api")>();
 	return {
 		...actual,
 		getSettings: (...args: unknown[]) => getSettingsMock(...args),
+		saveSettings: (...args: unknown[]) => saveSettingsMock(...args),
 	};
 });
 
@@ -18,17 +20,21 @@ function dto(overrides: Partial<SettingsDto> = {}): SettingsDto {
 		themePreset: "app-default",
 		keybindings: { ...DEFAULT_KEYBINDINGS },
 		sidebarPosition: "left",
+		glassIntensity: 0,
 		...overrides,
 	};
 }
 
 beforeEach(() => {
 	getSettingsMock.mockReset();
+	saveSettingsMock.mockReset();
+	saveSettingsMock.mockResolvedValue(undefined);
 	// Reset the singleton back to its as-constructed defaults — load()'s own
 	// job is exactly to move it away from these, so tests must start here.
 	settingsStore.themePreset = "app-default";
 	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
 	settingsStore.sidebarPosition = "left";
+	settingsStore.glassIntensity = 0;
 	settingsStore.loaded = false;
 });
 
@@ -82,5 +88,35 @@ describe("settingsStore.load()", () => {
 
 		expect(settingsStore.loaded).toBe(false);
 		expect(settingsStore.themePreset).toBe("nord");
+	});
+});
+
+describe("settingsStore.setGlassIntensity() — FR-14", () => {
+	it("clamps out-of-range values into 0..1 rather than passing them through", async () => {
+		await settingsStore.setGlassIntensity(1.7);
+		expect(settingsStore.glassIntensity).toBe(1);
+
+		await settingsStore.setGlassIntensity(-0.4);
+		expect(settingsStore.glassIntensity).toBe(0);
+
+		// The clamped value — not the caller's raw one — is what gets persisted.
+		expect(saveSettingsMock).toHaveBeenLastCalledWith(expect.objectContaining({ glassIntensity: 0 }));
+	});
+
+	it("rolls the value back when the save fails, so the UI never shows an unpersisted setting", async () => {
+		await settingsStore.setGlassIntensity(0.5);
+		saveSettingsMock.mockRejectedValueOnce(new Error("disk full"));
+
+		await expect(settingsStore.setGlassIntensity(0.9)).rejects.toThrow("disk full");
+
+		expect(settingsStore.glassIntensity).toBe(0.5);
+	});
+
+	it("round-trips through load() like every other field", async () => {
+		getSettingsMock.mockResolvedValue(dto({ glassIntensity: 0.35 }));
+
+		await settingsStore.load();
+
+		expect(settingsStore.glassIntensity).toBe(0.35);
 	});
 });

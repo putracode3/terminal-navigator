@@ -1,8 +1,8 @@
 # Design System — Terminal Navigator
 
-> Version 1.8 · 2026-07-21 · Status: approved
+> Version 1.9 · 2026-07-22 · Status: approved
 > Files: design.md (this file, rules & rationale) · tokens.css / tokens.json (values) · components.md (component specs)
-> Source docs: docs/prd-terminal-navigator.md (v1.6) · docs/backend/architecture.md (v1.5)
+> Source docs: docs/prd-terminal-navigator.md (v1.7) · docs/backend/architecture.md (v1.5)
 
 ## 1. Project brief
 
@@ -118,6 +118,49 @@ All four presets are dark (no light terminal theme ships in MVP) — this direct
 
 Nord's normal/bright rows are intentionally near-identical for colors other than black/white — that's Nord's actual documented palette (low bright/normal differentiation is one of its defining traits), not an error to "fix" by inventing more contrast.
 
+### 4.6 Glass surfaces (FR-14, v1.9) — app-chrome tokens only, and only where the effect can actually exist
+
+FR-14 asked for translucent "frosted glass" surfaces across sidebar, modals, menus, and terminal-pane backgrounds, with one user-adjustable intensity. Measurement during design cut that list to **modals and menus**. The three findings below are the reasoning; they are recorded here because each one looks like an arbitrary omission if you only read the resulting token list.
+
+**Finding 1 — blur over a flat backdrop is a no-op.** The sidebar is a flex *sibling* of the terminal area (§5: fixed sidebar + main content area), not an overlay. Nothing but flat `--color-background` sits behind it. `backdrop-filter: blur()` applied over a uniform color returns that same uniform color — there is no detail to blur. The same is true of terminal-pane backgrounds, which sit on the pane container, not on other content. Giving these surfaces glass tokens would ship a setting that visibly does nothing.
+
+**Finding 2 — terminal-pane translucency is mathematically inert on the default preset.** §4.5's App Default preset defines `background: #0D0F14`, which *is* `--color-background`. Compositing a color over itself returns it unchanged at every alpha:
+
+| Preset background | α=1.0 | α=0.8 | α=0.6 |
+|---|---|---|---|
+| App Default `#0D0F14` | `#0D0F14` | `#0D0F14` | `#0D0F14` |
+| Dracula `#282A36` | `#282A36` | `#23252F` | `#1D1F28` |
+
+This settles **PRD Q9** (which system owns FR-14's translucency values) on evidence rather than preference: **translucency belongs to app-chrome tokens exclusively, and §4.5's terminal presets stay fully opaque and untouched.** The boundary §4.5 draws between the two systems is preserved exactly as written — not because crossing it was forbidden, but because crossing it would buy nothing for the preset most users are on. Do not add an alpha or blur value to a theme preset later "for consistency"; consistency with an invisible effect is not a reason.
+
+**Finding 3 — menus tolerate far less translucency than modals.** A Modal composites over the existing `--color-backdrop` (`rgba(13,15,20,0.7)`), which already damps whatever is beneath it. A Menu has no backdrop — it floats directly over live terminal output, which can be any color the user's program emits.
+
+Both were measured against the same worst case: **white terminal output** (`#FFFFFF`), the brightest thing a program can print. Choosing the worst case matters — an earlier pass of this analysis used a bright *green* backdrop and concluded a modal floor of 0.75 was safe; against white it is 4.4:1, an AA failure. The floors below are the white-backdrop numbers.
+
+Modal — `--color-text-muted` over modal glass, over `--color-backdrop`, over white output:
+
+| Modal α | Composited | Muted-text ratio | AA (4.5:1) |
+|---|---|---|---|
+| 1.00 | `#1C2029` | 5.2:1 | ✅ |
+| 0.85 | `#252830` | 4.7:1 | ✅ |
+| 0.80 | `#282B33` | 4.5:1 | ✅ (at threshold — the floor) |
+| 0.75 | `#2A2E36` | 4.4:1 | ❌ |
+
+Menu — `--color-text-muted` over menu glass, directly over white output (no backdrop):
+
+| Menu α | Composited | Muted-text ratio | AA (4.5:1) |
+|---|---|---|---|
+| 1.00 | `#1C2029` | 5.2:1 | ✅ |
+| 0.95 | `#272B34` | 4.5:1 | ✅ (at threshold) |
+| 0.92 | `#2E323A` | 4.1:1 | ❌ |
+| 0.90 | `#33363E` | 3.9:1 | ❌ |
+
+Note that blur does **not** rescue this. Blur removes high-frequency detail, which is what stops background text from being visually distracting, but it leaves average luminance essentially unchanged — and average luminance is exactly what the contrast ratio measures. The numbers above already describe the blurred case.
+
+**The intensity control (resolves PRD Q10).** One user-facing slider writes `--glass-intensity` (0..1); each surface derives its own alpha from it inside `tokens.css`, clamped to its own verified floor — modal `1.00 → 0.80`, menu `1.00 → 0.95`. This is why a single control can stay safe across surfaces with very different tolerances: the user adjusts one number, and the per-surface ranges do the protecting. **No slider position can produce a failing contrast, because the floors are baked into the `calc()` expressions rather than left to the user to stop short of.** The scale is linear, and the default is `0` (fully opaque — the app looks exactly as it does today until the user opts in).
+
+**NFR-9 rule — intensity 0 must mean the property is absent, not zero.** `backdrop-filter: blur(0px)` still promotes the element to its own compositing layer and pays most of the per-frame cost for no visual result. At `--glass-intensity: 0`, implementations must omit `backdrop-filter` entirely (gate it behind a class or attribute selector), not merely compute it to zero. This matters more here than in a typical web app: ADR-0006 disabled the WebGL terminal renderer, so the app's rendering headroom (NFR-7) is already narrower than originally designed for.
+
 ## 5. Layout rules
 
 - **App shell:** fixed sidebar (260px, collapses to 56px icon rail below `--bp-sidebar-collapse`) + main content area (the split-pane grid alone, edge to edge — no tab bar as of v1.4). No page scroll at the app-shell level — only individual panels (sidebar list, modal body, terminal buffers) scroll internally.
@@ -153,6 +196,11 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 | `--color-warning` (#FBBF24) | `--color-background` (#0D0F14) | 11.5:1 | ✅ AA/AAA |
 | `--color-primary` (#16741C) | `--color-background` (#0D0F14) | 3.2:1 | ✅ AA (UI component / focus indicator, 3:1 threshold) |
 | `--color-border-strong` (#5A6272) | `--color-background` (#0D0F14) | 3.1:1 | ✅ AA (UI component, 3:1 threshold) |
+| **Glass surfaces (FR-14, v1.9)** — worst case at maximum intensity | | | |
+| `--color-text-muted` (#8B92A3) | modal glass at α=0.80 over `--color-backdrop` over white output (`#282B33`) | 4.5:1 | ✅ AA (at threshold — this pair sets the modal floor at 0.80) |
+| `--color-text` (#E4E7EC) | modal glass at α=0.80, same stack | 11.4:1 | ✅ AA/AAA |
+| `--color-text-muted` (#8B92A3) | menu glass at α=0.95 over white terminal output (`#272B34`) | 4.5:1 | ✅ AA (at threshold — this pair is why the menu floor is 0.95 and not lower) |
+| `--color-text` (#E4E7EC) | menu glass at α=0.95, same stack | 11.4:1 | ✅ AA/AAA |
 
 **Flagged and resolved during design:** white text directly on either raw gradient stop — `--green-500` (#3EDA49, **1.9:1**) or `--cyan-500` (#36B4E2, **1.8:1**) — is a real failure at both ends. This is why §3/Principle 2 restricts the gradient to purely decorative use (underline bars, glows) and components.md explicitly forbids placing text on it. Buttons use the solid `--color-primary` (5.9:1), never the gradient, for exactly this reason.
 
@@ -173,6 +221,10 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 - ❌ Don't introduce new font sizes outside §4.2's scale → ✅ pick the nearest token; if none fits, propose a token addition, don't hardcode
 - ❌ Don't let a keybinding be captured without at least one of Ctrl/Alt/Cmd → ✅ reject bare or Shift-only combos before they can be saved (§4.5's presets are irrelevant here — this is about not breaking normal typing in the terminal, see components.md Keybinding Row)
 - ❌ Don't add the gradient (`--color-accent-gradient`) to the Theme Preset Card's selected state "because it's a picker, it deserves flair" → ✅ selected state uses solid `--color-primary` (border + checkmark), same reasoning as the sidebar's `active` state (components.md, Tab — REMOVED in v1.4) — the gradient stays at exactly one place app-wide (Principle 2)
+- ❌ Don't add glass/translucency to the sidebar or terminal-pane backgrounds → ✅ glass applies to Modal and Menu only (§4.6) — the other two sit on a flat backdrop where blur is provably a no-op; if a future layout floats the sidebar *over* the terminal area, that's a §5 layout change to decide first, and only then does sidebar glass become a real option
+- ❌ Don't add an alpha or blur value to a §4.5 terminal theme preset → ✅ translucency lives exclusively in app-chrome tokens (§4.6 resolves Q9); the preset/token separation §4.5 defines is intact, and "consistency" is not a reason to cross it for an effect that is inert on the default preset
+- ❌ Don't hand-write a per-surface alpha, or widen a range in `tokens.css` to make the effect "more visible" → ✅ set `--glass-intensity` only; the floors in those `calc()` expressions are contrast-verified in §7, and widening one silently ships a setting that fails AA
+- ❌ Don't ship `backdrop-filter: blur(0px)` at intensity 0 → ✅ omit the property entirely at 0 (§4.6) — a zero blur still pays the compositing cost, which NFR-9 exists to prevent
 - ❌ Don't add a second confirmation modal/step on top of the master-password-change form → ✅ the three-field form (current, new, confirm) is itself the friction gate; a nested confirm dialog is ceremony this app's "perceived speed" principle doesn't want
 
 ## 9. Instructions for AI agents
@@ -201,4 +253,5 @@ You are implementing UI for this project. Follow these rules:
 | 1.5 | 2026-07-20 | EVOLVE per direct product decision (owner: replace purple with green): primary color changed from violet to green. Primitives `--violet-500/600/700/800` and `--pink-500` replaced by `--green-500/600/700/800` and `--cyan-500`; every semantic token that referenced them (`--color-primary`, `-hover`, `-active`, `--color-accent-gradient`, `--color-focus`, `--color-primary-bg-subtle`, `--shadow-glow-primary`) was re-derived from the new primitives, not hand-edited independently. New shades were computed (not eyeballed) to land on the same contrast ratios as before: `--color-primary` on white ≈5.9:1 (was 6.0:1), hover ≈8.0:1 (unchanged), primary-vs-background (focus/UI-component threshold) 3.2:1 (unchanged) — see §7. Because `--color-security` (emerald, ~158° hue) and the new primary (grass green, ~124° hue) are now both "green," picked the new primary's hue deliberately ~34° away plus a darker/less-saturated value so the two stay visually distinguishable side by side; §3 and §8 spell out that this separation is a backstop, not a replacement for the lock-icon pairing rule (Principle 3). Signature gradient becomes green→cyan ("aurora"), replacing violet→pink; both new stops individually fail text contrast same as before, so the decorative-only rule (Principle 2, §7) still applies unchanged. No component behavior, layout, or non-color token changed. |
 | 1.8 | 2026-07-21 | EVOLVE per PRD v1.6 (FR-11, promoted to MVP): new `Sidebar Folder` component (components.md) — flat, drag-and-drop-managed project categorization, distinct from and composable with the existing session-count "grouped" display mode. Resolves PRD Q7 (reorder-vs-merge drop-zone distinction): each row's height splits into a three-band drop target (top/bottom ~25% = reorder-position insertion line, middle ~50% = merge-into full-row highlight), reusing `Split Pane Container`'s exact `--color-primary-bg-subtle`/`--color-primary` drop-zone token pairing rather than inventing a second vocabulary — reorder vs. merge is distinguished by geometry, not color, satisfying the color-alone accessibility rule for free. `Sidebar Project List Item` and the "Sidebar layout"/"Sidebar drag-to-split" pattern notes updated to reflect folders as an interleaved, equally-orderable top-level entry alongside ungrouped projects. No new tokens — every value is a reuse of existing color/spacing/motion tokens. Flagged, not resolved here: folder drag-drop currently has no keyboard-accessible equivalent (⚠️ TBD in components.md, owner: backend-implementer/design-implementer before build); a `grouped`-mode (2+ session) project row deliberately stays non-draggable for folder purposes too, uniform with its existing drag-to-split restriction, accepted as a known limitation rather than a conditional rule. |
 | 1.6 | 2026-07-20 | EVOLVE per FR-13 (Settings Panel), architecture.md v1.1/ADR-0009/ADR-0010: added §4.5 Terminal theme presets (App Default + Dracula, Nord, Solarized Dark — a separate frontend-only palette system, not app-chrome tokens; resolves PRD Q6). New components (components.md): Theme Preset Card, Keybinding Row (+ its `recording`/conflict states), Segmented Control (2-option toggle, used for sidebar position). New pattern: Settings Panel (Modal, `form` variant, reused as-is — no new modal size needed since the theme picker uses a 2-column grid rather than forcing all 4 cards onto one row). Settings Panel deliberately deviates from Modal's "one primary button in the footer" default: everything except master-password-change autosaves per-control (same philosophy as the existing Notes/Textarea autosave precedent), so the footer holds only a dismiss action; master password change keeps its own scoped primary button ("Change password") since it's the one real submit-style action in the panel. Added keybinding safety rule (§8): captured combos must include Ctrl/Alt/Cmd, rejected otherwise — protects normal terminal typing from an accidental bare-key binding. No new design tokens required — everything composes from the existing token set. Fixed a stale HANDOFF.md reference to the gradient rule ("two places" → "one place," matching v1.3/v1.4's actual current state). |
+| 1.9 | 2026-07-22 | EVOLVE per PRD v1.7 (FR-14, Glassmorphic Surfaces): added §4.6 and a glass token group (`--glass-intensity`, per-surface alpha/blur derivations, `--color-surface-elevated-glass`, `--color-menu-glass`); Modal and Menu each gain a glass state in components.md. **Scope was cut from four surfaces to two during design, on measurement:** the sidebar is a flex sibling of the terminal area (§5), so nothing but flat `--color-background` sits behind it and `backdrop-filter` over a uniform color is a no-op; terminal-pane translucency is mathematically inert on the App Default preset, whose background *is* `--color-background` (identical composite at every alpha). That second fact resolves **PRD Q9** on evidence: translucency lives exclusively in app-chrome tokens and §4.5's terminal presets stay opaque — the §4.5 boundary is preserved, not crossed. **PRD Q10** is resolved structurally rather than by guidance: one `--glass-intensity` (0..1, default 0) feeds per-surface `calc()` ranges whose floors are contrast-verified in §7 (modal 1.00→0.80, menu 1.00→0.95), so no reachable slider position fails AA. Menus get the far tighter range because, unlike modals, they float directly over live terminal output with no `--color-backdrop` beneath — worst-case muted text over white output fails AA below α=0.95 (computed, §4.6 Finding 3), and blur does not rescue it since blur preserves average luminance. New §8 rules forbid extending glass to sidebar/panes, adding alpha to a theme preset, widening the token ranges by hand, and emitting `blur(0px)` at intensity 0 (NFR-9 — a zero blur still pays the compositing cost, which matters more here because ADR-0006 already removed the WebGL renderer's headroom). |
 | 1.7 | 2026-07-20 | EVOLVE per architecture.md v1.3 (keybinding registry extended to zoom + tab-cycling actions, no new visual spec needed for those — behavioral only, same as the original Ctrl+Shift+C/V clipboard shortcuts precedent, FR-13 v1.4). Sidebar show/hide toggle's icon changed from direction-flipping ◀/▶ (which had to swap based on `settingsStore.sidebarPosition`) to a single consistent hamburger (☰) in both hidden/shown states and both sidebar positions — simpler, no swap logic needed, standard convention for a sidebar/menu toggle. No new tokens, no visual direction change. |

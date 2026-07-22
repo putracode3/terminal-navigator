@@ -141,6 +141,9 @@ export interface SettingsDto {
 	themePreset: string;
 	keybindings: Record<string, string>;
 	sidebarPosition: SidebarPosition;
+	/** FR-14 glass intensity, 0..1 (0 = fully opaque). Range is enforced
+	 *  backend-side too — see settings_store::validate. */
+	glassIntensity: number;
 }
 
 /** FR-13 — readable/writable without `unlock` (NFR-8/ADR-0009): callable

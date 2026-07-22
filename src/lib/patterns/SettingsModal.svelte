@@ -59,6 +59,42 @@
 	// it the same way keybinding rebinds already do.
 	let settingsError = $state("");
 
+	// FR-14. Two-stage on purpose: `oninput` fires on every step of the drag,
+	// and routing that straight to the store would mean one IPC round-trip +
+	// atomic disk write per step. So the drag only updates the live preview
+	// (writing --glass-intensity directly, which every glass surface already
+	// reads), and the value is persisted once on `change` — i.e. on release.
+	let glassValue = $state(settingsStore.glassIntensity);
+
+	// Keep the local value in step when the store changes from elsewhere
+	// (initial load(), or a failed save rolling back).
+	$effect(() => {
+		glassValue = settingsStore.glassIntensity;
+	});
+
+	function applyGlassPreview(intensity: number) {
+		const root = document.documentElement;
+		root.style.setProperty("--glass-intensity", String(intensity));
+		root.dataset.glass = intensity > 0 ? "on" : "off";
+	}
+
+	function handleGlassInput(event: Event) {
+		const intensity = Number((event.currentTarget as HTMLInputElement).value) / 100;
+		glassValue = intensity;
+		applyGlassPreview(intensity);
+	}
+
+	function handleGlassCommit(event: Event) {
+		const intensity = Number((event.currentTarget as HTMLInputElement).value) / 100;
+		settingsError = "";
+		settingsStore.setGlassIntensity(intensity).catch((e) => {
+			settingsError = errorMessage(e);
+			// The store already rolled its value back; undo the live preview
+			// too, so what's on screen matches what's actually persisted.
+			applyGlassPreview(settingsStore.glassIntensity);
+		});
+	}
+
 	const keybindingGroups = $derived.by(() => {
 		const groups: { name: string; actions: typeof KEYBINDING_ACTIONS }[] = [];
 		for (const action of KEYBINDING_ACTIONS) {
@@ -240,6 +276,32 @@
 				ariaLabel="Sidebar position"
 			/>
 		</section>
+
+		<section>
+			<h3>Glass effect</h3>
+			<p class="hint">
+				Frosted-glass translucency for dialogs and menus. The app window itself stays opaque —
+				your desktop won't show through.
+			</p>
+			<!-- unspecified: range/slider control — components.md has no Slider spec; composed from
+			     existing tokens following the Input/SegmentedControl conventions. Review needed. -->
+			<div class="slider-row">
+				<input
+					id="settings-glass-intensity"
+					class="slider"
+					type="range"
+					min="0"
+					max="100"
+					step="5"
+					value={Math.round(glassValue * 100)}
+					aria-label="Glass effect intensity"
+					aria-valuetext={glassValue === 0 ? "Off" : `${Math.round(glassValue * 100)} percent`}
+					oninput={handleGlassInput}
+					onchange={handleGlassCommit}
+				/>
+				<span class="slider-value">{glassValue === 0 ? "Off" : `${Math.round(glassValue * 100)}%`}</span>
+			</div>
+		</section>
 	{/snippet}
 	{#snippet footer()}
 		<Button variant="secondary" onclick={onClose}>Done</Button>
@@ -267,6 +329,61 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
+	}
+
+	.hint {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: var(--text-xs);
+		line-height: var(--leading-xs);
+	}
+
+	/* unspecified: Slider — no components.md spec exists; states below mirror
+	   the Input/Button conventions (same focus rule from design.md §7, same
+	   --color-primary fill as other interactive controls). Review needed. */
+	.slider-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+	}
+
+	.slider {
+		flex: 1;
+		appearance: none;
+		height: var(--space-1);
+		border-radius: var(--radius-full);
+		background: var(--color-border-strong);
+		cursor: pointer;
+	}
+
+	.slider:focus-visible {
+		outline: var(--border-width-md) solid var(--color-focus);
+		outline-offset: var(--space-1);
+	}
+
+	.slider::-webkit-slider-thumb {
+		appearance: none;
+		width: var(--space-4);
+		height: var(--space-4);
+		border-radius: var(--radius-full);
+		background: var(--color-primary);
+		border: var(--border-width-sm) solid var(--color-text);
+	}
+
+	.slider::-moz-range-thumb {
+		width: var(--space-4);
+		height: var(--space-4);
+		border-radius: var(--radius-full);
+		background: var(--color-primary);
+		border: var(--border-width-sm) solid var(--color-text);
+	}
+
+	.slider-value {
+		min-width: 3rem; /* token-exempt: reserves width for the widest label ("100%") so the slider doesn't reflow as the value changes */
+		text-align: right;
+		color: var(--color-text-muted);
+		font-size: var(--text-xs);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.theme-grid {

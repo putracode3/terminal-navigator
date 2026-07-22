@@ -135,6 +135,17 @@
 		padding: var(--space-1);
 	}
 
+	/* FR-14 glass state (components.md, Menu). Uses --color-menu-glass, NOT
+	   the Modal's --color-surface-elevated-glass: both surfaces are
+	   --ink-850 at rest, but a Menu floats directly over live terminal
+	   output with no --color-backdrop to damp it, so its safe alpha range
+	   is 4× tighter (design.md §4.6, Finding 3). Same [data-glass="on"]
+	   gate as Modal — see NFR-9 note there. */
+	:global(:root[data-glass="on"]) .menu {
+		background: var(--color-menu-glass);
+		backdrop-filter: blur(var(--glass-blur));
+	}
+
 	.menu-context {
 		position: fixed;
 		right: auto;

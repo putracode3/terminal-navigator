@@ -45,6 +45,7 @@ impl From<SettingsStoreError> for AppError {
     fn from(err: SettingsStoreError) -> Self {
         let kind = match &err {
             SettingsStoreError::DuplicateKeybinding(_) => "invalid_input",
+            SettingsStoreError::GlassIntensityOutOfRange(_) => "invalid_input",
             SettingsStoreError::Io(_) => "io",
             SettingsStoreError::Corrupted => "corrupted",
         };

@@ -11,6 +11,9 @@ class SettingsStore {
 	// window before load() resolves, not just after.
 	keybindings = $state<Record<string, string>>({ ...DEFAULT_KEYBINDINGS });
 	sidebarPosition = $state<SidebarPosition>("left");
+	// FR-14 (design.md §4.6). 0 = fully opaque, matching the backend
+	// default: the app looks exactly as it did until the user opts in.
+	glassIntensity = $state(0);
 	loaded = $state(false);
 
 	async load(): Promise<void> {
@@ -23,6 +26,7 @@ class SettingsStore {
 		this.themePreset = settings.themePreset;
 		this.keybindings = settings.keybindings;
 		this.sidebarPosition = settings.sidebarPosition;
+		this.glassIntensity = settings.glassIntensity;
 	}
 
 	private toDto(): SettingsDto {
@@ -30,6 +34,7 @@ class SettingsStore {
 			themePreset: this.themePreset,
 			keybindings: this.keybindings,
 			sidebarPosition: this.sidebarPosition,
+			glassIntensity: this.glassIntensity,
 		};
 	}
 
@@ -54,6 +59,21 @@ class SettingsStore {
 			await saveSettings(this.toDto());
 		} catch (e) {
 			this.sidebarPosition = previous;
+			throw e;
+		}
+	}
+
+	/** FR-14. Clamped here as well as backend-side so a caller can't drive
+	 *  --glass-intensity past the contrast-verified floors in tokens.css
+	 *  (design.md §4.6) — those floors are the whole reason no slider
+	 *  position can fail AA. */
+	async setGlassIntensity(intensity: number): Promise<void> {
+		const previous = this.glassIntensity;
+		this.glassIntensity = Math.min(1, Math.max(0, intensity));
+		try {
+			await saveSettings(this.toDto());
+		} catch (e) {
+			this.glassIntensity = previous;
 			throw e;
 		}
 	}

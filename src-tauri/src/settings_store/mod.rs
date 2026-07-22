@@ -18,11 +18,21 @@ pub enum SidebarPosition {
     Right,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     pub theme_preset: String,
     pub keybindings: HashMap<String, String>,
     pub sidebar_position: SidebarPosition,
+    /// FR-14 glass intensity, 0.0..=1.0 (0 = fully opaque).
+    ///
+    /// `#[serde(default)]` is load-bearing, not decoration: `load()` treats
+    /// an unparseable file as `Corrupted` rather than falling back to
+    /// defaults, so without this a settings.json written by any earlier
+    /// build — i.e. every existing install — would fail to parse the moment
+    /// this field was added. Any future field added here needs the same
+    /// treatment for the same reason.
+    #[serde(default)]
+    pub glass_intensity: f32,
 }
 
 impl Default for Settings {
@@ -31,6 +41,9 @@ impl Default for Settings {
             theme_preset: "app-default".to_string(),
             keybindings: default_keybindings(),
             sidebar_position: SidebarPosition::Left,
+            // design.md §4.6: the app looks exactly as it does today until
+            // the user opts in.
+            glass_intensity: 0.0,
         }
     }
 }
@@ -62,6 +75,8 @@ fn default_keybindings() -> HashMap<String, String> {
 pub enum SettingsStoreError {
     #[error("two actions cannot share the same keybinding: {0}")]
     DuplicateKeybinding(String),
+    #[error("glass intensity must be between 0.0 and 1.0, got {0}")]
+    GlassIntensityOutOfRange(f32),
     #[error("failed to read/write settings file")]
     Io(#[from] std::io::Error),
     #[error("settings file is corrupted or in an unrecognized format")]
@@ -101,6 +116,14 @@ fn validate(settings: &Settings) -> Result<(), SettingsStoreError> {
             return Err(SettingsStoreError::DuplicateKeybinding(combo.clone()));
         }
     }
+    // Range-checked here rather than trusted from the frontend slider —
+    // same server-side-validation stance the rest of this module takes.
+    // An out-of-range value would drive --glass-intensity past the
+    // contrast-verified floors baked into tokens.css (design.md §4.6),
+    // which is exactly what those floors exist to make unreachable.
+    if !(0.0..=1.0).contains(&settings.glass_intensity) || settings.glass_intensity.is_nan() {
+        return Err(SettingsStoreError::GlassIntensityOutOfRange(settings.glass_intensity));
+    }
     Ok(())
 }
 
@@ -135,6 +158,55 @@ mod tests {
         assert_eq!(settings.keybindings.get("terminal.zoomOut"), Some(&"Ctrl+-".to_string()));
         assert_eq!(settings.keybindings.get("terminal.nextTab"), Some(&"Ctrl+Tab".to_string()));
         assert_eq!(settings.keybindings.get("terminal.previousTab"), Some(&"Ctrl+Shift+Tab".to_string()));
+    }
+
+    /// Regression: adding `glass_intensity` (FR-14) must not orphan the
+    /// settings.json every existing install already has on disk. `load()`
+    /// surfaces corruption rather than masking it, so a missing field has
+    /// to deserialize via `#[serde(default)]` instead of erroring.
+    #[test]
+    fn load_accepts_settings_file_written_before_glass_intensity_existed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // Exactly the shape a pre-FR-14 build wrote — no glass_intensity key.
+        std::fs::write(
+            &path,
+            r#"{
+                "theme_preset": "dracula",
+                "keybindings": {"clipboard.copy": "Ctrl+Shift+C"},
+                "sidebar_position": "right"
+            }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path).expect("pre-FR-14 settings file must still load");
+        assert_eq!(settings.theme_preset, "dracula");
+        assert_eq!(settings.sidebar_position, SidebarPosition::Right);
+        assert_eq!(settings.glass_intensity, 0.0, "missing field defaults to fully opaque");
+    }
+
+    #[test]
+    fn save_rejects_glass_intensity_outside_zero_to_one() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for bad in [1.5_f32, -0.1, f32::NAN] {
+            let settings = Settings { glass_intensity: bad, ..Settings::default() };
+            assert!(
+                matches!(save(&path, &settings), Err(SettingsStoreError::GlassIntensityOutOfRange(_))),
+                "glass_intensity {bad} should have been rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn save_accepts_glass_intensity_at_both_ends_of_the_range() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for good in [0.0_f32, 0.5, 1.0] {
+            let settings = Settings { glass_intensity: good, ..Settings::default() };
+            save(&path, &settings).unwrap_or_else(|e| panic!("{good} should be accepted: {e}"));
+            assert_eq!(load(&path).unwrap().glass_intensity, good);
+        }
     }
 
     #[test]
