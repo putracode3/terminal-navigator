@@ -73,8 +73,9 @@
 
   /* ── Tier 2: Semantic — Glass surfaces (FR-14) ───────────
      In-app compositing only: surfaces are translucent relative
-     to each other, never to the desktop (the app window stays
-     opaque — see design.md §4.6).
+     to each OTHER. See-through to the desktop is FR-15's job
+     (--window-transparency below) — the two stack, and neither
+     feeds the other (design.md §4.7, Finding 3).
 
      --glass-intensity is the ONLY value the app writes at
      runtime (0..1, from the FR-13 Settings slider). Every
@@ -88,7 +89,11 @@
      Only surfaces that float above VARYING content get glass.
      Sidebar and terminal panes are deliberately excluded: they
      sit on flat --color-background, and blurring a flat color
-     returns the same flat color (design.md §4.6, Finding 1). */
+     returns the same flat color (design.md §4.6, Finding 1).
+     FR-15 does NOT change this — backdrop-filter samples the
+     page's own backdrop, and the wallpaper is composited by the
+     window manager outside the document, so it never enters that
+     backdrop image (design.md §4.7, Finding 3). */
   --glass-intensity: 0;  /* 0 = fully opaque; app default */
 
   --glass-modal-alpha: calc(1 - 0.60 * var(--glass-intensity)); /* 1.00 → 0.40 */
@@ -108,6 +113,31 @@
 
   --color-surface-elevated-glass: rgba(28, 32, 41, var(--glass-modal-alpha)); /* --ink-850 */
   --color-menu-glass: rgba(28, 32, 41, var(--glass-menu-alpha));              /* --ink-850 */
+
+  /* ── Tier 2: Semantic — Window transparency (FR-15) ──────
+     The window is created transparent unconditionally (ADR-0012);
+     `transparent` is creation-time-only in Tauri, so it can never
+     be toggled at runtime. What the Settings slider drives is
+     --window-transparency (0..1, default 0 = fully opaque), and
+     every app-controlled background paints at the derived scrim
+     alpha below.
+
+     The floor (0.64) is computed against a WHITE wallpaper — the
+     genuine worst case for light text on dark surfaces, and unlike
+     §4.6's discarded model it is actually reachable, since nothing
+     blurs or averages a wallpaper. At that floor --color-text holds
+     4.70:1 over white; --color-text-muted does not (1.87:1) and is
+     a knowingly accepted trade — see design.md §4.7.
+
+     Surfaces stack additively, so a surface painted over the root
+     is always MORE opaque than the root alone. Bounding the root
+     bounds everything above it — never give a surface a lower
+     alpha than the root. */
+  --window-transparency: 0;  /* 0 = fully opaque; app default */
+  --window-scrim-alpha: calc(1 - 0.36 * var(--window-transparency)); /* 1.00 → 0.64 */
+
+  --color-background-scrim: rgba(13, 15, 20, var(--window-scrim-alpha)); /* --ink-950 */
+  --color-surface-scrim: rgba(21, 24, 31, var(--window-scrim-alpha));    /* --ink-900 */
 
   /* ── Tier 2: Semantic — Typography scale ─────────────────
      Modular scale, ratio ~1.2, rounded to practical pixel
