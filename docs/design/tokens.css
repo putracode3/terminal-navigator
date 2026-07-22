@@ -91,9 +91,20 @@
      returns the same flat color (design.md §4.6, Finding 1). */
   --glass-intensity: 0;  /* 0 = fully opaque; app default */
 
-  --glass-modal-alpha: calc(1 - 0.20 * var(--glass-intensity)); /* 1.00 → 0.80 */
-  --glass-menu-alpha:  calc(1 - 0.05 * var(--glass-intensity)); /* 1.00 → 0.95 */
-  --glass-blur: calc(var(--glass-intensity) * 12px);
+  --glass-modal-alpha: calc(1 - 0.60 * var(--glass-intensity)); /* 1.00 → 0.40 */
+  --glass-menu-alpha:  calc(1 - 0.20 * var(--glass-intensity)); /* 1.00 → 0.80 */
+
+  /* 24px, not 12: the blur radius is what makes §4.6's averaging model
+     true. Glyphs are ~8–16px, so a 24px kernel dissolves them into the
+     local mean; only bright regions LARGER than the kernel survive, and
+     those are the documented pathological case. Raising this radius makes
+     the floors safer, never riskier, and costs nothing in contrast. */
+  --glass-blur: calc(var(--glass-intensity) * 24px);
+
+  /* Glass edge — the thin lit rim that reads as "pane of glass" rather
+     than "faded panel". Decorative only: it is a border, never sits under
+     text, so it carries no contrast obligation. */
+  --glass-edge: rgba(255, 255, 255, 0.08);
 
   --color-surface-elevated-glass: rgba(28, 32, 41, var(--glass-modal-alpha)); /* --ink-850 */
   --color-menu-glass: rgba(28, 32, 41, var(--glass-menu-alpha));              /* --ink-850 */

@@ -144,6 +144,7 @@
 	:global(:root[data-glass="on"]) .menu {
 		background: var(--color-menu-glass);
 		backdrop-filter: blur(var(--glass-blur));
+		border-top-color: var(--glass-edge);
 	}
 
 	.menu-context {

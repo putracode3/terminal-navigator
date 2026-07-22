@@ -123,6 +123,7 @@
 	:global(:root[data-glass="on"]) .dialog {
 		background: var(--color-surface-elevated-glass);
 		backdrop-filter: blur(var(--glass-blur));
+		border-top: var(--border-width-sm) solid var(--glass-edge);
 	}
 
 	.dialog-form {

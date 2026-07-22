@@ -351,7 +351,7 @@ Both variants render **identical content** for the same target and share every s
 |---|---|
 | closed | not rendered |
 | open | bg `--color-surface-elevated`, border `--border-width-sm` `--color-border`, `--radius-md`, `--shadow-md` |
-| open, glass enabled (FR-14, v1.9) | as `open`, but bg `--color-menu-glass` + `backdrop-filter: blur(var(--glass-blur))`. The menu's alpha range (`1.00 → 0.95`) is deliberately far tighter than the Modal's (`1.00 → 0.80`) — a Menu floats directly over live terminal output with no `--color-backdrop` beneath it to damp arbitrary bright content (design.md §4.6, Finding 3). Not emitted at all when `--glass-intensity` is 0 |
+| open, glass enabled (FR-14, v2.0) | as `open`, but bg `--color-menu-glass` + `backdrop-filter: blur(var(--glass-blur))` + a 1px top rim in `--glass-edge`. The menu's alpha range (`1.00 → 0.80`) is deliberately tighter than the Modal's (`1.00 → 0.40`) — a Menu floats directly over live terminal output with no `--color-backdrop` beneath it to damp bright content (design.md §4.6). Counter-intuitively the menu still reads as *more* see-through at its floor (143/765 vs the modal's 130/765), precisely because the modal's backdrop mutes what shows through — do not "fix" this by equalising the two ranges. Not emitted at all when `--glass-intensity` is 0 |
 | item default | text `--color-text`, `--text-sm` |
 | item hover / focus-visible | bg `--color-surface` |
 | item danger | text `--color-danger` (e.g. Delete) |
@@ -370,7 +370,7 @@ Both variants render **identical content** for the same target and share every s
 
 ### Do / Don't
 - ✅ Do: keep the anchored and context variants' item lists identical for the same target — this is what makes the keyboard-accessibility argument above true. Adding an item to one without the other quietly breaks it.
-- ❌ Don't: reuse `--color-surface-elevated-glass` (the Modal's token) on a Menu because both surfaces are `--ink-850` at rest — the two tokens exist precisely because their safe alpha ranges differ by 4×, and swapping them puts unreadable muted text over bright terminal output at high intensity.
+- ❌ Don't: reuse `--color-surface-elevated-glass` (the Modal's token) on a Menu because both surfaces are `--ink-850` at rest — the two tokens exist precisely because their safe alpha ranges differ 3× (modal reaches 0.40, menu stops at 0.80), and swapping them puts muted text below AA over bright terminal output at high intensity.
 - ❌ Don't: nest a Menu inside a Menu, or open a Menu from within a Modal's own action (not a pattern this app uses anywhere — if a future feature seems to need it, that's a new pattern to design, not an extension of this one).
 
 ---
@@ -477,7 +477,7 @@ The overlay's highlighted half previews the *resulting* pane's approximate bound
 | entering | backdrop fades in (`--duration-base`), container scales from 0.98→1 + fades in, `--ease-out` |
 | open | backdrop bg `--color-backdrop` |
 | exiting | reverse of entering, `--duration-fast` |
-| open, glass enabled (FR-14, v1.9) | container bg `--color-surface-elevated-glass` + `backdrop-filter: blur(var(--glass-blur))`; backdrop layer unchanged (`--color-backdrop`). Applies only when `--glass-intensity` > 0 — at 0 the container keeps solid `--color-surface-elevated` and `backdrop-filter` is **not emitted at all** (design.md §4.6, NFR-9) |
+| open, glass enabled (FR-14, v2.0) | container bg `--color-surface-elevated-glass` + `backdrop-filter: blur(var(--glass-blur))` + a 1px top rim in `--glass-edge`; backdrop layer unchanged (`--color-backdrop`). Alpha range `1.00 → 0.40` — wider than the Menu's because the `--color-backdrop` beneath already damps the content (design.md §4.6). Applies only when `--glass-intensity` > 0 — at 0 the container keeps solid `--color-surface-elevated`, drops the rim, and `backdrop-filter` is **not emitted at all** (NFR-9) |
 
 ### Behavior
 - `Escape` closes non-destructive dialogs; for `confirm` dialogs guarding a destructive action, `Escape` is equivalent to Cancel (never to the destructive action).
