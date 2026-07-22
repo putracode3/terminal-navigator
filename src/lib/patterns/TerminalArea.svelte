@@ -189,6 +189,13 @@
 	}
 
 	.empty-state {
+		/* FR-15/design.md §4.7 (v2.3): this is the scrim owner for the
+		   terminal area whenever no pane is open — nothing renders beneath
+		   it (body deliberately paints none). When a pane IS open this
+		   element isn't in the DOM at all (mutually exclusive with the
+		   pane tree via the surrounding {#if}), so TerminalPane's own scrim
+		   takes over instead; the two never paint at once. */
+		background: var(--color-background-scrim);
 		height: 100%;
 		display: flex;
 		align-items: center;

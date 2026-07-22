@@ -9,11 +9,17 @@
 
 html,
 body {
-	/* FR-15: the window is transparent unconditionally (ADR-0012), so the
-	   root must not be — html stays fully transparent and body carries the
-	   app's scrim. If both were transparent the app would render as a
-	   ghost; the scrim is what guarantees primary-text contrast over an
-	   arbitrary wallpaper (design.md §4.7). */
+	/* FR-15/design.md §4.7 (v2.3): body paints NO scrim of its own. The
+	   window is transparent unconditionally (ADR-0012), but layout
+	   coverage (§5 — sidebar + terminal area tile the full viewport) means
+	   body is never actually visible once unlocked. The scrim is owned by
+	   whichever surface is actually rendered there instead: Sidebar,
+	   TerminalArea's .empty-state, TerminalPane's pane element, or
+	   UnlockScreen. Giving body a scrim too double-composited against
+	   those and made the terminal pane render *more* opaque than intended
+	   (0.64 stacked on 0.64 = 0.87) — see §4.7's ownership table before
+	   reintroducing a background here.
+	   Both html and body stay transparent regardless. */
 	background: transparent;
 	height: 100%;
 	margin: 0;
@@ -25,7 +31,6 @@ body {
 	font-size: var(--text-sm);
 	line-height: var(--leading-sm);
 	color: var(--color-text);
-	background-color: var(--color-background-scrim);
 	font-synthesis: none;
 	text-rendering: optimizeLegibility;
 	-webkit-font-smoothing: antialiased;

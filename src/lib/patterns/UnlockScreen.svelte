@@ -50,7 +50,12 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--color-background);
+		/* FR-15/design.md §4.7 (v2.3): this is a full-page pattern replacing
+		   the app shell outright, so it owns the scrim itself — previously
+		   this was plain --color-background (opaque), which meant the
+		   unlock screen never respected --window-transparency at all,
+		   contradicting FR-15's own edge case (NFR-8). */
+		background: var(--color-background-scrim);
 	}
 
 	.glow {
