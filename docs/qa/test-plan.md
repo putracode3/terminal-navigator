@@ -1,5 +1,5 @@
 # Test Plan — Terminal Navigator
-> Version 1.3 · 2026-07-21 · Mode context: BUG (closing the perpendicular-split accepted gap — see §8)
+> Version 1.4 · 2026-07-22 · Mode context: BUG (closing the perpendicular-split accepted gap — see §8)
 > Runner: `cargo test` (Rust, src-tauri) · Vitest (frontend, src) · CI: none yet (personal project, manual builds — see docs/ops/runbook.md §2 for the pre-flight gate that stands in for CI today)
 > Oracles: docs/prd-terminal-navigator.md (FR acceptance criteria) · docs/backend/architecture.md §9 (documented risks) · current behavior where neither specifies
 
@@ -133,6 +133,21 @@ Not applicable — no refactor/migration is currently planned (SAFETY-NET mode n
 **Cadence:** every release, as §2 of `docs/ops/runbook.md` (the release verification checklist already bakes steps 1–3 of this charter in as a *mandatory* gate — this charter is the broader QA rationale; the runbook is the operational enforcement). Don't let the two drift: if the runbook's verification steps change, update this charter's table to match, and vice versa.
 
 **Findings log:** record results directly in this table (date + pass/fail) and in `docs/ops/runbook.md`'s rehearsal log — don't maintain a third location.
+
+### 5.1b Library-option-is-inert charter (FR-15 terminal transparency, 2026-07-22)
+
+**Why this exists:** FR-15 shipped with terminal panes still opaque while every other surface went translucent. The cause was not our code: `xterm.js` 6.0.0 **flattens a translucent theme `background` against black and paints the result opaque**, and its `allowTransparency` option — still declared in the public typings — is never read by the implementation. Every unit test passed, `npm run check` was clean, and the option's presence in the `.d.ts` made it look supported. This is the same bug *class* as ADR-0006's WebGL addon: **a library advertises a capability its implementation does not deliver, and nothing short of looking at pixels reveals it.**
+
+**Charter:** whenever a visual behaviour depends on a third-party library option — transparency, blending, rendering mode, GPU path — do not accept the typings, the docs, or the absence of console errors as evidence that it works.
+
+**Method (proven twice in this project):**
+1. Render the thing over a **high-frequency backdrop** — `repeating-linear-gradient(90deg, #FFF 0 8px, #000 8px 16px)` works well.
+2. Screenshot the real window (`import -window <id>`; see the app-window notes in §5.1).
+3. Compare **pixel variance** on a row inside the effect against a row over the bare backdrop (`convert <png> -crop WxH+X+Y txt:-`, parse channels, take stdev).
+4. A working effect shows the backdrop's variance (FR-15's fix: stdev 127.49). A broken one shows a flat fill (the bug: stdev **0.00**).
+5. When the option is a boolean, render **two instances differing only in that option**. If both measure identically, the option is inert — that single comparison is what proved `allowTransparency` dead.
+
+**Verdict rule:** an inert library option is an architectural finding, not a code bug. Record it (ADR or design.md) so the next session does not re-enable it hopefully.
 
 ### 5.2 WebGL renderer fallback — RESOLVED 2026-07-21, superseded by this charter
 

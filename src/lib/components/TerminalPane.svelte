@@ -6,7 +6,7 @@
 	import { FitAddon } from "@xterm/addon-fit";
 	import "@xterm/xterm/css/xterm.css";
 	import { writeTerminal, resizeTerminal } from "$lib/api";
-	import { getThemePreset, withWindowTransparency } from "$lib/theme-presets";
+	import { getThemePreset, withWindowTransparency, paneBackground } from "$lib/theme-presets";
 	import { matchesCombo } from "$lib/keybindings";
 	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { getTerminalHandle, registerTerminalHandle, type TerminalHandle } from "$lib/terminal-registry";
@@ -117,11 +117,6 @@
 					getThemePreset(settingsStore.themePreset).theme,
 					settingsStore.windowTransparency,
 				),
-				// FR-15: xterm.js ignores a translucent theme background
-				// unless this is on — but it disables an opaque-background
-				// fast path, so it is gated on the feature actually being
-				// used rather than left on unconditionally (NFR-7/NFR-9).
-				allowTransparency: settingsStore.windowTransparency > 0,
 			});
 			const newFitAddon = new FitAddon();
 			newTerm.loadAddon(newFitAddon);
@@ -364,10 +359,9 @@
 		const preset = getThemePreset(settingsStore.themePreset);
 		const transparency = settingsStore.windowTransparency;
 		if (!term) return;
-		// FR-15: allowTransparency must be set before the theme, or xterm
-		// renders the new translucent background against a stale opaque
-		// assumption until the next full repaint.
-		term.options.allowTransparency = transparency > 0;
+		// FR-15: `allowTransparency` is deliberately NOT set — measured inert
+		// in xterm 6.0.0 (see withWindowTransparency's note). The alpha lives
+		// on .xterm-container below, not in the xterm theme.
 		term.options.theme = withWindowTransparency(preset.theme, transparency);
 	});
 </script>
@@ -379,7 +373,17 @@
 	onclick={onFocus}
 	onfocusin={onFocus}
 >
-	<div class="xterm-container" bind:this={containerEl}></div>
+	<!-- FR-15: the pane, not xterm, carries the terminal background. xterm
+	     flattens a translucent theme background against black and paints it
+	     opaque (see theme-presets.ts), so the alpha has to live here. -->
+	<div
+		class="xterm-container"
+		style:background-color={paneBackground(
+			getThemePreset(settingsStore.themePreset).theme,
+			settingsStore.windowTransparency,
+		)}
+		bind:this={containerEl}
+	></div>
 </div>
 
 <style>
@@ -400,5 +404,16 @@
 	.xterm-container {
 		height: 100%;
 		width: 100%;
+	}
+
+	/* FR-15: xterm sets a background on its own elements, so emptying the
+	   theme is not enough — these must be forced transparent for the pane
+	   colour above to be what shows. Verified by pixel measurement: without
+	   this the terminal renders a uniform opaque colour (stdev 0.00) over a
+	   striped backdrop; with it, stdev 127.49, matching the bare backdrop. */
+	.xterm-container :global(.xterm),
+	.xterm-container :global(.xterm-viewport),
+	.xterm-container :global(.xterm-screen) {
+		background-color: transparent !important;
 	}
 </style>

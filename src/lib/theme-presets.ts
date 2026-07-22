@@ -127,21 +127,43 @@ export function getThemePreset(id: string): ThemePresetDef {
 	return THEME_PRESETS.find((p) => p.id === id) ?? DEFAULT_PRESET;
 }
 
-/** FR-15 (design.md §4.7): returns `theme` with its background carrying the
- *  window scrim alpha, so the desktop shows through the terminal area.
+/** FR-15 (design.md §4.7): makes the terminal's own background paint nothing,
+ *  so whatever sits behind the pane shows through.
  *
- *  The preset itself is never mutated and `THEME_PRESETS` keeps storing
- *  opaque reference hexes — PRD Q9 decided that translucency lives in the
- *  FR-15 layer, not in the palette, and this function is that layer. The
- *  0.36 coefficient mirrors `--window-scrim-alpha` in tokens.css; if that
- *  floor is ever re-derived, both must move together.
+ *  **Why the background is emptied rather than given an alpha.** Passing a
+ *  translucent `rgba(...)` here does not work: xterm.js 6.0.0 flattens a
+ *  translucent theme background against black and paints the result
+ *  *opaquely*. Measured with two terminals identical except for
+ *  `allowTransparency`, over a striped backdrop — both rendered a uniform
+ *  colour (stdev 0.00) equal to `alpha x background`, while the same
+ *  backdrop read stdev 127.49 where it was not covered. `allowTransparency`
+ *  changed nothing; it appears in xterm 6.0.0 only as a default value and is
+ *  never read, despite still being declared in the public typings.
  *
- *  Returns the theme unchanged at transparency 0, so the opaque default
- *  path allocates nothing and stays byte-identical to pre-FR-15 behavior. */
+ *  So the alpha cannot live in the xterm theme. It lives on the pane element
+ *  behind the terminal instead — see `paneBackground()`. This function's job
+ *  is only to stop xterm painting over it. The companion CSS override in
+ *  TerminalPane.svelte is required too: emptying the theme is not sufficient
+ *  on its own, because xterm still sets a background on its own elements.
+ *
+ *  Returns the theme unchanged at transparency 0, so the opaque default path
+ *  is byte-identical to pre-FR-15 behaviour. */
 export function withWindowTransparency(theme: ITheme, transparency: number): ITheme {
 	if (transparency <= 0) return theme;
+	return { ...theme, background: "rgba(0, 0, 0, 0)" };
+}
+
+/** FR-15: the colour the pane paints behind a transparent terminal — the
+ *  preset's own background at the window scrim alpha, so the FR-13 theme
+ *  still reads as itself while the desktop shows through.
+ *
+ *  The 0.36 coefficient mirrors `--window-scrim-alpha` in tokens.css; if that
+ *  floor is re-derived (design.md §4.7), both must move together. */
+export function paneBackground(theme: ITheme, transparency: number): string {
+	const hex = theme.background ?? "#0D0F14";
+	if (transparency <= 0) return hex;
 	const alpha = 1 - 0.36 * Math.min(1, Math.max(0, transparency));
-	return { ...theme, background: hexToRgba(theme.background ?? "#0D0F14", alpha) };
+	return hexToRgba(hex, alpha);
 }
 
 function hexToRgba(hex: string, alpha: number): string {
