@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { THEME_PRESETS, getThemePreset } from "./theme-presets";
+import { THEME_PRESETS, getThemePreset, withWindowTransparency } from "./theme-presets";
 
 const REQUIRED_ANSI_SLOTS = [
 	"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
@@ -40,5 +40,33 @@ describe("getThemePreset", () => {
 
 	it("falls back to App Default for an unknown id", () => {
 		expect(getThemePreset("not-a-real-preset").id).toBe("app-default");
+	});
+});
+
+describe("withWindowTransparency() — FR-15", () => {
+	it("returns the theme untouched at transparency 0, so the opaque default path is unchanged", () => {
+		const theme = getThemePreset("app-default").theme;
+		expect(withWindowTransparency(theme, 0)).toBe(theme);
+	});
+
+	it("applies the same scrim floor as --window-scrim-alpha (1 - 0.36 * t)", () => {
+		// At full transparency the alpha must be exactly 0.64 — the floor
+		// design.md §4.7 computed against a white wallpaper. If this drifts,
+		// primary-text contrast is no longer guaranteed.
+		const result = withWindowTransparency({ background: "#0D0F14" }, 1);
+		expect(result.background).toBe("rgba(13, 15, 20, 0.64)");
+	});
+
+	it("never mutates the preset — PRD Q9 keeps palettes opaque", () => {
+		const preset = getThemePreset("dracula");
+		const before = preset.theme.background;
+		withWindowTransparency(preset.theme, 1);
+		expect(preset.theme.background).toBe(before);
+	});
+
+	it("clamps out-of-range input rather than producing an alpha past the floor", () => {
+		expect(withWindowTransparency({ background: "#0D0F14" }, 5).background).toBe(
+			"rgba(13, 15, 20, 0.64)",
+		);
 	});
 });

@@ -376,7 +376,10 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
-		background: var(--color-surface);
+		/* FR-15: paints at the scrim alpha so the sidebar is see-through too
+		   (whole-app scope). Stacks over body's scrim, so it is always MORE
+		   opaque than the root — never give it a lower alpha (design.md §4.7). */
+		background: var(--color-surface-scrim);
 		border-right: var(--border-width-sm) solid var(--color-border);
 	}
 

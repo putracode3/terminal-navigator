@@ -9,6 +9,12 @@
 
 html,
 body {
+	/* FR-15: the window is transparent unconditionally (ADR-0012), so the
+	   root must not be — html stays fully transparent and body carries the
+	   app's scrim. If both were transparent the app would render as a
+	   ghost; the scrim is what guarantees primary-text contrast over an
+	   arbitrary wallpaper (design.md §4.7). */
+	background: transparent;
 	height: 100%;
 	margin: 0;
 	overflow: hidden; /* design.md §5: only individual panels scroll, never the app shell */
@@ -19,7 +25,7 @@ body {
 	font-size: var(--text-sm);
 	line-height: var(--leading-sm);
 	color: var(--color-text);
-	background-color: var(--color-background);
+	background-color: var(--color-background-scrim);
 	font-synthesis: none;
 	text-rendering: optimizeLegibility;
 	-webkit-font-smoothing: antialiased;

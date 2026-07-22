@@ -144,6 +144,10 @@ export interface SettingsDto {
 	/** FR-14 glass intensity, 0..1 (0 = fully opaque). Range is enforced
 	 *  backend-side too — see settings_store::validate. */
 	glassIntensity: number;
+	/** FR-15 window transparency, 0..1 (0 = fully opaque). Separate from
+	 *  glassIntensity by design (ADR-0012): glass is panel-over-panel inside
+	 *  the app, this is the whole app over the desktop. */
+	windowTransparency: number;
 }
 
 /** FR-13 — readable/writable without `unlock` (NFR-8/ADR-0009): callable

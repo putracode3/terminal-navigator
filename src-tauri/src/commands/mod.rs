@@ -155,6 +155,9 @@ pub struct SettingsDto {
     /// here too, so a frontend that predates this field still round-trips.
     #[serde(default)]
     pub glass_intensity: f32,
+    /// FR-15 — see `settings_store::Settings::window_transparency`.
+    #[serde(default)]
+    pub window_transparency: f32,
 }
 
 impl From<Settings> for SettingsDto {
@@ -164,6 +167,7 @@ impl From<Settings> for SettingsDto {
             keybindings: s.keybindings,
             sidebar_position: s.sidebar_position,
             glass_intensity: s.glass_intensity,
+            window_transparency: s.window_transparency,
         }
     }
 }
@@ -175,6 +179,7 @@ impl From<SettingsDto> for Settings {
             keybindings: dto.keybindings,
             sidebar_position: dto.sidebar_position,
             glass_intensity: dto.glass_intensity,
+            window_transparency: dto.window_transparency,
         }
     }
 }

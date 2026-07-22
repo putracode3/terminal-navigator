@@ -1,5 +1,7 @@
 <!doctype html>
-<html lang="en" style="color-scheme: dark">
+<!-- color-scheme drives native form-control rendering (password field) and must stay;
+     the explicit transparent background is what FR-15 needs — see ADR-0012, PRD Q13. -->
+<html lang="en" style="color-scheme: dark; background: transparent">
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />

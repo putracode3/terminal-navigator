@@ -84,6 +84,34 @@
 		applyGlassPreview(intensity);
 	}
 
+	// FR-15 — same two-stage drag/commit shape as the glass slider, and for
+	// the same reason: `oninput` fires per step, and persisting each one
+	// would mean an IPC round-trip plus an atomic disk write per pixel.
+	let windowValue = $state(settingsStore.windowTransparency);
+
+	$effect(() => {
+		windowValue = settingsStore.windowTransparency;
+	});
+
+	function applyWindowPreview(transparency: number) {
+		document.documentElement.style.setProperty("--window-transparency", String(transparency));
+	}
+
+	function handleWindowInput(event: Event) {
+		const value = Number((event.currentTarget as HTMLInputElement).value) / 100;
+		windowValue = value;
+		applyWindowPreview(value);
+	}
+
+	function handleWindowCommit(event: Event) {
+		const value = Number((event.currentTarget as HTMLInputElement).value) / 100;
+		settingsError = "";
+		settingsStore.setWindowTransparency(value).catch((e) => {
+			settingsError = errorMessage(e);
+			applyWindowPreview(settingsStore.windowTransparency);
+		});
+	}
+
 	function handleGlassCommit(event: Event) {
 		const intensity = Number((event.currentTarget as HTMLInputElement).value) / 100;
 		settingsError = "";
@@ -300,6 +328,30 @@
 					onchange={handleGlassCommit}
 				/>
 				<span class="slider-value">{glassValue === 0 ? "Off" : `${Math.round(glassValue * 100)}%`}</span>
+			</div>
+		</section>
+
+		<section>
+			<h3>Window transparency</h3>
+			<p class="hint">
+				See through the window to your desktop. Needs a compositing window manager — without
+				one the window stays opaque.
+			</p>
+			<div class="slider-row">
+				<input
+					id="settings-window-transparency"
+					class="slider"
+					type="range"
+					min="0"
+					max="100"
+					step="5"
+					value={Math.round(windowValue * 100)}
+					aria-label="Window transparency"
+					aria-valuetext={windowValue === 0 ? "Off" : `${Math.round(windowValue * 100)} percent`}
+					oninput={handleWindowInput}
+					onchange={handleWindowCommit}
+				/>
+				<span class="slider-value">{windowValue === 0 ? "Off" : `${Math.round(windowValue * 100)}%`}</span>
 			</div>
 		</section>
 	{/snippet}

@@ -22,6 +22,18 @@
 		root.style.setProperty("--glass-intensity", String(intensity));
 		root.dataset.glass = intensity > 0 ? "on" : "off";
 	});
+
+	// FR-15 (design.md §4.7, ADR-0012). Separate from glass on purpose: the
+	// window flag itself is fixed at creation and never varies, so this
+	// value drives only the alpha of the app's own background layers.
+	// Also applied here rather than in the page so it is live at the unlock
+	// screen (NFR-8).
+	$effect(() => {
+		document.documentElement.style.setProperty(
+			"--window-transparency",
+			String(settingsStore.windowTransparency),
+		);
+	});
 </script>
 
 {@render children()}

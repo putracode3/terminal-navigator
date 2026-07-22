@@ -14,6 +14,9 @@ class SettingsStore {
 	// FR-14 (design.md §4.6). 0 = fully opaque, matching the backend
 	// default: the app looks exactly as it did until the user opts in.
 	glassIntensity = $state(0);
+	// FR-15 (design.md §4.7). 0 = fully opaque window, matching the backend
+	// default — the app looks unchanged until the user opts in.
+	windowTransparency = $state(0);
 	loaded = $state(false);
 
 	async load(): Promise<void> {
@@ -27,6 +30,7 @@ class SettingsStore {
 		this.keybindings = settings.keybindings;
 		this.sidebarPosition = settings.sidebarPosition;
 		this.glassIntensity = settings.glassIntensity;
+		this.windowTransparency = settings.windowTransparency;
 	}
 
 	private toDto(): SettingsDto {
@@ -35,6 +39,7 @@ class SettingsStore {
 			keybindings: this.keybindings,
 			sidebarPosition: this.sidebarPosition,
 			glassIntensity: this.glassIntensity,
+			windowTransparency: this.windowTransparency,
 		};
 	}
 
@@ -74,6 +79,21 @@ class SettingsStore {
 			await saveSettings(this.toDto());
 		} catch (e) {
 			this.glassIntensity = previous;
+			throw e;
+		}
+	}
+
+	/** FR-15. Clamped here and backend-side, same as setGlassIntensity —
+	 *  out-of-range would drive --window-transparency past the scrim floor
+	 *  that keeps primary text readable over an arbitrary wallpaper
+	 *  (design.md §4.7). */
+	async setWindowTransparency(transparency: number): Promise<void> {
+		const previous = this.windowTransparency;
+		this.windowTransparency = Math.min(1, Math.max(0, transparency));
+		try {
+			await saveSettings(this.toDto());
+		} catch (e) {
+			this.windowTransparency = previous;
 			throw e;
 		}
 	}

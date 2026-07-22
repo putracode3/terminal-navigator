@@ -126,3 +126,28 @@ const DEFAULT_PRESET = THEME_PRESETS[0];
 export function getThemePreset(id: string): ThemePresetDef {
 	return THEME_PRESETS.find((p) => p.id === id) ?? DEFAULT_PRESET;
 }
+
+/** FR-15 (design.md §4.7): returns `theme` with its background carrying the
+ *  window scrim alpha, so the desktop shows through the terminal area.
+ *
+ *  The preset itself is never mutated and `THEME_PRESETS` keeps storing
+ *  opaque reference hexes — PRD Q9 decided that translucency lives in the
+ *  FR-15 layer, not in the palette, and this function is that layer. The
+ *  0.36 coefficient mirrors `--window-scrim-alpha` in tokens.css; if that
+ *  floor is ever re-derived, both must move together.
+ *
+ *  Returns the theme unchanged at transparency 0, so the opaque default
+ *  path allocates nothing and stays byte-identical to pre-FR-15 behavior. */
+export function withWindowTransparency(theme: ITheme, transparency: number): ITheme {
+	if (transparency <= 0) return theme;
+	const alpha = 1 - 0.36 * Math.min(1, Math.max(0, transparency));
+	return { ...theme, background: hexToRgba(theme.background ?? "#0D0F14", alpha) };
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+	const h = hex.replace("#", "");
+	const r = parseInt(h.slice(0, 2), 16);
+	const g = parseInt(h.slice(2, 4), 16);
+	const b = parseInt(h.slice(4, 6), 16);
+	return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}

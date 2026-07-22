@@ -6,7 +6,7 @@
 	import { FitAddon } from "@xterm/addon-fit";
 	import "@xterm/xterm/css/xterm.css";
 	import { writeTerminal, resizeTerminal } from "$lib/api";
-	import { getThemePreset } from "$lib/theme-presets";
+	import { getThemePreset, withWindowTransparency } from "$lib/theme-presets";
 	import { matchesCombo } from "$lib/keybindings";
 	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { getTerminalHandle, registerTerminalHandle, type TerminalHandle } from "$lib/terminal-registry";
@@ -113,7 +113,15 @@
 				// foreground, cursor, cursorAccent, all 16 ANSI colors) —
 				// replaces the old partial CSS-var-derived object that left the
 				// ANSI palette as xterm's unspecified defaults.
-				theme: getThemePreset(settingsStore.themePreset).theme,
+				theme: withWindowTransparency(
+					getThemePreset(settingsStore.themePreset).theme,
+					settingsStore.windowTransparency,
+				),
+				// FR-15: xterm.js ignores a translucent theme background
+				// unless this is on — but it disables an opaque-background
+				// fast path, so it is gated on the feature actually being
+				// used rather than left on unconditionally (NFR-7/NFR-9).
+				allowTransparency: settingsStore.windowTransparency > 0,
 			});
 			const newFitAddon = new FitAddon();
 			newTerm.loadAddon(newFitAddon);
@@ -354,7 +362,13 @@
 	// immediately, per the acceptance criteria — no separate "Apply" step.
 	$effect(() => {
 		const preset = getThemePreset(settingsStore.themePreset);
-		if (term) term.options.theme = preset.theme;
+		const transparency = settingsStore.windowTransparency;
+		if (!term) return;
+		// FR-15: allowTransparency must be set before the theme, or xterm
+		// renders the new translucent background against a stale opaque
+		// assumption until the next full repaint.
+		term.options.allowTransparency = transparency > 0;
+		term.options.theme = withWindowTransparency(preset.theme, transparency);
 	});
 </script>
 

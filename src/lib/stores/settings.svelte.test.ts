@@ -21,6 +21,7 @@ function dto(overrides: Partial<SettingsDto> = {}): SettingsDto {
 		keybindings: { ...DEFAULT_KEYBINDINGS },
 		sidebarPosition: "left",
 		glassIntensity: 0,
+		windowTransparency: 0,
 		...overrides,
 	};
 }
@@ -35,6 +36,7 @@ beforeEach(() => {
 	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
 	settingsStore.sidebarPosition = "left";
 	settingsStore.glassIntensity = 0;
+	settingsStore.windowTransparency = 0;
 	settingsStore.loaded = false;
 });
 
@@ -118,5 +120,38 @@ describe("settingsStore.setGlassIntensity() — FR-14", () => {
 		await settingsStore.load();
 
 		expect(settingsStore.glassIntensity).toBe(0.35);
+	});
+});
+
+describe("settingsStore.setWindowTransparency() — FR-15", () => {
+	it("clamps out-of-range values into 0..1", async () => {
+		await settingsStore.setWindowTransparency(2.5);
+		expect(settingsStore.windowTransparency).toBe(1);
+
+		await settingsStore.setWindowTransparency(-1);
+		expect(settingsStore.windowTransparency).toBe(0);
+		expect(saveSettingsMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ windowTransparency: 0 }),
+		);
+	});
+
+	it("rolls back when the save fails", async () => {
+		await settingsStore.setWindowTransparency(0.4);
+		saveSettingsMock.mockRejectedValueOnce(new Error("disk full"));
+
+		await expect(settingsStore.setWindowTransparency(0.8)).rejects.toThrow("disk full");
+
+		expect(settingsStore.windowTransparency).toBe(0.4);
+	});
+
+	it("is independent of glass intensity — ADR-0012 keeps the two effects separate", async () => {
+		await settingsStore.setGlassIntensity(0.9);
+		await settingsStore.setWindowTransparency(0.3);
+
+		expect(settingsStore.glassIntensity).toBe(0.9);
+		expect(settingsStore.windowTransparency).toBe(0.3);
+		expect(saveSettingsMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ glassIntensity: 0.9, windowTransparency: 0.3 }),
+		);
 	});
 });

@@ -33,6 +33,15 @@ pub struct Settings {
     /// treatment for the same reason.
     #[serde(default)]
     pub glass_intensity: f32,
+    /// FR-15 window transparency, 0.0..=1.0 (0 = fully opaque).
+    ///
+    /// Deliberately a separate value from `glass_intensity`, not a shared
+    /// one: glass is panel-over-panel inside the app, this is the whole app
+    /// over the desktop (ADR-0012). Same `#[serde(default)]` reasoning as
+    /// above — without it, every settings.json written before this field
+    /// existed would fail to parse.
+    #[serde(default)]
+    pub window_transparency: f32,
 }
 
 impl Default for Settings {
@@ -44,6 +53,8 @@ impl Default for Settings {
             // design.md §4.6: the app looks exactly as it does today until
             // the user opts in.
             glass_intensity: 0.0,
+            // design.md §4.7: same — 0 is a fully opaque window.
+            window_transparency: 0.0,
         }
     }
 }
@@ -77,6 +88,8 @@ pub enum SettingsStoreError {
     DuplicateKeybinding(String),
     #[error("glass intensity must be between 0.0 and 1.0, got {0}")]
     GlassIntensityOutOfRange(f32),
+    #[error("window transparency must be between 0.0 and 1.0, got {0}")]
+    WindowTransparencyOutOfRange(f32),
     #[error("failed to read/write settings file")]
     Io(#[from] std::io::Error),
     #[error("settings file is corrupted or in an unrecognized format")]
@@ -123,6 +136,15 @@ fn validate(settings: &Settings) -> Result<(), SettingsStoreError> {
     // which is exactly what those floors exist to make unreachable.
     if !(0.0..=1.0).contains(&settings.glass_intensity) || settings.glass_intensity.is_nan() {
         return Err(SettingsStoreError::GlassIntensityOutOfRange(settings.glass_intensity));
+    }
+    // Same range guard, same reason (design.md §4.7): an out-of-range value
+    // would drive --window-transparency past the scrim floor that keeps
+    // primary text readable over an arbitrary wallpaper.
+    if !(0.0..=1.0).contains(&settings.window_transparency) || settings.window_transparency.is_nan()
+    {
+        return Err(SettingsStoreError::WindowTransparencyOutOfRange(
+            settings.window_transparency,
+        ));
     }
     Ok(())
 }
@@ -207,6 +229,63 @@ mod tests {
             save(&path, &settings).unwrap_or_else(|e| panic!("{good} should be accepted: {e}"));
             assert_eq!(load(&path).unwrap().glass_intensity, good);
         }
+    }
+
+    /// Regression for the second field added this way: a settings.json
+    /// written by the FR-14 build (glass_intensity present, no
+    /// window_transparency) must still load. Guards the `#[serde(default)]`
+    /// on the newer field specifically — the FR-14 test above would still
+    /// pass even if this one were missing.
+    #[test]
+    fn load_accepts_settings_file_written_before_window_transparency_existed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "theme_preset": "nord",
+                "keybindings": {"clipboard.copy": "Ctrl+Shift+C"},
+                "sidebar_position": "left",
+                "glass_intensity": 0.6
+            }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path).expect("FR-14-era settings file must still load");
+        assert_eq!(settings.theme_preset, "nord");
+        assert_eq!(settings.glass_intensity, 0.6);
+        assert_eq!(settings.window_transparency, 0.0, "missing field defaults to opaque");
+    }
+
+    #[test]
+    fn save_rejects_window_transparency_outside_zero_to_one() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for bad in [1.2_f32, -0.5, f32::NAN] {
+            let settings = Settings { window_transparency: bad, ..Settings::default() };
+            assert!(
+                matches!(
+                    save(&path, &settings),
+                    Err(SettingsStoreError::WindowTransparencyOutOfRange(_))
+                ),
+                "window_transparency {bad} should have been rejected"
+            );
+        }
+    }
+
+    /// The two effects are independent per ADR-0012 — setting one must not
+    /// disturb the other, in either direction.
+    #[test]
+    fn glass_intensity_and_window_transparency_persist_independently() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let settings =
+            Settings { glass_intensity: 0.8, window_transparency: 0.3, ..Settings::default() };
+        save(&path, &settings).unwrap();
+
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.glass_intensity, 0.8);
+        assert_eq!(loaded.window_transparency, 0.3);
     }
 
     #[test]
