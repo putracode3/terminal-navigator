@@ -333,6 +333,33 @@ describe("TerminalPane — FR-13 theme presets", () => {
 	});
 });
 
+describe("TerminalPane — FR-15 pane background placement (regression: the pane's own padding band rendered fully see-through to the desktop, showing as a transparent gutter between the focus outline and the terminal content — the FR-15 work moved the background onto the inner .xterm-container, but `.pane` is the element that carries `padding` and the border, so the padding band it created was left unpainted by anything)", () => {
+	it("paints the background on the element that owns the padding and border, not on an inner child", () => {
+		settingsStore.themePreset = "dracula";
+		settingsStore.windowTransparency = 0;
+		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		const pane = container.querySelector(".pane") as HTMLElement;
+		const xtermContainer = container.querySelector(".xterm-container") as HTMLElement;
+
+		expect(pane.style.backgroundColor).toBeTruthy();
+		// The inner container must NOT also paint it: at a translucent
+		// transparency setting two stacked layers of the same rgba() compose
+		// into a visibly more opaque terminal than the configured alpha.
+		expect(xtermContainer.style.backgroundColor).toBe("");
+	});
+
+	it("carries the alpha through to the padded element when transparency is on", () => {
+		settingsStore.themePreset = "dracula";
+		settingsStore.windowTransparency = 1;
+		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		const pane = container.querySelector(".pane") as HTMLElement;
+
+		expect(pane.style.backgroundColor).toBe("rgba(40, 42, 54, 0.64)");
+	});
+});
+
 describe("TerminalPane — FR-13 rebindable clipboard shortcuts", () => {
 	it("uses the currently-bound combo, not a hardcoded Ctrl+Shift+C/V, once the user has rebound it", async () => {
 		settingsStore.keybindings = { ...settingsStore.keybindings, "clipboard.paste": "Alt+Shift+P" };

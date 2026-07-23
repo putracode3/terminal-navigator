@@ -681,3 +681,77 @@ describe("terminalStore — cycleActiveTab (FR-13 follow-up, terminal.nextTab/pr
 		expect(terminalStore.activeTabId).toBeNull();
 	});
 });
+
+// Regression (2026-07-23, user report: "buka pane 4, kadang tidak sesuai pas
+// pindah terminal melalui alt+nav arrow"). `findPaneInDirection` located the
+// right *neighbor subtree* but always entered it at `firstLeafId` — the
+// focused pane's position along the perpendicular axis was never considered.
+// In a 2x2 grid that lands on the wrong pane half the time, and moving
+// left/up entered the neighbor from the far side instead of the near one.
+//
+//   row-split[ column-split[ A, C ], column-split[ B, D ] ]
+//        A B
+//        C D
+describe("terminalStore — moveFocus across a 2x2 grid (perpendicular-axis alignment)", () => {
+	function buildGrid() {
+		const tab = terminalStore.openTab("proj-1", "a", "/a"); // leaf A
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b"); // row[A, B]
+		const idC = terminalStore.splitPane(tab.id, idA, "column", "/c"); // A -> column[A, C]
+		const idD = terminalStore.splitPane(tab.id, idB, "column", "/d"); // B -> column[B, D]
+		return { tabId: tab.id, idA, idB, idC, idD };
+	}
+
+	function focusedAfter(tabId: string, from: string, direction: "left" | "right" | "up" | "down") {
+		terminalStore.focusPane(tabId, from);
+		terminalStore.moveFocus(tabId, direction);
+		return terminalStore.tabs.find((t) => t.id === tabId)?.focusedPaneId;
+	}
+
+	it("moves down from the top-right pane to the pane directly below it, not to the bottom-left", () => {
+		const { tabId, idB, idD } = buildGrid();
+		expect(focusedAfter(tabId, idB, "down")).toBe(idD);
+	});
+
+	it("moves down from the top-left pane to the bottom-left", () => {
+		const { tabId, idA, idC } = buildGrid();
+		expect(focusedAfter(tabId, idA, "down")).toBe(idC);
+	});
+
+	it("moves up from the bottom-right pane to the top-right, not to the top-left", () => {
+		const { tabId, idB, idD } = buildGrid();
+		expect(focusedAfter(tabId, idD, "up")).toBe(idB);
+	});
+
+	it("moves up from the bottom-left pane to the top-left", () => {
+		const { tabId, idA, idC } = buildGrid();
+		expect(focusedAfter(tabId, idC, "up")).toBe(idA);
+	});
+
+	it("moves right from the bottom-left pane to the bottom-right, not to the top-right", () => {
+		const { tabId, idC, idD } = buildGrid();
+		expect(focusedAfter(tabId, idC, "right")).toBe(idD);
+	});
+
+	it("moves left from the bottom-right pane to the bottom-left, not to the top-left", () => {
+		const { tabId, idC, idD } = buildGrid();
+		expect(focusedAfter(tabId, idD, "left")).toBe(idC);
+	});
+
+	it("round-trips: every pane returns to itself after moving away and back", () => {
+		const { tabId, idA, idB, idC, idD } = buildGrid();
+		expect(focusedAfter(tabId, focusedAfter(tabId, idA, "right")!, "left")).toBe(idA);
+		expect(focusedAfter(tabId, focusedAfter(tabId, idB, "down")!, "up")).toBe(idB);
+		expect(focusedAfter(tabId, focusedAfter(tabId, idC, "up")!, "down")).toBe(idC);
+		expect(focusedAfter(tabId, focusedAfter(tabId, idD, "left")!, "right")).toBe(idD);
+	});
+
+	it("follows a dragged divider: after shrinking the top-left pane, moving down from the top-right still lands directly below", () => {
+		const { tabId, idB, idD } = buildGrid();
+		const tab = terminalStore.tabs.find((t) => t.id === tabId)!;
+		const rootSplit = tab.root as { children: { id: string }[] };
+		terminalStore.resizeSplit(tabId, rootSplit.children[1].id, [0.2, 0.8]);
+
+		expect(focusedAfter(tabId, idB, "down")).toBe(idD);
+	});
+});

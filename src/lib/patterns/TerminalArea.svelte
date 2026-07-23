@@ -120,6 +120,10 @@
 			e.preventDefault();
 			e.stopPropagation();
 			terminalStore.moveFocus(tabId, "down");
+		} else if (matchesCombo(e, kb["terminal.closeSession"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			handleClosePane(tabId, tab.focusedPaneId);
 		} else if (matchesCombo(e, kb["terminal.nextTab"])) {
 			e.preventDefault();
 			e.stopPropagation();

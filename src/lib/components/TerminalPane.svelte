@@ -361,29 +361,32 @@
 		if (!term) return;
 		// FR-15: `allowTransparency` is deliberately NOT set — measured inert
 		// in xterm 6.0.0 (see withWindowTransparency's note). The alpha lives
-		// on .xterm-container below, not in the xterm theme.
+		// on .pane below, not in the xterm theme.
 		term.options.theme = withWindowTransparency(preset.theme, transparency);
 	});
 </script>
 
+<!-- FR-15: the pane, not xterm, carries the terminal background. xterm
+     flattens a translucent theme background against black and paints it
+     opaque (see theme-presets.ts), so the alpha has to live here.
+
+     It must sit on `.pane` specifically — the element that owns the padding
+     and the (transparent-when-unfocused) border. Painting an inner child
+     instead leaves that padding band unpainted by anything, which under
+     FR-15's transparent window reads as a see-through gutter between the
+     focus outline and the terminal content. -->
 <div
 	class="pane"
 	class:focused
 	role="presentation"
+	style:background-color={paneBackground(
+		getThemePreset(settingsStore.themePreset).theme,
+		settingsStore.windowTransparency,
+	)}
 	onclick={onFocus}
 	onfocusin={onFocus}
 >
-	<!-- FR-15: the pane, not xterm, carries the terminal background. xterm
-	     flattens a translucent theme background against black and paints it
-	     opaque (see theme-presets.ts), so the alpha has to live here. -->
-	<div
-		class="xterm-container"
-		style:background-color={paneBackground(
-			getThemePreset(settingsStore.themePreset).theme,
-			settingsStore.windowTransparency,
-		)}
-		bind:this={containerEl}
-	></div>
+	<div class="xterm-container" bind:this={containerEl}></div>
 </div>
 
 <style>

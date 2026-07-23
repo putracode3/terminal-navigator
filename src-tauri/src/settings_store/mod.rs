@@ -74,6 +74,7 @@ fn default_keybindings() -> HashMap<String, String> {
         ("pane.moveFocusDown", "Alt+ArrowDown"),
         ("terminal.zoomIn", "Ctrl+="),
         ("terminal.zoomOut", "Ctrl+-"),
+        ("terminal.closeSession", "Ctrl+Shift+W"),
         ("terminal.nextTab", "Ctrl+Tab"),
         ("terminal.previousTab", "Ctrl+Shift+Tab"),
     ]
@@ -173,11 +174,12 @@ mod tests {
     #[test]
     fn defaults_include_all_twelve_registry_actions() {
         let settings = Settings::default();
-        assert_eq!(settings.keybindings.len(), 12);
+        assert_eq!(settings.keybindings.len(), 13);
         assert_eq!(settings.keybindings.get("clipboard.copy"), Some(&"Ctrl+Shift+C".to_string()));
         assert_eq!(settings.keybindings.get("pane.moveFocusDown"), Some(&"Alt+ArrowDown".to_string()));
         assert_eq!(settings.keybindings.get("terminal.zoomIn"), Some(&"Ctrl+=".to_string()));
         assert_eq!(settings.keybindings.get("terminal.zoomOut"), Some(&"Ctrl+-".to_string()));
+        assert_eq!(settings.keybindings.get("terminal.closeSession"), Some(&"Ctrl+Shift+W".to_string()));
         assert_eq!(settings.keybindings.get("terminal.nextTab"), Some(&"Ctrl+Tab".to_string()));
         assert_eq!(settings.keybindings.get("terminal.previousTab"), Some(&"Ctrl+Shift+Tab".to_string()));
     }

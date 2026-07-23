@@ -154,11 +154,22 @@ function firstLeafId(node: PaneNode): string {
 /** FR-13 keyboard pane-focus movement (architecture.md §5.6). Walks the
  * path from root to the focused leaf, then from the leaf's own parent
  * upward, looking for the nearest ancestor split whose `direction` matches
- * the requested axis and that has a sibling on the requested side —
- * i3/tmux-style directional traversal, not real screen geometry (this app
- * has no per-pane pixel-position tracking, and doesn't need one for this).
- * Enters the neighboring subtree at its first leaf. Returns null at the
- * edge of the grid (no-op, not a wraparound). */
+ * the requested axis and that has a sibling on the requested side.
+ *
+ * Entering that neighbor subtree is where this used to go wrong: it landed
+ * on `firstLeafId` unconditionally, ignoring both which side we approach
+ * from and where the focused pane sits on the perpendicular axis. In a 2x2
+ * grid — `row[ column[A, C], column[B, D] ]` — moving right from C found
+ * the correct neighbor subtree `column[B, D]` and then focused B, the pane
+ * diagonally up-and-across, instead of D directly beside it.
+ *
+ * The descent is now geometric, using the `sizes` fractions the tree
+ * already carries: enter from the near edge (first child when moving
+ * right/down, last when moving left/up), and at every perpendicular-axis
+ * split pick the child whose extent contains the focused pane's center.
+ * That also makes movement follow a dragged divider rather than assuming
+ * even splits. Returns null at the edge of the grid (no-op, not a
+ * wraparound). */
 export type MoveDirection = "left" | "right" | "up" | "down";
 
 function findPathToLeaf(node: PaneNode, targetId: string): { split: SplitPane; index: number }[] | null {
@@ -175,19 +186,73 @@ function findPathToLeaf(node: PaneNode, targetId: string): { split: SplitPane; i
 	return null;
 }
 
+/** Extent of `path`'s leaf along `axis`, as `[offset, size]` fractions of
+ *  the region the path starts in. Splits on the other axis don't subdivide
+ *  this one, so they're skipped. */
+function extentAlong(path: { split: SplitPane; index: number }[], axis: SplitDirection): [number, number] {
+	let offset = 0;
+	let size = 1;
+	for (const { split, index } of path) {
+		if (split.direction !== axis) continue;
+		const before = split.sizes.slice(0, index).reduce((a, b) => a + b, 0);
+		offset += before * size;
+		size *= split.sizes[index];
+	}
+	return [offset, size];
+}
+
+/** Descends `node` to the single leaf that visually abuts the pane we came
+ *  from: near-edge child on the movement axis, and on the perpendicular
+ *  axis the child whose extent contains `crossPos` (a fraction local to
+ *  `node`). */
+function enterSubtree(node: PaneNode, axis: SplitDirection, crossPos: number, sign: 1 | -1): string {
+	if (node.type === "leaf") return node.sessionId;
+
+	if (node.direction === axis) {
+		const nearEdge = sign === 1 ? 0 : node.children.length - 1;
+		return enterSubtree(node.children[nearEdge], axis, crossPos, sign);
+	}
+
+	// `<=`, not `<`, so an exact boundary hit resolves to the earlier child.
+	// This is the common case, not a rare float coincidence: a pane spanning
+	// the neighbor's full cross extent (`row[A, column[B, C]]` — moving right
+	// from A) has its center exactly on the B/C divider. Ties go to the
+	// first/upper pane, the same convention tiling WMs and editors use.
+	let acc = 0;
+	for (let i = 0; i < node.children.length; i++) {
+		const end = acc + node.sizes[i];
+		if (crossPos <= end || i === node.children.length - 1) {
+			return enterSubtree(node.children[i], axis, (crossPos - acc) / node.sizes[i], sign);
+		}
+		acc = end;
+	}
+	// Unreachable: the loop always returns on its last iteration.
+	return firstLeafId(node);
+}
+
 export function findPaneInDirection(root: PaneNode, focusedId: string, direction: MoveDirection): string | null {
 	const path = findPathToLeaf(root, focusedId);
 	if (!path) return null;
 	const axis: SplitDirection = direction === "left" || direction === "right" ? "row" : "column";
+	const crossAxis: SplitDirection = axis === "row" ? "column" : "row";
 	const sign = direction === "right" || direction === "down" ? 1 : -1;
 
 	for (let i = path.length - 1; i >= 0; i--) {
 		const { split, index } = path[i];
 		if (split.direction !== axis) continue;
 		const neighborIndex = index + sign;
-		if (neighborIndex >= 0 && neighborIndex < split.children.length) {
-			return firstLeafId(split.children[neighborIndex]);
-		}
+		if (neighborIndex < 0 || neighborIndex >= split.children.length) continue;
+
+		// The neighbor spans exactly the cross-axis region this ancestor split
+		// occupies, so the focused pane's cross position has to be rebased
+		// into that region before descending: `[ancestorOffset, ancestorSize]`
+		// is everything above the ancestor, `focusedCenter` the pane itself.
+		const [ancestorOffset, ancestorSize] = extentAlong(path.slice(0, i), crossAxis);
+		const [focusedOffset, focusedSize] = extentAlong(path, crossAxis);
+		const focusedCenter = focusedOffset + focusedSize / 2;
+		const localCross = ancestorSize > 0 ? (focusedCenter - ancestorOffset) / ancestorSize : 0.5;
+
+		return enterSubtree(split.children[neighborIndex], axis, localCross, sign);
 	}
 	return null;
 }

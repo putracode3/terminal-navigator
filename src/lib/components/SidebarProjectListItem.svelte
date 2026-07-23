@@ -212,6 +212,25 @@
 		<div class="name">{project.name}</div>
 		{#if showInvalidMessage}<div class="invalid-message">This path no longer exists on disk.</div>{/if}
 	</div>
+	<!-- components.md v2.4: an inline close affordance for the one-session
+	     case, mirroring what `Sidebar Session Sub-item` already gives every
+	     session in grouped mode. Deliberately not shown in grouped mode —
+	     there, "close" is ambiguous (which session?) and each sub-item
+	     carries its own button instead. `stopPropagation` keeps the row's own
+	     click (switch-to-this-session) from firing on the terminal we're
+	     closing. -->
+	{#if mode === "single"}
+		<button
+			class="close-btn"
+			aria-label={`Close ${project.name} terminal`}
+			onclick={(e) => {
+				e.stopPropagation();
+				onCloseTerminal();
+			}}
+		>
+			✕
+		</button>
+	{/if}
 	<div class="menu-wrap">
 		<button class="menu-btn" aria-label={`More actions for ${project.name}`} onclick={openAnchoredMenu}>
 			⋮
@@ -363,6 +382,37 @@
 
 	.menu-wrap {
 		position: relative;
+	}
+
+	/* Same reveal-on-hover treatment as `.menu-btn` below and as `Sidebar
+	 * Session Sub-item`'s own close button — an always-visible ✕ on every
+	 * open project turns the list into a wall of destructive affordances. */
+	.close-btn {
+		flex-shrink: 0;
+		background: transparent;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		padding: var(--space-1);
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs);
+		line-height: 1;
+		visibility: hidden;
+	}
+
+	.item.hovering .close-btn,
+	.item:focus-within .close-btn {
+		visibility: visible;
+	}
+
+	.close-btn:hover {
+		background: var(--color-surface);
+		color: var(--color-text);
+	}
+
+	.close-btn:focus-visible {
+		outline: 2px solid var(--color-focus);
+		outline-offset: -2px;
 	}
 
 	.menu-btn {

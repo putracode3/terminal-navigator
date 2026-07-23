@@ -53,6 +53,7 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 	readText: vi.fn().mockResolvedValue(""),
 }));
 const splitPaneApiMock = vi.fn().mockResolvedValue(undefined);
+const closeTerminalMock = vi.fn().mockResolvedValue(undefined);
 vi.mock("$lib/api", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("$lib/api")>();
 	return {
@@ -60,6 +61,7 @@ vi.mock("$lib/api", async (importOriginal) => {
 		resizeTerminal: vi.fn().mockResolvedValue(undefined),
 		writeTerminal: vi.fn().mockResolvedValue(undefined),
 		splitPane: (...args: unknown[]) => splitPaneApiMock(...args),
+		closeTerminal: (...args: unknown[]) => closeTerminalMock(...args),
 	};
 });
 
@@ -344,5 +346,81 @@ describe("TerminalArea — perpendicular split on an already-split tab reuses th
 		const exitSubscriptions = listenMock.mock.calls.filter(([name]) => name === `pty://exit/${idB}`);
 		expect(outputSubscriptions).toHaveLength(1);
 		expect(exitSubscriptions).toHaveLength(1);
+	});
+});
+
+// FR-13 registry addition (architecture.md §5.6): Ctrl+Shift+W closes the
+// focused pane, and the tab with it only when that was its last pane —
+// mirroring Tilix/Terminator, and reusing the exact path the ✕ affordances
+// already use rather than inventing a second close route.
+describe("TerminalArea — terminal.closeSession shortcut (Ctrl+Shift+W)", () => {
+	function ctrlShiftW(target: Window | Element = window) {
+		return fireEvent.keyDown(target, { ctrlKey: true, shiftKey: true, code: "KeyW" });
+	}
+
+	it("closes the focused pane and tears down its backend PTY, leaving the tab's other pane open", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		await flush();
+		expect(terminalStore.tabs[0].focusedPaneId).toBe(idB);
+
+		await ctrlShiftW();
+		await flush();
+
+		expect(closeTerminalMock).toHaveBeenCalledWith(idB);
+		const root = terminalStore.tabs.find((t) => t.id === tab.id)!.root;
+		expect(root).toMatchObject({ type: "leaf", sessionId: idA });
+	});
+
+	it("closes the whole tab when the focused pane was its last one", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		await flush();
+
+		await ctrlShiftW();
+		await flush();
+
+		expect(closeTerminalMock).toHaveBeenCalledWith(idA);
+		expect(terminalStore.tabs.find((t) => t.id === tab.id)).toBeUndefined();
+	});
+
+	it("owns the keystroke fully — Ctrl+Shift+W must not also reach xterm as terminal input", async () => {
+		render(TerminalArea);
+		terminalStore.openTab("proj-a", "a", "/a");
+		await flush();
+
+		const event = new KeyboardEvent("keydown", { ctrlKey: true, shiftKey: true, code: "KeyW", bubbles: true, cancelable: true });
+		const stopPropagationSpy = vi.spyOn(event, "stopPropagation");
+		window.dispatchEvent(event);
+		await flush();
+
+		expect(stopPropagationSpy).toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("does nothing with no active tab", async () => {
+		render(TerminalArea);
+
+		await expect(ctrlShiftW()).resolves.not.toThrow();
+		expect(closeTerminalMock).not.toHaveBeenCalled();
+	});
+
+	it("respects a rebound combo instead of a hardcoded Ctrl+Shift+W", async () => {
+		settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS, "terminal.closeSession": "Alt+Shift+X" };
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		await flush();
+
+		await ctrlShiftW();
+		await flush();
+		expect(closeTerminalMock).not.toHaveBeenCalled();
+
+		await fireEvent.keyDown(window, { altKey: true, shiftKey: true, code: "KeyX" });
+		await flush();
+		expect(closeTerminalMock).toHaveBeenCalledWith(idA);
 	});
 });

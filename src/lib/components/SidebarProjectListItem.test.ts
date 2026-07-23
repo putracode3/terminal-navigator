@@ -463,3 +463,46 @@ describe("SidebarProjectListItem — hover state after right-click menu closes (
 		expect(row).toHaveClass("hovering");
 	});
 });
+
+// components.md v2.4: single-session rows get an inline close button beside
+// the name, matching the affordance `Sidebar Session Sub-item` already has
+// in grouped mode. Previously closing a lone session was reachable only by
+// opening the ⋮ menu — two clicks and a hidden menu for the single most
+// common action on an open project.
+describe("SidebarProjectListItem — inline close button (single-session mode)", () => {
+	it("renders a close button for a project with exactly one open session", () => {
+		render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1)] }));
+
+		expect(screen.getByRole("button", { name: "Close my-project terminal" })).toBeInTheDocument();
+	});
+
+	it("clicking it calls onCloseTerminal", async () => {
+		const onCloseTerminal = vi.fn();
+		render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1)], onCloseTerminal }));
+
+		await fireEvent.click(screen.getByRole("button", { name: "Close my-project terminal" }));
+
+		expect(onCloseTerminal).toHaveBeenCalledOnce();
+	});
+
+	it("clicking it does not also activate the row (which would re-focus the terminal being closed)", async () => {
+		const onOpen = vi.fn();
+		render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1)], onOpen }));
+
+		await fireEvent.click(screen.getByRole("button", { name: "Close my-project terminal" }));
+
+		expect(onOpen).not.toHaveBeenCalled();
+	});
+
+	it("is absent with no open session — there is nothing to close", () => {
+		render(SidebarProjectListItem, baseProps({ sessions: [] }));
+
+		expect(screen.queryByRole("button", { name: "Close my-project terminal" })).toBeNull();
+	});
+
+	it("is absent in grouped mode — closing there is per-session, on each sub-item", () => {
+		render(SidebarProjectListItem, baseProps({ sessions: [session("tab-1", 1), session("tab-2", 2)] }));
+
+		expect(screen.queryByRole("button", { name: "Close my-project terminal" })).toBeNull();
+	});
+});

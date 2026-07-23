@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) scoped 2026-07-22, implementation pending | **Version:** 1.8.2 | **Date:** 2026-07-22 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) implemented 2026-07-22 (commits `f44736a`, `ef3d63b`, `e85d27c`), with a follow-up transparent-padding fix 2026-07-23 | **Version:** 1.8.3 | **Date:** 2026-07-23 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 

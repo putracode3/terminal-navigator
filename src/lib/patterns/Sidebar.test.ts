@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 
 const saveDialogMock = vi.fn();
@@ -447,7 +447,8 @@ describe("Sidebar — FR-11 sidebar folder drag-drop", () => {
 		listSidebarEntriesMock.mockResolvedValue([folderEntry("folder-1", "New Name", [project({ id: "m1" })])]);
 		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
 
-		await fireEvent.click(screen.getByRole("button", { name: "Old Name" }));
+		// components.md v2.4: rename is a right-click gesture now.
+		await fireEvent.contextMenu(screen.getByText("Old Name").closest(".header") as HTMLElement);
 		const input = screen.getByLabelText("Rename Old Name");
 		await fireEvent.input(input, { target: { value: "New Name" } });
 		await fireEvent.keyDown(input, { key: "Enter" });
@@ -471,5 +472,86 @@ describe("Sidebar — FR-11 sidebar folder drag-drop", () => {
 
 		expect(mergeProjectsMock).not.toHaveBeenCalled();
 		expect(moveProjectMock).not.toHaveBeenCalled();
+	});
+});
+
+// Regression (2026-07-23): a sidebar error banner, once shown, never went
+// away — it survived every subsequent successful operation and had no
+// dismiss control, so a single transient failure left a permanent red line
+// under the Export/Import row for the rest of the session. Root cause:
+// `syncStatus` had a lifecycle helper (`flashStatus`, auto-clearing) but
+// `syncError` was assigned raw at six catch sites with nothing owning its
+// lifetime.
+describe("Sidebar — transient error banner lifecycle", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("auto-dismisses a sync error after its display window elapses", async () => {
+		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
+		exportConfigMock.mockRejectedValue({ kind: "invalid_input", message: "Nothing to export yet." });
+		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(screen.getByText("Nothing to export yet.")).toBeInTheDocument();
+
+		await vi.advanceTimersByTimeAsync(8000);
+
+		expect(screen.queryByText("Nothing to export yet.")).toBeNull();
+	});
+
+	it("can be dismissed immediately, without waiting out the timeout", async () => {
+		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
+		exportConfigMock.mockRejectedValue({ kind: "invalid_input", message: "Nothing to export yet." });
+		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+		await vi.advanceTimersByTimeAsync(0);
+
+		await fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
+
+		expect(screen.queryByText("Nothing to export yet.")).toBeNull();
+	});
+
+	it("a later successful operation clears a still-visible error rather than leaving it stacked under a success message", async () => {
+		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
+		exportConfigMock.mockRejectedValueOnce({ kind: "invalid_input", message: "Nothing to export yet." });
+		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(screen.getByText("Nothing to export yet.")).toBeInTheDocument();
+
+		exportConfigMock.mockResolvedValueOnce(undefined);
+		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(screen.queryByText("Nothing to export yet.")).toBeNull();
+		expect(screen.getByText("Exported")).toBeInTheDocument();
+	});
+
+	it("a failed folder drag-drop error also auto-dismisses (not just export/import)", async () => {
+		appStore.entries = [projectEntry({ id: "a", name: "alpha" }), projectEntry({ id: "b", name: "beta" })];
+		moveProjectMock.mockRejectedValue({ kind: "invalid_input", message: "move failed" });
+		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+		await vi.advanceTimersByTimeAsync(10);
+
+		appStore.startDraggingSidebarEntry("project", "a");
+		await vi.advanceTimersByTimeAsync(10);
+		const targetRow = screen.getByText("beta").closest(".item") as HTMLElement;
+		stubRect(targetRow, 0, 40);
+		dragOverAt(targetRow, 2);
+		await fireEvent.drop(targetRow);
+		await vi.advanceTimersByTimeAsync(10);
+		expect(screen.getByText("move failed")).toBeInTheDocument();
+
+		await vi.advanceTimersByTimeAsync(8000);
+
+		expect(screen.queryByText("move failed")).toBeNull();
 	});
 });

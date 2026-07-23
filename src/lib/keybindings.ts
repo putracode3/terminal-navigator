@@ -16,6 +16,7 @@ export type ActionId =
 	| "pane.moveFocusDown"
 	| "terminal.zoomIn"
 	| "terminal.zoomOut"
+	| "terminal.closeSession"
 	| "terminal.nextTab"
 	| "terminal.previousTab";
 
@@ -25,7 +26,7 @@ export interface KeybindingActionDef {
 	group: "Clipboard" | "Panes" | "Terminal" | "Tabs";
 }
 
-/** The 12-action registry (architecture.md §5.6) — order here is the order
+/** The 13-action registry (architecture.md §5.6) — order here is the order
  * rows render in the Settings panel (components.md, Keybinding Row /
  * Settings Panel pattern). */
 export const KEYBINDING_ACTIONS: KeybindingActionDef[] = [
@@ -39,6 +40,7 @@ export const KEYBINDING_ACTIONS: KeybindingActionDef[] = [
 	{ id: "pane.moveFocusDown", label: "Move focus down", group: "Panes" },
 	{ id: "terminal.zoomIn", label: "Zoom in", group: "Terminal" },
 	{ id: "terminal.zoomOut", label: "Zoom out", group: "Terminal" },
+	{ id: "terminal.closeSession", label: "Close terminal", group: "Terminal" },
 	{ id: "terminal.nextTab", label: "Next tab", group: "Tabs" },
 	{ id: "terminal.previousTab", label: "Previous tab", group: "Tabs" },
 ];
@@ -62,6 +64,10 @@ export const DEFAULT_KEYBINDINGS: Record<ActionId, string> = {
 	"pane.moveFocusDown": "Alt+ArrowDown",
 	"terminal.zoomIn": "Ctrl+=",
 	"terminal.zoomOut": "Ctrl+-",
+	// Closes the *focused pane*, not the whole tab — and the tab goes with it
+	// only when that was its last pane (`closePane`'s own rule). Matches
+	// Tilix/Terminator, whose Ctrl+Shift+W this deliberately mirrors.
+	"terminal.closeSession": "Ctrl+Shift+W",
 	"terminal.nextTab": "Ctrl+Tab",
 	"terminal.previousTab": "Ctrl+Shift+Tab",
 };

@@ -71,6 +71,34 @@
 		}, 3000);
 	}
 
+	/** The sidebar footer is always-visible chrome, so anything shown there
+	 *  needs an owned lifetime or it becomes permanent. Every write to
+	 *  `syncError` goes through here (and every clear through `dismissError`)
+	 *  so exactly one place owns the banner's lifetime — the bug this
+	 *  replaces was six raw `syncError = …` assignments with nothing clearing
+	 *  them, so one transient failure left a red line under Export/Import for
+	 *  the rest of the session.
+	 *
+	 *  Longer window than `flashStatus`: an error carries a backend reason
+	 *  the user has to actually read, where "Exported" does not. Tracked by
+	 *  timer handle rather than `flashStatus`'s compare-the-message trick,
+	 *  because the same error message recurring (retrying a failing export)
+	 *  must restart the window, not let the first timeout close the second
+	 *  banner early. */
+	const ERROR_DISMISS_MS = 8000;
+	let errorTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function flashError(message: string) {
+		syncError = message;
+		clearTimeout(errorTimer);
+		errorTimer = setTimeout(() => (syncError = ""), ERROR_DISMISS_MS);
+	}
+
+	function dismissError() {
+		clearTimeout(errorTimer);
+		syncError = "";
+	}
+
 	// FR-11: while searching, folders/grouping are set aside in favor of a
 	// flat, name-filtered project list — the design spec doesn't define how
 	// search should interact with folder nesting (out of FR-11's stated
@@ -136,13 +164,13 @@
 	async function handleExport() {
 		const destination = await saveDialog({ defaultPath: "terminal-navigator-export.enc" });
 		if (!destination) return;
-		syncError = "";
+		dismissError();
 		syncing = true;
 		try {
 			await exportConfig(destination);
 			flashStatus("Exported");
 		} catch (e) {
-			syncError = errorMessage(e);
+			flashError(errorMessage(e));
 		} finally {
 			syncing = false;
 		}
@@ -151,7 +179,7 @@
 	async function handleImportPick() {
 		const source = await openDialog({ multiple: false, directory: false });
 		if (typeof source === "string") {
-			syncError = "";
+			dismissError();
 			pendingImportSource = source;
 		}
 	}
@@ -165,7 +193,7 @@
 			pendingImportSource = undefined;
 			flashStatus("Imported — project list replaced");
 		} catch (e) {
-			syncError = errorMessage(e);
+			flashError(errorMessage(e));
 			pendingImportSource = undefined;
 		} finally {
 			syncing = false;
@@ -204,7 +232,7 @@
 			}
 			appStore.setEntries(await listSidebarEntries());
 		} catch (e) {
-			syncError = errorMessage(e);
+			flashError(errorMessage(e));
 		}
 	}
 
@@ -213,7 +241,7 @@
 			await renameFolder(folderId, name);
 			appStore.setEntries(await listSidebarEntries());
 		} catch (e) {
-			syncError = errorMessage(e);
+			flashError(errorMessage(e));
 		}
 	}
 
@@ -235,7 +263,7 @@
 			await moveProject(dragged.id, { type: "topLevel" }, appStore.entries.length);
 			appStore.setEntries(await listSidebarEntries());
 		} catch (e) {
-			syncError = errorMessage(e);
+			flashError(errorMessage(e));
 		}
 	}
 </script>
@@ -321,7 +349,12 @@
 			<Button variant="secondary" size="sm" onclick={handleImportPick} loading={syncing}>Import</Button>
 		</div>
 		{#if syncStatus}<p class="sync-status">{syncStatus}</p>{/if}
-		{#if syncError}<p class="error">{syncError}</p>{/if}
+		{#if syncError}
+			<div class="error-banner" role="alert">
+				<p class="error">{syncError}</p>
+				<button class="error-dismiss" aria-label="Dismiss error" onclick={dismissError}>✕</button>
+			</div>
+		{/if}
 	</div>
 </aside>
 
@@ -452,5 +485,38 @@
 		margin: 0;
 		color: var(--color-danger);
 		font-size: var(--text-xs);
+	}
+
+	.error-banner {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-2);
+	}
+
+	.error-banner > .error {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.error-dismiss {
+		flex-shrink: 0;
+		background: transparent;
+		border: none;
+		color: var(--color-danger);
+		cursor: pointer;
+		padding: 0 var(--space-1);
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs);
+		line-height: var(--leading-xs);
+	}
+
+	.error-dismiss:hover {
+		background: var(--color-surface-elevated);
+	}
+
+	.error-dismiss:focus-visible {
+		outline: 2px solid var(--color-focus);
+		outline-offset: -2px;
 	}
 </style>

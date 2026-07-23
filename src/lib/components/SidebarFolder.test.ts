@@ -98,23 +98,58 @@ describe("SidebarFolder — expand/collapse", () => {
 	});
 });
 
+// components.md v2.4: rename moved from left-click to right-click. Left-click
+// on the name now falls through to the header's expand/collapse like every
+// other click on the row.
 describe("SidebarFolder — rename (FR-11)", () => {
-	it("clicking the name enters renaming mode with the current name pre-filled", async () => {
-		render(SidebarFolder, baseProps());
-		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
+	function startRenaming(container: HTMLElement) {
+		return fireEvent.contextMenu(container.querySelector(".header") as HTMLElement);
+	}
+
+	it("right-clicking the header enters renaming mode with the current name pre-filled", async () => {
+		const { container } = render(SidebarFolder, baseProps());
+		await startRenaming(container);
 		expect(screen.getByLabelText("Rename My Folder")).toHaveValue("My Folder");
 	});
 
-	it("clicking the name does not also toggle expand/collapse", async () => {
+	it("right-clicking suppresses the webview's own context menu", async () => {
 		const { container } = render(SidebarFolder, baseProps());
+		const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+		(container.querySelector(".header") as HTMLElement).dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("left-clicking the name toggles expand/collapse instead of renaming", async () => {
+		const { container } = render(SidebarFolder, baseProps());
+
 		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
-		expect(container.querySelector(".members")).not.toBeNull();
+
+		expect(screen.queryByLabelText("Rename My Folder")).toBeNull();
+		expect(container.querySelector(".members")).toBeNull();
+	});
+
+	it("F2 on the focused name is the keyboard path into rename (components.md Accessibility)", async () => {
+		render(SidebarFolder, baseProps());
+
+		await fireEvent.keyDown(screen.getByRole("button", { name: "My Folder" }), { key: "F2" });
+
+		expect(screen.getByLabelText("Rename My Folder")).toHaveValue("My Folder");
+	});
+
+	it("right-clicking while already renaming leaves the field's native menu alone", async () => {
+		const { container } = render(SidebarFolder, baseProps());
+		await startRenaming(container);
+
+		const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+		screen.getByLabelText("Rename My Folder").dispatchEvent(event);
+
+		expect(event.defaultPrevented).toBe(false);
 	});
 
 	it("Enter commits a changed, non-blank name", async () => {
 		const onRename = vi.fn();
-		render(SidebarFolder, baseProps({ onRename }));
-		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
+		const { container } = render(SidebarFolder, baseProps({ onRename }));
+		await startRenaming(container);
 		const input = screen.getByLabelText("Rename My Folder");
 		await fireEvent.input(input, { target: { value: "Renamed" } });
 		await fireEvent.keyDown(input, { key: "Enter" });
@@ -124,8 +159,8 @@ describe("SidebarFolder — rename (FR-11)", () => {
 
 	it("blur also commits", async () => {
 		const onRename = vi.fn();
-		render(SidebarFolder, baseProps({ onRename }));
-		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
+		const { container } = render(SidebarFolder, baseProps({ onRename }));
+		await startRenaming(container);
 		const input = screen.getByLabelText("Rename My Folder");
 		await fireEvent.input(input, { target: { value: "Renamed" } });
 		await fireEvent.blur(input);
@@ -135,8 +170,8 @@ describe("SidebarFolder — rename (FR-11)", () => {
 
 	it("a blank/whitespace-only name reverts silently — onRename is never called (PRD edge case)", async () => {
 		const onRename = vi.fn();
-		render(SidebarFolder, baseProps({ onRename }));
-		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
+		const { container } = render(SidebarFolder, baseProps({ onRename }));
+		await startRenaming(container);
 		const input = screen.getByLabelText("Rename My Folder");
 		await fireEvent.input(input, { target: { value: "   " } });
 		await fireEvent.keyDown(input, { key: "Enter" });
@@ -146,8 +181,8 @@ describe("SidebarFolder — rename (FR-11)", () => {
 
 	it("Escape cancels without calling onRename", async () => {
 		const onRename = vi.fn();
-		render(SidebarFolder, baseProps({ onRename }));
-		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
+		const { container } = render(SidebarFolder, baseProps({ onRename }));
+		await startRenaming(container);
 		const input = screen.getByLabelText("Rename My Folder");
 		await fireEvent.input(input, { target: { value: "Renamed" } });
 		await fireEvent.keyDown(input, { key: "Escape" });
@@ -158,8 +193,8 @@ describe("SidebarFolder — rename (FR-11)", () => {
 
 	it("committing the exact same (unchanged) name does not call onRename", async () => {
 		const onRename = vi.fn();
-		render(SidebarFolder, baseProps({ onRename }));
-		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
+		const { container } = render(SidebarFolder, baseProps({ onRename }));
+		await startRenaming(container);
 		const input = screen.getByLabelText("Rename My Folder");
 		await fireEvent.keyDown(input, { key: "Enter" });
 
@@ -175,7 +210,7 @@ describe("SidebarFolder — drag source (reorder-only, components.md Do/Don't)",
 
 	it("is not draggable while renaming", async () => {
 		const { container } = render(SidebarFolder, baseProps());
-		await fireEvent.click(screen.getByRole("button", { name: "My Folder" }));
+		await fireEvent.contextMenu(container.querySelector(".header") as HTMLElement);
 		expect(container.querySelector(".header")).toHaveAttribute("draggable", "false");
 	});
 

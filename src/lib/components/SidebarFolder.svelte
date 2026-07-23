@@ -84,6 +84,36 @@
 		renaming = true;
 	}
 
+	/** components.md v2.4: rename is a right-click (context-menu) gesture, not
+	 *  a left-click one. Left-click on the name now falls through to the
+	 *  header's expand/collapse, matching every other click on the row — the
+	 *  previous "left-click the name = edit it" made the folder's most common
+	 *  action (expand/collapse) unreachable on the widest part of the row and
+	 *  surprised the user into rename mode. `preventDefault` suppresses the
+	 *  webview's native context menu, same as `Sidebar Project List Item`'s
+	 *  own right-click handler. */
+	function handleHeaderContextMenu(e: MouseEvent) {
+		// Already renaming: leave the webview's native context menu alone so
+		// the text field keeps its cut/copy/paste menu.
+		if (renaming) return;
+		e.preventDefault();
+		e.stopPropagation();
+		startRename();
+	}
+
+	/** Keyboard equivalent for rename, preserving components.md's Accessibility
+	 *  requirement that a keyboard user can reach rename without going through
+	 *  the collapse toggle. F2 is the OS-conventional rename key (file
+	 *  managers, IDE trees) and, unlike the old Enter-on-the-name binding,
+	 *  doesn't collide with activating the name button's own expand/collapse. */
+	function handleNameKeydown(e: KeyboardEvent) {
+		if (e.key === "F2") {
+			e.preventDefault();
+			e.stopPropagation();
+			startRename();
+		}
+	}
+
 	/** Blank/whitespace-only input silently reverts to the previous name
 	 *  (PRD edge case) — resolved entirely here, before `onRename` is ever
 	 *  called, so the caller only ever sees a real, non-empty, changed name. */
@@ -143,6 +173,7 @@
 		class:drop-after={validDropBand === "after"}
 		draggable={!renaming}
 		onclick={toggleExpanded}
+		oncontextmenu={handleHeaderContextMenu}
 		ondragstart={handleHeaderDragStart}
 		ondragend={handleHeaderDragEnd}
 		ondragover={handleHeaderDragOver}
@@ -171,7 +202,7 @@
 				onblur={commitRename}
 			/>
 		{:else}
-			<button class="name" onclick={(e) => { e.stopPropagation(); startRename(); }}>
+			<button class="name" title="Right-click to rename" onkeydown={handleNameKeydown}>
 				{folder.name}
 			</button>
 		{/if}

@@ -134,8 +134,15 @@ impl From<&SidebarEntry> for SidebarEntryDto {
 /// `project_store::MoveDestination`, translated from a raw `folderId` string
 /// (fallible — must be parsed) rather than deriving `Deserialize` on the
 /// domain type directly, same reasoning as every other *Dto in this file.
+///
+/// `rename_all_fields` is load-bearing and NOT redundant with `rename_all`:
+/// on an enum, `rename_all` renames variants only — a struct variant's own
+/// fields keep their Rust snake_case unless `rename_all_fields` says
+/// otherwise. Tauri camel→snake-cases top-level command arguments only, so
+/// nothing else would have bridged `folderId` → `folder_id`. Omitting it
+/// broke every project-into-folder drop (regression test below).
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum MoveDestinationDto {
     TopLevel,
     Folder { folder_id: String },
@@ -478,5 +485,35 @@ mod tests {
     #[test]
     fn path_exists_false_for_a_missing_path() {
         assert!(!path_exists("/definitely/does/not/exist/xyz".to_string()));
+    }
+
+    /// Regression (FR-11, 2026-07-23): every drop of a project into a folder
+    /// failed with "missing field `folder_id`". `#[serde(rename_all)]` on an
+    /// enum renames *variants* only, never a struct variant's fields, and
+    /// Tauri camel→snake-cases top-level command arguments only — never
+    /// anything nested inside a payload. So the frontend's `folderId`
+    /// (`src/lib/api/index.ts`, `MoveDestinationDto`) never matched.
+    ///
+    /// These two tests deserialize the exact JSON the frontend emits, which
+    /// is the layer the defect actually lived at — a frontend test asserting
+    /// against the frontend's own shape provably cannot catch this, and the
+    /// existing `src/lib/api/index.test.ts:124` is exactly that test.
+    #[test]
+    fn move_destination_deserializes_the_frontend_folder_payload() {
+        let json = r#"{"type":"folder","folderId":"3f2504e0-4f89-11d3-9a0c-0305e82c3301"}"#;
+        let parsed: MoveDestinationDto = serde_json::from_str(json).expect("frontend folder payload must deserialize");
+        match parsed {
+            MoveDestinationDto::Folder { folder_id } => {
+                assert_eq!(folder_id, "3f2504e0-4f89-11d3-9a0c-0305e82c3301");
+            }
+            other => panic!("expected Folder, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn move_destination_deserializes_the_frontend_top_level_payload() {
+        let parsed: MoveDestinationDto =
+            serde_json::from_str(r#"{"type":"topLevel"}"#).expect("frontend topLevel payload must deserialize");
+        assert!(matches!(parsed, MoveDestinationDto::TopLevel));
     }
 }
