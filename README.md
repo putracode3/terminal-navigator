@@ -4,6 +4,22 @@ A desktop project launcher + multi-pane terminal, built with Tauri (Rust) + Svel
 
 Sidebar-driven tabs, Tilix-style split panes, auto-run setup commands per project, and an encrypted local project list unlocked with a master password.
 
+## Features
+
+- **Project sidebar** — folder-grouped, collapsible, searchable list of local projects with git branch shown per pane title
+- **Multi-pane terminal** — Tilix-style split panes per project tab, each opening straight into the project's path
+- **Encrypted project store** — the project list (paths, setup commands, notes) is encrypted at rest and unlocked with a master password on launch
+- **Per-project setup commands** — define commands to auto-run whenever a project's terminal opens, instead of retyping them
+- **Themes** — several built-in terminal color themes (App Default, Dracula, Nord, Solarized Dark/Light, GitHub Light) plus a separate light/dark chrome toggle
+- **Import/Export** — back up or move your encrypted project list between machines
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Unlock screen](docs/screenshots/unlock-screen.png) *Encrypted project store, unlocked with a master password* | ![Multi-pane terminal + sidebar](docs/screenshots/multi-pane-sidebar.png) *Multi-pane terminal with the project sidebar* |
+| ![Add project](docs/screenshots/add-project.png) *Adding a project with a path and auto-run setup commands* | ![Settings](docs/screenshots/settings.png) *Settings — theme picker and master password* |
+
 ## Docs
 
 - [`docs/prd-terminal-navigator.md`](docs/prd-terminal-navigator.md) — product requirements, functional requirements (FR-01–FR-08), scope
