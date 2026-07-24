@@ -1,9 +1,9 @@
 # Runbook — Terminal Navigator
 
-> Version 1.1 · 2026-07-21 · Infra: none — local desktop app (Tauri), installed manually as a `.deb` on the author's own Debian 12 machine. No server, no CI, no remote users.
-> Rehearsal log: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–4, predating the FR-13 Settings step 5 added in v1.1) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · restore (config export/import) ✅ 2026-07-20 · rollback — not yet rehearsed · §2 step 5 (Settings smoke-check) — not yet rehearsed, added this version
+> Version 1.2 · 2026-07-24 · Infra: none — local desktop app (Tauri), daily-driver install is still a manually built `.deb` on the author's own Debian 12 machine. No server, no staging, no remote users. A GitHub remote now exists (`git@github.com:putracode3/terminal-navigator.git`) with a CI workflow (`.github/workflows/release.yml`) that builds tagged releases — see §2's new "GitHub Release" subsection. §9's former "no CI" gap is now partially closed; local build/install (above) remains the actual daily-driver mechanism.
+> Rehearsal log: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–4, predating the FR-13 Settings step 5 added in v1.1) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · restore (config export/import) ✅ 2026-07-20 · rollback — not yet rehearsed · §2 step 5 (Settings smoke-check) — not yet rehearsed, added in v1.1 · GitHub Release workflow — not yet rehearsed (added v1.2, no tag pushed yet; Windows/macOS build legs are unverified since the author only runs Debian — see caveat in §2)
 
-This app has no server-side deployment. "Deploy" here means: build a `.deb` locally, verify it, and install it to replace the copy you use every day. Sections below are scoped to that reality — see §9 for what a normal server runbook would have that doesn't apply here, and why.
+This app has no server-side deployment. "Deploy" here means: build a `.deb` locally, verify it, and install it to replace the copy you use every day — that local process is unchanged. Sections below are scoped to that reality, plus the separate/optional GitHub Release path for sharing builds publicly — see §9 for what a normal server runbook would have that doesn't apply here, and why.
 
 ## 1. System map
 
@@ -17,7 +17,7 @@ This app has no server-side deployment. "Deploy" here means: build a `.deb` loca
 
 ## 2. Build & release ("deploy")
 
-**Trigger:** manual, whenever you want to cut a new build to replace your daily-driver install. No CI — `npm run tauri build` always runs on your own machine.
+**Trigger:** manual, whenever you want to cut a new build to replace your daily-driver install. `npm run tauri build` always runs on your own machine for this path — see the separate "GitHub Release" subsection below for the CI-built, publicly downloadable path.
 
 ### Pre-flight gate (must be green before building)
 ```bash
@@ -37,6 +37,24 @@ Then tag the commit so this exact build state is always recoverable:
 ```bash
 git tag v<X.Y.Z>
 ```
+
+### GitHub Release (CI-built, publicly downloadable)
+
+Pushing a version tag (matching `v*.*.*`) triggers `.github/workflows/release.yml` on GitHub Actions:
+
+```bash
+git tag v<X.Y.Z>
+git push origin v<X.Y.Z>
+```
+
+1. **Pre-flight gate job** runs the same three commands as above (`cargo test`, `vitest run`, `npm run check`) on `ubuntu-latest`. If any fail, the workflow stops here — no build job starts, nothing is published.
+2. **Build job** (only if the gate passes) runs on a matrix of `ubuntu-latest`, `macos-latest`, and `windows-latest`, using `tauri-apps/tauri-action` to build each platform's installers (`.deb`/`.AppImage`/`.rpm` on Linux, `.dmg` on macOS, `.msi`/`.exe` on Windows) and attach them to a **draft** GitHub Release named after the tag.
+3. **Publish:** go to the repo's Releases page on GitHub, review the draft (check all expected platform artifacts are attached), then click **Publish release**. Nothing is publicly downloadable until this manual step — the workflow deliberately never auto-publishes.
+
+**Caveats:**
+- The macOS and Windows builds are **unverified** — the author only runs Debian 12, so those two legs build successfully in CI but have never been installed/run by a human. Treat them as best-effort until someone actually tests one.
+- Neither macOS nor Windows builds are code-signed. macOS will show an "unidentified developer" warning (Gatekeeper); Windows SmartScreen may warn too. Users have to explicitly bypass these to run it. Code-signing certificates are a future improvement if this app ever gets non-technical users.
+- This CI path is entirely separate from your own daily-driver install (the manual `tauri build -- --bundles deb` above) — publishing a GitHub Release does not touch or replace what's installed on your machine. Do your own §2 verification pass locally regardless of whether you also cut a GitHub Release.
 
 ### Build
 ```bash
@@ -142,7 +160,7 @@ Not applicable — this is a local desktop app with a single user (yourself), no
 
 These exist in the standard runbook template but don't apply at this project's current scale — listed here so a future reader (including an AI agent) doesn't wonder if they were missed:
 
-- **CI/CD pipeline:** no git remote is configured for this repo yet; there's no team, no push-to-deploy need. If this project ever gains a public remote/collaborators, revisit — a GitHub Actions workflow that runs the pre-flight gate (§2) on every push would be the natural next step.
+- **CI/CD pipeline:** partially addressed as of v1.2 — `.github/workflows/release.yml` runs the pre-flight gate and builds installers on tagged releases (see §2's "GitHub Release" subsection). Still deliberately *not* built: a workflow running the gate on every push/PR (there's no team and no push-to-deploy need at solo-dev scale, so this is a "someday" rather than a gap) and any auto-deploy step (there's nothing to deploy to — this only publishes downloadable installers, it doesn't touch the author's own daily-driver install).
 - **Staging environment:** the "verify before it becomes your daily driver" step in §2 is this project's equivalent — there's only ever one real environment (your machine).
 - **Uptime/error-tracking service, disk-space alerts:** no server, nothing to page about.
 - **Persistent application logs:** genuinely missing today (see §7) — if a bug is ever hard to reproduce, this would be the first thing worth adding (even a simple file logger behind a debug flag).
