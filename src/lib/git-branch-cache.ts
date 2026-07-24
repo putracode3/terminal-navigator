@@ -9,16 +9,26 @@ import { getGitBranch } from "$lib/api";
  *  whose branch is already resolved (or already in flight). */
 let cache = new Map<string, Promise<string | null>>();
 
+function fetchAndCache(cwd: string): Promise<string | null> {
+	const promise = getGitBranch(cwd).catch((err) => {
+		console.error(`getGitBranch(${cwd}) failed:`, err);
+		return null;
+	});
+	cache.set(cwd, promise);
+	return promise;
+}
+
 export function getCachedGitBranch(cwd: string): Promise<string | null> {
-	let cached = cache.get(cwd);
-	if (!cached) {
-		cached = getGitBranch(cwd).catch((err) => {
-			console.error(`getGitBranch(${cwd}) failed:`, err);
-			return null;
-		});
-		cache.set(cwd, cached);
-	}
-	return cached;
+	return cache.get(cwd) ?? fetchAndCache(cwd);
+}
+
+/** Bypasses whatever's cached and overwrites it with a fresh lookup — used
+ *  when a pane regains focus, or the user clicks the pane title's refresh
+ *  button (FR-17 follow-up): the cached value can go stale the moment a
+ *  `git checkout` runs inside the pane, and neither of those two triggers
+ *  is the "cwd changed" case `getCachedGitBranch` is optimizing for. */
+export function refreshGitBranch(cwd: string): Promise<string | null> {
+	return fetchAndCache(cwd);
 }
 
 export function __resetGitBranchCacheForTests(): void {

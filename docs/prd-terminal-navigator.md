@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) implemented 2026-07-22 (commits `f44736a`, `ef3d63b`, `e85d27c`), with a follow-up transparent-padding fix 2026-07-23; FR-16 (Clickable Terminal Links) implemented 2026-07-24; FR-17 (Pane Title Shows Active Git Branch) implemented 2026-07-24 | **Version:** 1.10 | **Date:** 2026-07-24 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) implemented 2026-07-22 (commits `f44736a`, `ef3d63b`, `e85d27c`), with a follow-up transparent-padding fix 2026-07-23; FR-16 (Clickable Terminal Links) implemented 2026-07-24; FR-17 (Pane Title Shows Active Git Branch) implemented 2026-07-24, with a focus-refresh + manual-refresh follow-up the same day | **Version:** 1.11 | **Date:** 2026-07-24 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 
@@ -238,14 +238,17 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 #### FR-17: Pane Title Shows Active Git Branch
 - **Description:** Each pane's title bar (`PaneNodeView.svelte`'s `pane-header`, which already shows the pane's working directory — see FR-08/components.md) is extended to show the current git branch after the path, when that directory is (or is inside) a git repository. Detected directly from `.git/HEAD` rather than shelling out to `git` or linking `libgit2` (ADR-0004/0005's pure-Rust, no-C-library preference), so a plain (non-git) project pays no extra cost and shows no extra UI. Implemented directly, same small-scope reasoning as FR-16: reuses the existing per-pane title bar and IPC pattern (`path_exists`'s shape), no new module dependency, no design tokens beyond the existing `.cwd` label styling.
 - **Acceptance Criteria:**
-  - [ ] A pane whose working directory is inside a git repository shows `<branch name>` appended after the path in its title bar
+  - [ ] A pane whose working directory is inside a git repository shows `<branch name>` appended after the path in its title bar, visually distinct from the path (not the same muted color — the branch is the one part of this label that can change while the pane is open)
   - [ ] A pane whose working directory is **not** inside a git repository shows just the path, exactly as before this feature — no empty separator, no error text
   - [ ] A detached `HEAD` (checked out to a specific commit rather than a branch) shows a short commit hash instead of a branch name, rather than nothing
   - [ ] Detection works from any subdirectory of a repository, not only its root
+  - [ ] The branch shown updates the next time the pane regains keyboard focus, without needing to reopen it — covers the common case of running `git checkout` inside the pane, then clicking back into it
+  - [ ] A manual refresh control next to the title re-checks the branch on demand, for updating it without switching focus away and back first
 - **Edge cases:**
   - A git worktree or submodule (`.git` is a *file* pointing elsewhere, not a directory) still resolves to the correct branch
-  - The branch is detected once, when the pane opens — same static-per-mount fidelity the path label itself already has (neither tracks the shell's live state; running `git checkout` inside the pane afterward does not retroactively update the title without reopening it — a live-tracking version is future-backlog scope, not this FR's)
+  - The branch is first detected when the pane opens, then re-checked on every subsequent focus-gain and on the manual refresh control — **not** truly realtime: a checkout run in a pane that's never re-focused (or refreshed) afterward keeps showing the stale branch. Considered and deliberately not built: a poll timer (wakes every open pane on an interval regardless of whether anything changed — costs against NFR-7's multi-pane concern) and a per-pane filesystem watcher on `.git/HEAD` (true realtime, but adds an OS resource handle per pane that must be lifecycle-managed as carefully as the PTY subscriptions `$lib/terminal-registry` exists to protect — a fully realtime version stays future-backlog scope if this focus/manual-refresh middle ground proves insufficient)
   - A read failure (permissions, race condition) is treated the same as "not a git repo": nothing shown, no error surfaced to the user
+  - Losing focus never triggers a refetch — only *gaining* it does, so switching away from a pane costs nothing
 
 ### 4.2 Next Iteration (Should Have)
 - ~~**FR-11:** Project grouping/folders — organize the list into categories~~ — promoted to MVP (2026-07-21), see §4.1
@@ -376,6 +379,7 @@ User wants a properly installed package from the start (not just running from so
 ## 13. Changelog
 | Version | Date | Change |
 |---|---|---|
+| 1.11 | 2026-07-24 | FR-17 follow-up: the branch shown in a pane's title now refreshes (bypassing FR-17's per-cwd cache) on every focus-gain and via a new manual refresh control next to the title, closing part of the "static-per-mount only" gap v1.10 explicitly deferred. Still not truly realtime by design — a poll timer or a per-pane filesystem watcher were both considered and rejected for cost/complexity reasons now recorded in FR-17's edge cases; a fully realtime version stays future-backlog. Also added the acceptance criterion that the branch text be visually distinct from the path (not both the same muted color). |
 | 1.10 | 2026-07-24 | Added FR-17 (Pane Title Shows Active Git Branch: the existing per-pane path label gets ` · <branch>` appended when the pane's cwd is inside a git repository, detected by reading `.git/HEAD` directly — no `git` subprocess, no `libgit2`), implemented directly given its small scope and reuse of the existing pane-header title bar. |
 | 1.9 | 2026-07-24 | Added FR-16 (Clickable Terminal Links: Ctrl+left-click a detected URL to open it in the system browser), implemented directly given its small scope and reuse of already-granted infrastructure (`xterm.js` link detection, `tauri-plugin-opener`'s existing `opener:default` capability) — no new FR-01-style intake pass needed. |
 | 1.0 | 2026-07-17 | Initial PRD |

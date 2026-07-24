@@ -179,7 +179,7 @@
 			{#if child.type === "leaf"}
 				<div class="leaf">
 					<div class="pane-header">
-						<PaneTitle cwd={child.cwd} />
+						<PaneTitle cwd={child.cwd} focused={child.sessionId === focusedPaneId} />
 						<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(child.sessionId)}>✕</button>
 					</div>
 					<div
