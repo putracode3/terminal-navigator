@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) implemented 2026-07-22 (commits `f44736a`, `ef3d63b`, `e85d27c`), with a follow-up transparent-padding fix 2026-07-23 | **Version:** 1.8.3 | **Date:** 2026-07-23 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) implemented 2026-07-22 (commits `f44736a`, `ef3d63b`, `e85d27c`), with a follow-up transparent-padding fix 2026-07-23; FR-16 (Clickable Terminal Links) implemented 2026-07-24; FR-17 (Pane Title Shows Active Git Branch) implemented 2026-07-24 | **Version:** 1.10 | **Date:** 2026-07-24 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 
@@ -224,6 +224,29 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - A very bright or busy wallpaper is the worst case for every contrast pair in the app at once — unlike FR-14, whose backdrop was always app-controlled
   - Compositor behavior is not uniform: the same setting may look different under a different WM, and the app cannot detect "will this actually composite" reliably before drawing
 
+#### FR-16: Clickable Terminal Links (Ctrl+Click)
+- **Description:** URLs printed to a terminal pane's output (e.g. by `git`, `npm`, a dev server) are detected and, when the user Ctrl+left-clicks one, opened in the system's default browser. A small, low-risk addition — implemented directly (no separate system-architect/ui-ux-designer pass) since it reuses infrastructure already present: `xterm.js`'s own link-provider mechanism for detection and the `tauri-plugin-opener` capability (`opener:default`, already granted for FR-01's browse dialog) for opening it, with no new Tauri command, IPC surface, or stored state.
+- **Acceptance Criteria:**
+  - [ ] An `http(s)://` URL appearing anywhere in a pane's scrollback or live output is visually distinguishable as a link on hover (underline), in every terminal theme preset
+  - [ ] Ctrl+left-click on a detected link opens it in the system's default browser
+  - [ ] A plain left-click (no Ctrl) on the same text does not open anything — it behaves exactly as clicking terminal text always has (cursor position / selection), so the existing click-to-focus/select workflow is not disrupted
+  - [ ] Ctrl+click with a non-left mouse button does not open anything
+- **Edge cases:**
+  - A link that wraps across a soft-wrapped terminal line is still detected as one continuous URL, not split at the wrap point (xterm.js's link provider already re-joins wrapped rows before matching)
+  - A malformed/partial URL fragment (e.g. output truncated mid-write) simply fails to match the detector's regex — no error surfaced, same as any other non-matching text
+
+#### FR-17: Pane Title Shows Active Git Branch
+- **Description:** Each pane's title bar (`PaneNodeView.svelte`'s `pane-header`, which already shows the pane's working directory — see FR-08/components.md) is extended to show the current git branch after the path, when that directory is (or is inside) a git repository. Detected directly from `.git/HEAD` rather than shelling out to `git` or linking `libgit2` (ADR-0004/0005's pure-Rust, no-C-library preference), so a plain (non-git) project pays no extra cost and shows no extra UI. Implemented directly, same small-scope reasoning as FR-16: reuses the existing per-pane title bar and IPC pattern (`path_exists`'s shape), no new module dependency, no design tokens beyond the existing `.cwd` label styling.
+- **Acceptance Criteria:**
+  - [ ] A pane whose working directory is inside a git repository shows `<branch name>` appended after the path in its title bar
+  - [ ] A pane whose working directory is **not** inside a git repository shows just the path, exactly as before this feature — no empty separator, no error text
+  - [ ] A detached `HEAD` (checked out to a specific commit rather than a branch) shows a short commit hash instead of a branch name, rather than nothing
+  - [ ] Detection works from any subdirectory of a repository, not only its root
+- **Edge cases:**
+  - A git worktree or submodule (`.git` is a *file* pointing elsewhere, not a directory) still resolves to the correct branch
+  - The branch is detected once, when the pane opens — same static-per-mount fidelity the path label itself already has (neither tracks the shell's live state; running `git checkout` inside the pane afterward does not retroactively update the title without reopening it — a live-tracking version is future-backlog scope, not this FR's)
+  - A read failure (permissions, race condition) is treated the same as "not a git repo": nothing shown, no error surfaced to the user
+
 ### 4.2 Next Iteration (Should Have)
 - ~~**FR-11:** Project grouping/folders — organize the list into categories~~ — promoted to MVP (2026-07-21), see §4.1
 - ~~**FR-12:** Terminal theme customization~~ — superseded by FR-13 (2026-07-20)
@@ -353,6 +376,8 @@ User wants a properly installed package from the start (not just running from so
 ## 13. Changelog
 | Version | Date | Change |
 |---|---|---|
+| 1.10 | 2026-07-24 | Added FR-17 (Pane Title Shows Active Git Branch: the existing per-pane path label gets ` · <branch>` appended when the pane's cwd is inside a git repository, detected by reading `.git/HEAD` directly — no `git` subprocess, no `libgit2`), implemented directly given its small scope and reuse of the existing pane-header title bar. |
+| 1.9 | 2026-07-24 | Added FR-16 (Clickable Terminal Links: Ctrl+left-click a detected URL to open it in the system browser), implemented directly given its small scope and reuse of already-granted infrastructure (`xterm.js` link detection, `tauri-plugin-opener`'s existing `opener:default` capability) — no new FR-01-style intake pass needed. |
 | 1.0 | 2026-07-17 | Initial PRD |
 | 1.1 | 2026-07-17 | Promoted multi-tab + split-pane terminal grid (Tilix-style) from next-iteration to MVP as FR-08, per user decision during system-architect intake. Resolved Q1 (master password for encryption key). Added distribution note (installable package expected, not just source build). |
 | 1.2 | 2026-07-17 | Added NFR-7 (resource efficiency — lightweight, fast, memory-friendly), per user requirement during system-architect intake. Drives frontend framework and terminal-rendering decisions in architecture.md. |

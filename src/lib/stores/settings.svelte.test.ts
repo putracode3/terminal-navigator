@@ -22,6 +22,7 @@ function dto(overrides: Partial<SettingsDto> = {}): SettingsDto {
 		sidebarPosition: "left",
 		glassIntensity: 0,
 		windowTransparency: 0,
+		themeMode: "dark",
 		...overrides,
 	};
 }
@@ -37,6 +38,7 @@ beforeEach(() => {
 	settingsStore.sidebarPosition = "left";
 	settingsStore.glassIntensity = 0;
 	settingsStore.windowTransparency = 0;
+	settingsStore.themeMode = "dark";
 	settingsStore.loaded = false;
 });
 
@@ -120,6 +122,32 @@ describe("settingsStore.setGlassIntensity() — FR-14", () => {
 		await settingsStore.load();
 
 		expect(settingsStore.glassIntensity).toBe(0.35);
+	});
+});
+
+describe("settingsStore.setThemeMode() — design.md §4.1a, v2.5", () => {
+	it("applies immediately and persists", async () => {
+		await settingsStore.setThemeMode("light");
+
+		expect(settingsStore.themeMode).toBe("light");
+		expect(saveSettingsMock).toHaveBeenLastCalledWith(expect.objectContaining({ themeMode: "light" }));
+	});
+
+	it("rolls back when the save fails, same as every other autosaving setter", async () => {
+		await settingsStore.setThemeMode("light");
+		saveSettingsMock.mockRejectedValueOnce(new Error("disk full"));
+
+		await expect(settingsStore.setThemeMode("system")).rejects.toThrow("disk full");
+
+		expect(settingsStore.themeMode).toBe("light");
+	});
+
+	it("round-trips through load() like every other field", async () => {
+		getSettingsMock.mockResolvedValue(dto({ themeMode: "system" }));
+
+		await settingsStore.load();
+
+		expect(settingsStore.themeMode).toBe("system");
 	});
 });
 

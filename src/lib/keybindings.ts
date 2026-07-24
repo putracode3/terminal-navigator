@@ -18,15 +18,16 @@ export type ActionId =
 	| "terminal.zoomOut"
 	| "terminal.closeSession"
 	| "terminal.nextTab"
-	| "terminal.previousTab";
+	| "terminal.previousTab"
+	| "sidebar.toggle";
 
 export interface KeybindingActionDef {
 	id: ActionId;
 	label: string;
-	group: "Clipboard" | "Panes" | "Terminal" | "Tabs";
+	group: "Clipboard" | "Panes" | "Terminal" | "Tabs" | "Sidebar";
 }
 
-/** The 13-action registry (architecture.md §5.6) — order here is the order
+/** The 14-action registry (architecture.md §5.6) — order here is the order
  * rows render in the Settings panel (components.md, Keybinding Row /
  * Settings Panel pattern). */
 export const KEYBINDING_ACTIONS: KeybindingActionDef[] = [
@@ -43,6 +44,7 @@ export const KEYBINDING_ACTIONS: KeybindingActionDef[] = [
 	{ id: "terminal.closeSession", label: "Close terminal", group: "Terminal" },
 	{ id: "terminal.nextTab", label: "Next tab", group: "Tabs" },
 	{ id: "terminal.previousTab", label: "Previous tab", group: "Tabs" },
+	{ id: "sidebar.toggle", label: "Show/hide sidebar", group: "Sidebar" },
 ];
 
 export function actionLabel(id: string): string {
@@ -70,6 +72,7 @@ export const DEFAULT_KEYBINDINGS: Record<ActionId, string> = {
 	"terminal.closeSession": "Ctrl+Shift+W",
 	"terminal.nextTab": "Ctrl+Tab",
 	"terminal.previousTab": "Ctrl+Shift+Tab",
+	"sidebar.toggle": "Ctrl+B",
 };
 
 /** Physical-key based (like the app's existing Ctrl+Shift+C/V checks used

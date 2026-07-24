@@ -35,11 +35,13 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 vi.mock("$lib/api", () => ({
 	resizeTerminal: vi.fn().mockResolvedValue(undefined),
 	writeTerminal: vi.fn().mockResolvedValue(undefined),
+	getGitBranch: vi.fn().mockResolvedValue(null),
 }));
 
 import PaneNodeView from "./PaneNodeView.svelte";
 import type { PaneNode, DragSource } from "$lib/stores/terminal.svelte";
 import { __resetTerminalRegistryForTests } from "$lib/terminal-registry";
+import { __resetGitBranchCacheForTests } from "$lib/git-branch-cache";
 
 function leaf(sessionId: string, cwd = "/proj"): PaneNode {
 	return { type: "leaf", sessionId, cwd, status: "ready" };
@@ -65,8 +67,9 @@ beforeEach(() => {
 	// Several tests here reuse the same literal sessionId (e.g. "pane-1")
 	// across cases — the registry is a module-level singleton, so it must be
 	// reset per test (see TerminalPane.test.ts's own beforeEach for the same
-	// reasoning).
+	// reasoning). Same reasoning for the git-branch cache (FR-17).
 	__resetTerminalRegistryForTests();
+	__resetGitBranchCacheForTests();
 	// TerminalPane (rendered inside every leaf) needs these — jsdom has
 	// neither (see TerminalPane.test.ts for the same pattern).
 	vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));

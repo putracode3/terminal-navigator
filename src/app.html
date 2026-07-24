@@ -1,6 +1,10 @@
 <!doctype html>
 <!-- color-scheme drives native form-control rendering (password field) and must stay;
-     the explicit transparent background is what FR-15 needs — see ADR-0012, PRD Q13. -->
+     the explicit transparent background is what FR-15 needs — see ADR-0012, PRD Q13.
+     "dark" here is only the pre-hydration default (matches ThemeMode::Dark, design.md
+     §4.1a) — +layout.svelte overrides both color-scheme and data-theme once the user's
+     Dark/Light/System preference resolves, same flash-before-load() tradeoff already
+     accepted for --glass-intensity/--window-transparency. -->
 <html lang="en" style="color-scheme: dark; background: transparent">
   <head>
     <meta charset="utf-8" />

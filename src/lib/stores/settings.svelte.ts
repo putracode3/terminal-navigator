@@ -1,7 +1,7 @@
 // FR-13 non-sensitive preferences (theme, keybindings, sidebar position) —
 // loaded independently of appStore's lock state (NFR-8/ADR-0009): this
 // store's `load()` must be safe to call before `unlock`.
-import { getSettings, saveSettings, type SettingsDto, type SidebarPosition } from "$lib/api";
+import { getSettings, saveSettings, type SettingsDto, type SidebarPosition, type ThemeMode } from "$lib/api";
 import { DEFAULT_KEYBINDINGS } from "$lib/keybindings";
 
 class SettingsStore {
@@ -11,6 +11,11 @@ class SettingsStore {
 	// window before load() resolves, not just after.
 	keybindings = $state<Record<string, string>>({ ...DEFAULT_KEYBINDINGS });
 	sidebarPosition = $state<SidebarPosition>("left");
+	// design.md §4.1a (v2.5). Starts at the real default ("dark") for the
+	// same reason keybindings starts at DEFAULT_KEYBINDINGS above — the
+	// unlock screen renders before load() resolves (NFR-8) and must not
+	// flash a placeholder theme.
+	themeMode = $state<ThemeMode>("dark");
 	// FR-14 (design.md §4.6). 0 = fully opaque, matching the backend
 	// default: the app looks exactly as it did until the user opts in.
 	glassIntensity = $state(0);
@@ -31,6 +36,7 @@ class SettingsStore {
 		this.sidebarPosition = settings.sidebarPosition;
 		this.glassIntensity = settings.glassIntensity;
 		this.windowTransparency = settings.windowTransparency;
+		this.themeMode = settings.themeMode;
 	}
 
 	private toDto(): SettingsDto {
@@ -40,6 +46,7 @@ class SettingsStore {
 			sidebarPosition: this.sidebarPosition,
 			glassIntensity: this.glassIntensity,
 			windowTransparency: this.windowTransparency,
+			themeMode: this.themeMode,
 		};
 	}
 
@@ -64,6 +71,17 @@ class SettingsStore {
 			await saveSettings(this.toDto());
 		} catch (e) {
 			this.sidebarPosition = previous;
+			throw e;
+		}
+	}
+
+	async setThemeMode(mode: ThemeMode): Promise<void> {
+		const previous = this.themeMode;
+		this.themeMode = mode;
+		try {
+			await saveSettings(this.toDto());
+		} catch (e) {
+			this.themeMode = previous;
 			throw e;
 		}
 	}

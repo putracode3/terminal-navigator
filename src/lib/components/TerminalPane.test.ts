@@ -52,6 +52,19 @@ vi.mock("@xterm/addon-fit", () => ({
 	}),
 }));
 
+let webLinksHandler: ((event: MouseEvent, uri: string) => void) | undefined;
+vi.mock("@xterm/addon-web-links", () => ({
+	WebLinksAddon: vi.fn(function WebLinksAddon(handler: (event: MouseEvent, uri: string) => void) {
+		webLinksHandler = handler;
+		return {};
+	}),
+}));
+
+const openUrlMock = vi.fn().mockResolvedValue(undefined);
+vi.mock("@tauri-apps/plugin-opener", () => ({
+	openUrl: (...args: unknown[]) => openUrlMock(...args),
+}));
+
 const listenMock = vi.fn().mockResolvedValue(() => {});
 vi.mock("@tauri-apps/api/event", () => ({
 	listen: (...args: unknown[]) => listenMock(...args),
@@ -84,6 +97,7 @@ beforeEach(() => {
 	// "reuse" test #1's mock handle instead of creating a fresh one.
 	__resetTerminalRegistryForTests();
 	settingsStore.themePreset = "app-default";
+	settingsStore.themeMode = "dark";
 	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
 	termInstance.options = {};
 	(Terminal as unknown as ReturnType<typeof vi.fn>).mockClear();
@@ -106,9 +120,13 @@ beforeEach(() => {
 	pasteMock.mockClear();
 	refreshMock.mockClear();
 	listenMock.mockClear();
+	openUrlMock.mockClear();
+	openUrlMock.mockReset();
+	openUrlMock.mockResolvedValue(undefined);
 	onDataCallback = undefined;
 	keyEventHandler = undefined;
 	wheelEventHandler = undefined;
+	webLinksHandler = undefined;
 	resizeObserverCallback = undefined;
 	// Reduce requestAnimationFrame to a fake-timer-controllable primitive
 	// rather than relying on sinon's rAF-specific fake-timer support.
@@ -139,9 +157,9 @@ describe("TerminalPane — initial fit timing (see the code comment above the fi
 		expect(openMock).toHaveBeenCalledOnce();
 	});
 
-	it("loads only the fit addon, never @xterm/addon-webgl (ADR-0006 revisit: WebGL creates a healthy context but never actually paints — debugger session 2026-07-21, see docs/qa/test-plan.md §5.1)", () => {
+	it("loads the fit and web-links addons, never @xterm/addon-webgl (ADR-0006 revisit: WebGL creates a healthy context but never actually paints — debugger session 2026-07-21, see docs/qa/test-plan.md §5.1)", () => {
 		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
-		expect(termInstance.loadAddon).toHaveBeenCalledOnce();
+		expect(termInstance.loadAddon).toHaveBeenCalledTimes(2);
 	});
 
 	it("does NOT call fit() synchronously on mount", () => {
@@ -330,6 +348,57 @@ describe("TerminalPane — FR-13 theme presets", () => {
 
 		expect(termInstance.options.theme).toMatchObject({ background: "#2E3440" });
 		expect(Terminal).toHaveBeenCalledTimes(1); // still the same instance — not recreated
+	});
+});
+
+describe("TerminalPane — App Default follows the chrome theme (design.md §4.5a, §9 rule 11)", () => {
+	it("constructs with the light App Default variant when chrome is light", () => {
+		settingsStore.themePreset = "app-default";
+		settingsStore.themeMode = "light";
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		expect(Terminal).toHaveBeenCalledWith(
+			expect.objectContaining({ theme: expect.objectContaining({ background: "#F3F4F7" }) }),
+		);
+	});
+
+	/** The whole point of the coupling: switching Appearance must repaint an
+	 *  already-open pane, without reopening the session. */
+	it("repaints an already-open pane when the chrome theme switches (no remount)", async () => {
+		settingsStore.themePreset = "app-default";
+		settingsStore.themeMode = "dark";
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		expect(termInstance.options.theme).toMatchObject({ background: "#0D0F14" });
+
+		settingsStore.themeMode = "light";
+		await vi.runAllTimersAsync();
+
+		expect(termInstance.options.theme).toMatchObject({ background: "#F3F4F7" });
+		expect(Terminal).toHaveBeenCalledTimes(1); // same instance — not recreated
+	});
+
+	/** design.md §8: only App Default follows the theme. A named palette is
+	 *  chosen by name and must survive a chrome-theme switch untouched. */
+	it("leaves an explicitly-chosen palette alone when the chrome theme switches", async () => {
+		settingsStore.themePreset = "dracula";
+		settingsStore.themeMode = "dark";
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		settingsStore.themeMode = "light";
+		await vi.runAllTimersAsync();
+
+		expect(termInstance.options.theme).toMatchObject({ background: "#282A36" });
+	});
+
+	it("renders a light preset chosen explicitly under dark chrome — the documented accepted-risk combination", async () => {
+		settingsStore.themePreset = "solarized-light";
+		settingsStore.themeMode = "dark";
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+
+		expect(termInstance.options.theme).toMatchObject({ background: "#FDF6E3" });
 	});
 });
 
@@ -559,6 +628,41 @@ describe("TerminalPane — repaint on reactivation (regression: switching tabs a
 		await vi.runAllTimersAsync();
 
 		expect(refreshMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("TerminalPane — Ctrl+left-click opens a detected terminal link", () => {
+	function click(overrides: Partial<MouseEvent> = {}): MouseEvent {
+		return { ctrlKey: true, button: 0, ...overrides } as MouseEvent;
+	}
+
+	it("registers a WebLinksAddon so URLs printed to the terminal are detected", () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		expect(webLinksHandler).toBeDefined();
+	});
+
+	it("opens the link via the opener plugin on Ctrl+left-click", () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		webLinksHandler!(click(), "https://example.com");
+
+		expect(openUrlMock).toHaveBeenCalledWith("https://example.com");
+	});
+
+	it("does not open the link on a plain click (no Ctrl) — xterm.js itself does no modifier gating, so a bare click must still just click the terminal", () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		webLinksHandler!(click({ ctrlKey: false }), "https://example.com");
+
+		expect(openUrlMock).not.toHaveBeenCalled();
+	});
+
+	it("does not open the link on Ctrl + a non-left button", () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+
+		webLinksHandler!(click({ button: 2 }), "https://example.com");
+
+		expect(openUrlMock).not.toHaveBeenCalled();
 	});
 });
 

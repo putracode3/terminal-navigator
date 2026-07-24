@@ -13,7 +13,7 @@ use crate::config_sync;
 use crate::error::AppError;
 use crate::project_store::{Folder, MoveDestination, Project, ProjectInput, ProjectStore, SidebarEntry};
 use crate::pty_manager::PtyManager;
-use crate::settings_store::{self, Settings, SidebarPosition};
+use crate::settings_store::{self, Settings, SidebarPosition, ThemeMode};
 
 /// Shared app state: `None` while locked, `Some(store)` once unlocked with the
 /// master password. `data_file` is resolved once at startup (see lib.rs).
@@ -165,6 +165,9 @@ pub struct SettingsDto {
     /// FR-15 — see `settings_store::Settings::window_transparency`.
     #[serde(default)]
     pub window_transparency: f32,
+    /// design.md §4.1a (v2.5) — see `settings_store::Settings::theme_mode`.
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
 }
 
 impl From<Settings> for SettingsDto {
@@ -175,6 +178,7 @@ impl From<Settings> for SettingsDto {
             sidebar_position: s.sidebar_position,
             glass_intensity: s.glass_intensity,
             window_transparency: s.window_transparency,
+            theme_mode: s.theme_mode,
         }
     }
 }
@@ -187,6 +191,7 @@ impl From<SettingsDto> for Settings {
             sidebar_position: dto.sidebar_position,
             glass_intensity: dto.glass_intensity,
             window_transparency: dto.window_transparency,
+            theme_mode: dto.theme_mode,
         }
     }
 }
@@ -417,6 +422,15 @@ pub fn export_config(destination: String, state: State<AppState>) -> Result<(), 
 #[tauri::command]
 pub fn path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
+}
+
+/// The current git branch (or a detached-HEAD short hash) for `path`, shown
+/// after the cwd in a pane's title (FR-17). `None` — not an error — when
+/// `path` isn't inside a git repository. Read-only, same minimal-surface
+/// shape as `path_exists`.
+#[tauri::command]
+pub fn get_git_branch(path: String) -> Option<String> {
+    crate::git_status::current_branch(std::path::Path::new(&path))
 }
 
 /// Imports `source`, replacing all local project data (ADR-0008 — replace,

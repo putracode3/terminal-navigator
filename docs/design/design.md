@@ -1,6 +1,6 @@
 # Design System — Terminal Navigator
 
-> Version 2.4 · 2026-07-23 · Status: approved
+> Version 2.7 · 2026-07-23 · Status: approved
 > Files: design.md (this file, rules & rationale) · tokens.css / tokens.json (values) · components.md (component specs)
 > Source docs: docs/prd-terminal-navigator.md (v1.8.1) · docs/backend/architecture.md (v1.6)
 
@@ -8,9 +8,9 @@
 
 Terminal Navigator is a single-user Rust + Tauri desktop app that replaces the author's Tilix + zsh workflow. Primary job: click a saved project and get a terminal already `cd`-ed into its path, with auto-run setup commands, inside a Tilix-style sidebar-driven split-pane grid (FR-08, v1.4 — sessions are opened/switched/closed/dragged from the sidebar, there is no separate tab bar). Audience is exactly one person — a developer, technically fluent, who needs zero hand-holding but does need speed and trust (the app stores potentially credential-bearing commands/notes, encrypted, per NFR-3).
 
-Brand reference: **Warp** — modern, simple, feature-rich. Personality: **minimal**. Mode: **dark-only** for MVP (light mode explicitly out of scope). UI language: **English**.
+Brand reference: **Warp** — modern, simple, feature-rich. Personality: **minimal**. Mode: **dark and light** (v2.5) — dark remains the default; light is a systematic inversion of the same palette, selectable Dark/Light/System in Settings (§4.1a). UI language: **English**.
 
-Scope: sidebar project list (with browse-folder add flow, session sub-items, drag-to-split, and — v1.8, FR-11 — user-organized drag-and-drop folders), split-pane terminal grid, Add/Edit project form, master-password unlock screen, per-project notes editor, and (v1.6, FR-13) a Settings panel — terminal theme presets, master password change, keybinding customization, sidebar position. Stack: Tauri + Svelte, terminal rendered via `xterm.js` + WebGL renderer (architecture.md ADR-0006).
+Scope: sidebar project list (with browse-folder add flow, session sub-items, drag-to-split, and — v1.8, FR-11 — user-organized drag-and-drop folders), split-pane terminal grid, Add/Edit project form, master-password unlock screen, per-project notes editor, and (v1.6, FR-13) a Settings panel — terminal theme presets, master password change, keybinding customization, sidebar position, and (v2.5) app appearance (Dark/Light/System). Stack: Tauri + Svelte, terminal rendered via `xterm.js` + WebGL renderer (architecture.md ADR-0006).
 
 Success criteria: the app is used daily, replacing Tilix. That bar is about *felt* speed and unobtrusiveness as much as visual polish — see Principle 1 below.
 
@@ -32,7 +32,7 @@ Security gets its own distinct hue (emerald, `--color-security`) rather than reu
 
 ## 4. Design tokens — summary
 
-Full values live in `tokens.css` / `tokens.json`. Dark-only theme — there is no light-mode remap block; `:root` **is** the theme.
+Full values live in `tokens.css` / `tokens.json`. Two themes (v2.5): the base `:root` block is dark (unchanged from v2.4, still the default), and `:root[data-theme="light"]` overrides the tokens that need it — see §4.1a for which tokens change, why, and how the attribute gets set.
 
 ### 4.1 Color roles
 
@@ -53,6 +53,33 @@ Full values live in `tokens.css` / `tokens.json`. Dark-only theme — there is n
 | `--color-warning` | `#FBBF24` | Warnings |
 | `--color-danger` | `#F87171` | Errors, destructive actions |
 | `--color-focus` | `#16741C` | Focus ring (all interactive elements) |
+
+### 4.1a Light theme (v2.5)
+
+**Mechanism.** Theme selection is Dark / Light / System (Settings Panel, components.md). The frontend resolves this to a concrete `data-theme="dark"|"light"` attribute on `<html>` — "System" reads `window.matchMedia('(prefers-color-scheme: light)')` once at load and subscribes to its `change` event so the app follows OS theme switches live, without a reload. `tokens.css` never reads `prefers-color-scheme` itself; the attribute is the single source of truth the CSS keys off, because "System" needs a live JS subscription anyway (a plain `@media` query in CSS can't distinguish "user explicitly chose light" from "OS happens to be light"). To avoid a flash of the wrong theme on launch, resolve and set the attribute before first paint, not in an `onMount`-timed effect.
+
+**Systematic inversion — the rule.** Light mode preserves every semantic role, every accent hue, and every relationship documented in §3 (gradient stays green→cyan, security stays a distinct ~34° hue from primary, the one-place-only gradient rule, etc.) — only the neutral ramp and a few accent shades are re-derived so they clear AA against a light background instead of a dark one. A token is **only** overridden in `:root[data-theme="light"]` if its computed contrast actually requires a different value; everything else inherits from the dark `:root` unchanged. Concretely:
+
+- **Always re-derived:** `--color-background/-surface/-surface-elevated` (paper ramp, replaces the ink ramp), `--color-border/-border-strong`, `--color-text/-text-muted` (graphite ramp, replaces white-on-dark), `--color-security/-security-bg-subtle`, `--color-warning`, `--color-danger/-danger-bg-subtle`, plus the FR-14/FR-15 alpha curves and edge/glass colors (§4.6/§4.7 below).
+- **Never re-derived (inherits from dark `:root`):** `--color-primary/-hover/-active` and `--color-focus` — these are solid fills always paired with white `--color-on-primary` text, or used as a focus-ring stroke that we verified clears 3:1 (in fact 5.38:1+, comfortably also clearing the 4.5:1 text threshold) against every light surface without any change; `--color-accent-gradient` — decorative-only in both themes, never sits under text (Principle 2, §7), so no background-contrast obligation exists to trigger a re-derivation; `--color-on-primary`/`--color-on-security` — paired only with solid accent fills, background-independent; `--color-backdrop` — a modal scrim is deliberately a dark overlay in **both** themes (standard practice: a scrim's job is to recede the rest of the app regardless of chrome theme, not to match it); `--color-primary-bg-subtle` — an alpha-based overlay that composites correctly over either background by construction.
+- **Not tokens, and mostly not coupled:** terminal theme presets (§4.5) govern terminal content only and are never remapped by `data-theme`. v2.5 left them dark-only; **v2.6 revisited that** (§4.5a) and added light presets plus one deliberate coupling — App Default follows the chrome theme, every other preset stays a fixed manual choice. The presets are still not tokens and still live outside `tokens.css`; what changed is only *which variant of App Default* the frontend hands `xterm.js`.
+
+**Light primitives and their verified contrast** (relative-luminance formula, computed not eyeballed, same standard as §7):
+
+| Token | Value | Role | Ratio vs background / surface / elevated |
+|---|---|---|---|
+| `--paper-50` | `#FFFFFF` | Elevated (modals, popovers, hover) | — |
+| `--paper-100` | `#F9FAFB` | Surface (sidebar, panels, controls) | — |
+| `--paper-200` | `#F3F4F7` | App background | — |
+| `--paper-border` | `#E2E5EA` | Decorative dividers (not meaning-bearing) | — |
+| `--paper-border-strong` | `#7A8292` | Inputs, structural dividers | 3.51:1 / 3.70:1 / 3.86:1 — clears the 3:1 UI-component threshold against all three |
+| `--graphite-900` | `#14161B` | Primary text | 16.46:1 / 17.32:1 / 18.10:1 |
+| `--graphite-600` | `#565D6B` | Secondary/muted text | 6.02:1 / 6.33:1 / 6.62:1 — deliberately lands close to dark mode's 6.2:1 (§7), same margin of safety |
+| `--emerald-700` | `#1B7C59` | Security accent, light mode | 4.70:1 vs background, 4.93:1 vs surface, 5.15:1 vs elevated; 4.56:1 on its own `--emerald-050` subtle bg |
+| `--amber-800` | `#8D6703` | Warning, light mode | 4.70:1 vs background |
+| `--red-700` | `#DB0A0A` | Danger, light mode | 4.70:1 vs background; 4.70:1 on its own `--red-050` subtle bg |
+
+Note what did **not** need a light sibling: `--color-primary` (`#16741C`) already clears 5.38:1 / 5.66:1 / 5.92:1 against the new paper ramp — a genuine, non-obvious payoff of picking green-600 for its dark-mode contrast margin back in v1.5; it turned out dark enough to also work as light-mode text/icon/focus color with zero change.
 
 ### 4.2 Typography
 
@@ -89,11 +116,11 @@ Base unit 4px. Scale: `--space-1` (4px) through `--space-16` (64px), see tokens.
 
 **These are not design tokens and do not live in `tokens.css`/`tokens.json`.** Per architecture.md ADR-0009, the backend only ever persists a selected preset's *id* (a string); the full color definitions below belong entirely to the frontend, in a small static data module (`src/lib/theme-presets.ts` — see components.md, Theme Preset Card). They govern **terminal content colors only** (the `xterm.js` `Theme` object for each pane) — they never apply to app chrome (sidebar, modals, buttons), which stays governed by §4.1's tokens exactly as before. Do not add a preset color here to `tokens.css` by mistake, and do not pull an app-chrome token into a preset just because the hex happens to match — the two systems are deliberately independent so one can't drift by editing the other.
 
-All four presets are dark (no light terminal theme ships in MVP) — this directly extends the app's existing dark-only stance (§1, §3) to terminal content, the same way it already applies to app chrome. A light terminal preset is an explicit non-goal for now, exactly like light app-chrome mode.
+**App Default** is the only preset original to this app; it's derived from §4.1's existing tokens so a user who never opens Settings sees no change from today's behavior. It's also the one preset where reusing an app-chrome hex is intentional (ties terminal content back to the app's own identity) — the others are independent, widely-recognized reference palettes (Dracula, Nord, Solarized Dark/Light, GitHub Light), chosen deliberately over inventing new color schemes: each is a known quantity many developers already recognize on sight, which is the same "boring/proven over novel" reasoning architecture.md applies to libraries (NFR-6), applied here to color.
 
-**App Default** is the only preset original to this app; it's derived from §4.1's existing tokens so a user who never opens Settings sees no change from today's behavior. It's also the one preset where reusing an app-chrome hex is intentional (ties terminal content back to the app's own identity) — the other three are independent, widely-recognized reference palettes (Dracula, Nord, Solarized Dark), chosen deliberately over inventing new color schemes: each is a known quantity many developers already recognize on sight, which is the same "boring/proven over novel" reasoning architecture.md applies to libraries (NFR-6), applied here to color.
+**Dark presets** (App Default's dark variant, plus the three fixed dark reference palettes):
 
-| Slot | App Default | Dracula | Nord | Solarized Dark |
+| Slot | App Default (dark) | Dracula | Nord | Solarized Dark |
 |---|---|---|---|---|
 | background | `#0D0F14` | `#282A36` | `#2E3440` | `#002B36` |
 | foreground | `#E4E7EC` | `#F8F8F2` | `#D8DEE9` | `#839496` |
@@ -118,6 +145,52 @@ All four presets are dark (no light terminal theme ships in MVP) — this direct
 
 Nord's normal/bright rows are intentionally near-identical for colors other than black/white — that's Nord's actual documented palette (low bright/normal differentiation is one of its defining traits), not an error to "fix" by inventing more contrast.
 
+#### 4.5a Light presets and the App Default coupling rule (v2.6)
+
+Until v2.6 every preset was dark, justified as "extending the app's dark-only stance (§1, §3) to terminal content." **That justification died with v2.5**, which gave app chrome a light theme — §1/§3 no longer say dark-only, so the premise the old rule stood on no longer exists. v2.6 therefore re-decides the question on its own merits rather than inheriting a stance that was removed.
+
+**App Default is theme-aware; every other preset is a fixed, explicit choice.** This is not new coupling bolted on — it honors App Default's *existing* definition. That preset has always meant "derived from §4.1's tokens so the terminal matches the app." §4.1 now has two token sets (§4.1a), so following the active one is what that definition already required; leaving it pinned to the dark values would be the actual contradiction.
+
+| Preset | Under dark chrome | Under light chrome | Selection |
+|---|---|---|---|
+| **App Default** | dark variant | light variant | automatic — follows `data-theme` (§4.1a) |
+| Dracula, Nord, Solarized Dark | dark | dark | manual, fixed |
+| Solarized Light, GitHub Light | light | light | manual, fixed |
+
+**The persisted value does not change shape.** ADR-0009's model — the backend stores only a preset *id* string — is untouched: the id stays `"app-default"` in both themes, and the frontend resolves which variant to hand `xterm.js` at render time, exactly as it already resolves `data-theme` itself. Do not persist `"app-default-light"` as a separate id; that would make the stored setting theme-dependent and break the round-trip when the user switches chrome themes.
+
+**Why this specific coupling, and not full independence.** It is what keeps §4.6's accepted-risk argument true. That argument (below, and in §7) is bounded partly by "a bright terminal backdrop requires the user to actively choose something unusual." Under full independence, picking Light chrome would strand the user on a dark terminal until they *also* changed the preset — so the common fix would be picking a light preset, making bright backdrops ordinary under *both* chrome themes and invalidating the bound. With App Default following the theme, the light-chrome user is already served automatically, and running a light terminal under **dark** chrome stays what it was: a deliberate, unusual combination. The coupling buys back the exact precondition the contrast math depends on.
+
+**Light preset color values** (the two manual ones are the published upstream palettes, unmodified; App Default Light is derived from §4.1a's light tokens the same way App Default Dark is derived from §4.1's dark ones):
+
+| Slot | App Default Light | Solarized Light | GitHub Light |
+|---|---|---|---|
+| background | `#F3F4F7` | `#FDF6E3` | `#FFFFFF` |
+| foreground | `#14161B` | `#657B83` | `#24292F` |
+| cursor | `#16741C` | `#586E75` | `#24292F` |
+| cursorAccent | `#F3F4F7` | `#FDF6E3` | `#FFFFFF` |
+| black | `#14161B` | `#073642` | `#24292F` |
+| red | `#DB0A0A` | `#DC322F` | `#CF222E` |
+| green | `#16741C` | `#859900` | `#116329` |
+| yellow | `#8D6703` | `#B58900` | `#4D2D00` |
+| blue | `#1D63D2` | `#268BD2` | `#0969DA` |
+| magenta | `#8B3FD9` | `#D33682` | `#8250DF` |
+| cyan | `#0E6E8C` | `#2AA198` | `#1B7C83` |
+| white | `#F9FAFB` | `#EEE8D5` | `#6E7781` |
+| brightBlack | `#565D6B` | `#002B36` | `#57606A` |
+| brightRed | `#A80808` | `#CB4B16` | `#A40E26` |
+| brightGreen | `#0C4010` | `#586E75` | `#1A7F37` |
+| brightYellow | `#6B4E02` | `#657B83` | `#633C01` |
+| brightBlue | `#0F52A8` | `#839496` | `#218BFF` |
+| brightMagenta | `#6D28B4` | `#6C71C4` | `#A475F9` |
+| brightCyan | `#0B5F79` | `#93A1A1` | `#3192AA` |
+| brightWhite | `#FFFFFF` | `#FDF6E3` | `#8C959F` |
+
+**App Default Light inverts systematically, including `bright*`.** On a dark background "bright" means *lighter* (more contrast, more emphasis); on a light background the emphatic direction is *darker*, so App Default Light's `bright*` row is darker than its normal row — the mirror of App Default Dark, not a copy of it. Its `black`/`white` slots invert the same way: `black` takes the text color (`--graphite-900`) and `white` takes the surface color (`--paper-100`), matching how App Default Dark maps `black` to `--ink-900` and `white` to `--white-90`. Every App Default Light accent was picked to clear 4.5:1 against its own `#F3F4F7` background (verified in §7) — the dark preset's `blue`/`magenta`/`cyan` (`#3B82F6`/`#C084FC`/`#36B4E2`) all fail there (3.34/2.40/2.17), which is why they are re-derived rather than reused.
+
+Solarized Light and GitHub Light are reproduced verbatim from their upstream definitions and are **not** held to that AA bar — the same stance already taken for Dracula, Nord, and Solarized Dark. These are third-party reference palettes whose recognizability *is* the feature; silently "fixing" their contrast would make them no longer the palette the user asked for. This asymmetry is deliberate: we own App Default, so we hold it to our standard; we don't own the others, so we ship them faithfully.
+
+
 ### 4.6 Glass surfaces (FR-14, v2.0) — app-chrome tokens only, and only where the effect can actually exist
 
 FR-14 asked for translucent "frosted glass" surfaces across sidebar, modals, menus, and terminal-pane backgrounds, with one user-adjustable intensity. Measurement cut that list to **modals and menus**, and a v2.0 re-derivation then corrected the intensity range itself after the shipped v1.9 values proved imperceptible in real use.
@@ -130,6 +203,8 @@ FR-14 asked for translucent "frosted glass" surfaces across sidebar, modals, men
 |---|---|---|---|
 | App Default `#0D0F14` | `#0D0F14` | `#0D0F14` | `#0D0F14` |
 | Dracula `#282A36` | `#282A36` | `#23252F` | `#1D1F28` |
+
+**This finding survives v2.6 intact, and for the same reason rather than a lucky one.** App Default Light's background is `#F3F4F7`, which *is* light-mode `--color-background` (§4.1a) — so under light chrome the default preset composites over itself exactly as the dark one does under dark chrome. The identity that makes this finding true is "App Default's background equals the active `--color-background`", not the specific hex, and §4.5a's coupling rule is precisely what keeps that identity holding in both themes.
 
 This settles **PRD Q9** (which system owns FR-14's translucency values) on evidence rather than preference: **translucency belongs to app-chrome tokens exclusively, and §4.5's terminal presets stay fully opaque and untouched.** The boundary §4.5 draws between the two systems is preserved exactly as written — not because crossing it was forbidden, but because crossing it would buy nothing for the preset most users are on. Do not add an alpha or blur value to a theme preset later "for consistency"; consistency with an invisible effect is not a reason.
 
@@ -164,11 +239,70 @@ A backdrop *can* exceed the model: a contiguous near-white region larger than th
 | Modal @ 0.40 | 8.23:1 ✅ | 3.27:1 ❌ below AA |
 | Menu @ 0.80 | 6.85:1 ✅ | 2.72:1 ❌ below AA |
 
-**This is a knowingly accepted risk, not an oversight.** It is bounded in three ways that make it acceptable: it degrades **only secondary/muted text** — primary `--color-text` stays 6.8:1 or better everywhere, so nothing becomes unreadable; every shipped terminal preset is dark (§4.5), so a bright field requires the user to actively run something unusual; and the intensity slider always reaches `0`, an immediate full-opacity escape hatch. If a future change makes light terminal content common, this trade-off must be revisited — it is conditional on that assumption, so do not treat these floors as permanent.
+**This is a knowingly accepted risk, not an oversight.** It is bounded in three ways that make it acceptable: it degrades **only secondary/muted text** — primary `--color-text` stays 6.8:1 or better everywhere, so nothing becomes unreadable; a bright field requires the user to actively choose something unusual (see the v2.6 re-examination immediately below); and the intensity slider always reaches `0`, an immediate full-opacity escape hatch.
+
+##### v2.6 re-examination — light terminal presets, and why the bound survives
+
+The paragraph above used to justify its second bound with "every shipped terminal preset is dark (§4.5)", and warned: *"If a future change makes light terminal content common, this trade-off must be revisited."* **v2.6 is that change** (§4.5a adds Solarized Light, GitHub Light, and a light App Default variant), so the trade-off is revisited here rather than left to rot.
+
+The realistic blurred backdrop is no longer a single value — it depends on the active preset. Computed with §4.6's own model (~30% glyph coverage):
+
+| Active preset | Blurred backdrop | Reachable under dark chrome? |
+|---|---|---|
+| App Default (dark), Dracula, Nord, Solarized Dark | `#4D5055`–`#274A53` — at or below the `#56575A` model | yes, ordinary |
+| App Default **Light** | `#B0B1B5` | **no** — App Default follows the chrome theme (§4.5a), so its light variant only ever runs under light chrome |
+| Solarized Light | `#CFD1C6` | yes, but only by deliberate manual selection |
+| GitHub Light | `#BDBFC1` | yes, but only by deliberate manual selection |
+
+The dangerous combination is **dark chrome + a manually-chosen light preset** — a dark glass surface over a bright backdrop. At the current floors:
+
+| Combination | Composited | `--color-text` | `--color-text-muted` |
+|---|---|---|---|
+| Dark chrome + Solarized Light, modal @ 0.40 | `#36393C` | 9.37:1 ✅ | 3.73:1 ⚠️ |
+| Dark chrome + Solarized Light, menu @ 0.80 | `#404348` | 8.01:1 ✅ | 3.19:1 ⚠️ |
+| Dark chrome + GitHub Light, modal @ 0.40 | `#33363C` | 9.77:1 ✅ | 3.89:1 ⚠️ |
+| Dark chrome + GitHub Light, menu @ 0.80 | `#3C4047` | 8.40:1 ✅ | 3.34:1 ⚠️ |
+| **Light** chrome + either light preset | — | ✅ | **5.19–6.10:1 ✅** — better than today |
+
+**The floors are deliberately left unchanged, and the risk stays accepted.** Three reasons, in order of weight:
+
+1. **The bound did not move — only the likelihood did.** Every number above sits *inside* the pathological near-white envelope this section already accepts (modal 3.27:1, menu 2.72:1). Nothing newly exceeds the documented worst case; a previously rare backdrop simply became reachable by an ordinary setting. Primary text stays ≥ 8.01:1 throughout, so the "nothing becomes unreadable" guarantee holds untouched.
+2. **§4.5a's coupling is what preserves the "unusual choice" precondition.** Because App Default follows the chrome theme, a user who wants a light terminal under light chrome gets it automatically and never touches the preset picker. Reaching a bright backdrop under *dark* chrome therefore still requires deliberately selecting a named light palette against the grain of the active theme — exactly the "actively choose something unusual" the bound asserts. **Had full independence been chosen instead, this bound would have been invalidated** and the floors would have needed re-derivation.
+3. **Fixing it globally would undo v2.0.** Holding muted text at AA against a Solarized Light backdrop requires the menu floor to rise 0.80 → **0.94** — which measures 76/765 see-through, back inside the imperceptible range that v2.0 was written specifically to correct (v1.9's 0.95 menu floor measured ~36/765 and was rejected for exactly this). Tightening the floors for every user to protect one deliberately-chosen combination would trade a real, visible feature for an edge case with a working escape hatch.
+
+The escape hatch is unchanged and reachable: `--glass-intensity: 0` restores full opacity instantly, and light chrome (where the same presets measure 5.19–6.10:1) is always available.
 
 **The intensity control (resolves PRD Q10).** One user-facing slider writes `--glass-intensity` (0..1); each surface derives its own alpha from it inside `tokens.css`, clamped to its own floor. A single control stays safe across surfaces with different tolerances because the per-surface ranges do the protecting — the user adjusts one number and cannot reach a per-surface value the floor forbids. The scale is linear, and the default is `0` (fully opaque — the app looks exactly as it does today until the user opts in).
 
 **NFR-9 rule — intensity 0 must mean the property is absent, not zero.** `backdrop-filter: blur(0px)` still promotes the element to its own compositing layer and pays most of the per-frame cost for no visual result. At `--glass-intensity: 0`, implementations must omit `backdrop-filter` entirely (gate it behind a class or attribute selector), not merely compute it to zero. This matters more here than in a typical web app: ADR-0006 disabled the WebGL terminal renderer, so the app's rendering headroom (NFR-7) is already narrower than originally designed for. The v2.0 radius increase (12px → 24px) raises the per-frame cost of the enabled state, which makes this gate more load-bearing, not less.
+
+#### Light re-derivation (v2.5) — the worst-case direction flips
+
+§4.1a's light theme adds `--color-surface-elevated`/`--color-menu-glass` values that are near-white (`--paper-50`) instead of near-black (`--ink-850`), and swaps `--color-text`/`--color-text-muted` for the dark `--graphite-900`/`--graphite-600` pair. This is not a cosmetic swap of the same math — **which direction "more see-through" moves the composited color reverses.**
+
+In dark mode, a dark glass surface composited over the realistic blurred terminal backdrop (`#56575A`, unchanged by app theme — terminal content is always dark, §4.5) stays dark at every alpha, so light text on it barely loses contrast as the surface gets more see-through. In light mode, a *white* glass surface composited over that same dark backdrop gets **darker** as it becomes more see-through — more of the dark backdrop shows through a lighter surface, dragging its luminance down toward the backdrop's. Dark text sitting on top loses contrast fast. This is the direct light-mode analogue of §4.7's wallpaper-worst-case flip below, arriving at the identical structural lesson: don't assume a floor transfers between themes just because the alpha formula looks the same.
+
+Floors re-derived (composite `--paper-50` at alpha over the same realistic backdrop model §4.6 already established, then checked against `--graphite-600`, the binding constraint in both themes):
+
+| Surface | Dark floor | Light floor | Composited (light, at floor) | `--graphite-600` ratio |
+|---|---|---|---|---|
+| Modal | 0.40 | **0.85** | `#DEDEDF` | 4.92:1 ✅ |
+| Menu | 0.80 | **0.80** | `#DDDDDE` | 4.87:1 ✅ |
+
+Light mode's usable range is far narrower than dark mode's — modal goes from "60% see-through at its floor" (dark) to "15% see-through at its floor" (light), because the backdrop-darkening effect described above eats the margin much faster than dark mode's backdrop-lightening-relative-to-black effect does. This is a genuine, computed asymmetry between the themes, not an oversight to "fix" by widening the light range — doing so would reintroduce the exact contrast failure this derivation exists to prevent.
+
+Counter-intuitively, the *ordering* between modal and menu also does not carry over: in dark mode modal is the more-see-through surface (0.40 vs menu's 0.80) because `--color-backdrop` damps what's beneath it before the glass math even starts. In light mode that same damping makes the modal's effective backdrop *darker* (`--color-backdrop` is a dark overlay in both themes, §4.1a) than the menu's raw, undamped terminal backdrop — so for a light glass surface, the modal now needs to stay *more* opaque than the menu, not less. Both floors are correct; do not "equalize" them expecting the dark-mode ordering to hold.
+
+**Accepted risk — a near-black contiguous terminal region.** Same category of edge case as dark mode's near-white one (§4.6 above), mirrored: a sparse/low-glyph-density pane, a solid dark selection block, or similar can average darker than the realistic `#56575A` model, down toward a raw dark preset background. At the true bound (`#000000`):
+
+| Surface @ floor, near-black backdrop | `--graphite-900` | `--graphite-600` |
+|---|---|---|
+| Modal @ 0.85 | 12.82:1 ✅ | 4.69:1 ✅ — modal clears even this bound |
+| Menu @ 0.80 | 11.27:1 ✅ | 4.12:1 ❌ below AA |
+
+Bounded the same three ways as dark mode's accepted risk: only muted text degrades (primary text never drops below 11:1 in this scenario); reaching a near-black average needs an unusually sparse or dark pane, not ordinary use; and `--glass-intensity: 0` is always the reachable, fully-opaque escape hatch.
+
+**v2.6 note — this particular risk got *smaller*, not larger.** It is the mirror of the dark-mode case: it needs a near-**black** backdrop, so light terminal presets make it rarer, not more common. And under light chrome the default preset is now App Default *Light* (§4.5a), whose blurred backdrop is `#B0B1B5` — far from black. The second bound above was originally worded "every shipped terminal preset is dark", which was both stale after v2.6 and, in this specific direction, arguing against its own conclusion; it is restated as a claim about the backdrop rather than the preset roster.
 
 ### 4.7 Window transparency (FR-15, v2.1) — the scrim that makes an unmeasurable backdrop safe
 
@@ -218,6 +352,22 @@ The working shape, verified by the same measurement (stdev 127.49 — indistingu
 
 Do not "simplify" this back into the xterm theme. The one-step version is what shipped first, and it left terminal panes opaque while every other surface went translucent.
 
+#### Light re-derivation (v2.5) — the worst-case wallpaper flips
+
+§4.7's original floor (α=0.64) was computed against a pure **white** wallpaper because dark-mode chrome is light-text-on-dark-surface, and a white wallpaper showing through is the hardest case for that pairing. Light-mode chrome is the mirror image — dark-text-on-light-surface (`--graphite-900` on `--paper-200`) — so its hardest case is the opposite extreme: a pure **black** wallpaper, which pulls the composited background dark and erodes the exact contrast dark text depends on.
+
+Composite `--paper-200` at alpha over `#000000`, checked against `--graphite-900` (primary) and `--graphite-600` (muted), the same method §4.7 used for dark mode:
+
+| Wallpaper case | Alpha | Composited | `--graphite-900` | `--graphite-600` |
+|---|---|---|---|---|
+| Black (true worst case) | 0.55 | `#868688` | 4.98:1 ✅ | 1.82:1 ❌ |
+| Light wallpaper (common case) | 0.55 | `#F4F4F4` | — | 6.02:1 ✅ |
+
+`--window-scrim-alpha` in light mode is therefore `calc(1 - 0.45 * var(--window-transparency))` — 1.00 → 0.55, a *wider* usable range than dark mode's 1.00 → 0.64 (coefficient 0.45 vs 0.36). This is the opposite asymmetry from §4.6's glass re-derivation above, and for a different reason: FR-14's floor is set by how much a *translucent surface* gets pulled toward a backdrop it's blended with, while FR-15's floor is set by how much a wallpaper *shows through* a scrim at a given alpha — a black wallpaper's darkening effect on the light paper background saturates less aggressively, per unit of alpha, than the equivalent pull in the glass case. Do not assume the two coefficients should match, or "average" them — each is independently derived from its own worst case and composite chain.
+
+**Primary text is guaranteed; secondary text is knowingly not** — same structure and same trade as dark mode (§4.7 above), not a new decision: the floor that would also protect `--graphite-600` on a black wallpaper is materially higher (less see-through), which would repeat the v2.0 imperceptibility mistake this design system has already corrected once. Mitigations are identical to dark mode's: `0` (fully opaque) is the default and always reachable; primary text and terminal output never drop below the guaranteed floor on any wallpaper; muted text is never the sole carrier of meaning (§7's colour-alone rule).
+
+**The layering rule (§4.7's ownership table) is theme-independent** — it governs which surface paints a scrim for a given screen region, not what color that scrim is. No changes needed there for light mode; `--color-background-scrim`/`--color-surface-scrim` simply resolve to the light paper values and light `--window-scrim-alpha` under `:root[data-theme="light"]`, same ownership, same rule.
 
 ## 5. Layout rules
 
@@ -268,6 +418,47 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 | `--color-text-muted` (#8B92A3) | modal glass at α=0.40 (`#3F4147`) | 3.27:1 | ⚠️ below AA — knowingly accepted, see §4.6 |
 | `--color-text` (#E4E7EC) | menu glass at α=0.80 (`#494D54`) | 6.85:1 | ✅ AA/AAA — primary text never fails |
 | `--color-text-muted` (#8B92A3) | menu glass at α=0.80 (`#494D54`) | 2.72:1 | ⚠️ below AA — knowingly accepted, see §4.6 |
+| **Light theme (v2.5)** — `:root[data-theme="light"]`, see §4.1a | | | |
+| `--color-text` (#14161B) | `--color-background` (#F3F4F7) | 16.46:1 | ✅ AA/AAA |
+| `--color-text-muted` (#565D6B) | `--color-background` (#F3F4F7) | 6.02:1 | ✅ AA |
+| `--color-text-muted` (#565D6B) | `--color-surface` (#F9FAFB) | 6.33:1 | ✅ AA |
+| `--color-text` (#14161B) | `--color-surface-elevated` (#FFFFFF) | 18.10:1 | ✅ AA/AAA |
+| `--color-primary` (#16741C, unchanged from dark) | `--color-background` (#F3F4F7) | 5.38:1 | ✅ AA (clears both the 3:1 UI-component threshold and 4.5:1 text — no light-specific token needed) |
+| `--color-security` (#1B7C59) | `--color-background` (#F3F4F7) | 4.70:1 | ✅ AA |
+| `--color-security` (#1B7C59) | `--color-security-bg-subtle` (#E3F5EE) | 4.56:1 | ✅ AA |
+| `--color-danger` (#DB0A0A) | `--color-background` (#F3F4F7) | 4.70:1 | ✅ AA |
+| `--color-danger` (#DB0A0A) | `--color-danger-bg-subtle` (#FEF1F1) | 4.70:1 | ✅ AA |
+| `--color-warning` (#8D6703) | `--color-background` (#F3F4F7) | 4.70:1 | ✅ AA |
+| `--paper-border-strong` (#7A8292) | `--color-background` (#F3F4F7) | 3.51:1 | ✅ AA (UI component, 3:1 threshold) |
+| **Light glass surfaces (§4.6 Light re-derivation)** — at maximum intensity, over the realistic blurred backdrop `#56575A` | | | |
+| `--color-text-muted` (#565D6B) | modal glass at α=0.85 (`#DEDEDF`) | 4.92:1 | ✅ AA |
+| `--color-text-muted` (#565D6B) | menu glass at α=0.80 (`#DDDDDE`) | 4.87:1 | ✅ AA |
+| **Light window transparency (§4.7 Light re-derivation)** — at the scrim floor α=0.55 over a BLACK wallpaper, the true worst case | | | |
+| `--color-text` (#14161B) | root scrim at α=0.55 over black wallpaper (`#868688`) | 4.98:1 | ✅ AA — primary text guaranteed on any wallpaper |
+| `--color-text-muted` (#565D6B) | root scrim at α=0.55 over black wallpaper (`#868688`) | 1.82:1 | ⚠️ below AA — knowingly accepted (same trade as dark mode), see §4.7 |
+| `--color-text-muted` (#565D6B) | root scrim at α=0.55 over a light wallpaper (`#F4F4F4`) | 6.02:1 | ✅ AA — the common case |
+| **Light glass, near-black pathological backdrop** — accepted risk, §4.6 | | | |
+| `--color-text-muted` (#565D6B) | modal glass at α=0.85 (`#D9D9D9`) | 4.69:1 | ✅ AA — modal clears even this bound |
+| `--color-text-muted` (#565D6B) | menu glass at α=0.80 (`#CCCCCC`) | 4.12:1 | ⚠️ below AA — knowingly accepted, see §4.6 |
+| **App Default Light terminal preset (v2.6, §4.5a)** — ANSI accents on the preset's own `#F3F4F7` background. This preset alone is held to AA because we derive it; the third-party palettes (Solarized, GitHub, Dracula, Nord) ship verbatim and are deliberately not audited — see §4.5a | | | |
+| `foreground` (#14161B) | preset background (#F3F4F7) | 16.46:1 | ✅ AA/AAA |
+| `red` (#DB0A0A) | preset background (#F3F4F7) | 4.70:1 | ✅ AA |
+| `green` (#16741C) | preset background (#F3F4F7) | 5.38:1 | ✅ AA |
+| `yellow` (#8D6703) | preset background (#F3F4F7) | 4.69:1 | ✅ AA |
+| `blue` (#1D63D2) | preset background (#F3F4F7) | 5.07:1 | ✅ AA — re-derived; the dark preset's #3B82F6 fails here at 3.34:1 |
+| `magenta` (#8B3FD9) | preset background (#F3F4F7) | 5.01:1 | ✅ AA — re-derived; the dark preset's #C084FC fails here at 2.40:1 |
+| `cyan` (#0E6E8C) | preset background (#F3F4F7) | 5.26:1 | ✅ AA — re-derived; the dark preset's #36B4E2 fails here at 2.17:1 |
+| `brightBlack` (#565D6B) | preset background (#F3F4F7) | 6.02:1 | ✅ AA |
+| `bright{Red,Green,Yellow,Blue,Magenta,Cyan}` | preset background (#F3F4F7) | 6.52–10.87:1 | ✅ AA/AAA — darker than their normal counterparts, the light-mode direction of "brighter" (§4.5a) |
+| **Dark chrome + a manually-chosen light terminal preset (v2.6)** — accepted risk, bound unchanged, see §4.6's v2.6 re-examination | | | |
+| `--color-text` (#E4E7EC) | modal glass α=0.40 over Solarized Light backdrop (`#36393C`) | 9.37:1 | ✅ AA/AAA — primary text never fails |
+| `--color-text-muted` (#8B92A3) | modal glass α=0.40 over Solarized Light backdrop (`#36393C`) | 3.73:1 | ⚠️ below AA — knowingly accepted, inside the existing pathological envelope |
+| `--color-text` (#E4E7EC) | menu glass α=0.80 over Solarized Light backdrop (`#404348`) | 8.01:1 | ✅ AA/AAA |
+| `--color-text-muted` (#8B92A3) | menu glass α=0.80 over Solarized Light backdrop (`#404348`) | 3.19:1 | ⚠️ below AA — the worst reachable case; still above the accepted pathological bound of 2.72:1 |
+| `--color-text-muted` (#8B92A3) | menu glass α=0.80 over GitHub Light backdrop (`#3C4047`) | 3.34:1 | ⚠️ below AA — knowingly accepted |
+| **Light chrome + a light terminal preset** — the combination §4.5a's coupling makes the common one | | | |
+| `--color-text-muted` (#565D6B) | modal glass α=0.85 over Solarized Light backdrop (`#E3E4E4`) | 5.19:1 | ✅ AA — better than the dark-preset case |
+| `--color-text-muted` (#565D6B) | menu glass α=0.80 over Solarized Light backdrop (`#F5F6F4`) | 6.10:1 | ✅ AA |
 
 **Flagged and resolved during design:** white text directly on either raw gradient stop — `--green-500` (#3EDA49, **1.9:1**) or `--cyan-500` (#36B4E2, **1.8:1**) — is a real failure at both ends. This is why §3/Principle 2 restricts the gradient to purely decorative use (underline bars, glows) and components.md explicitly forbids placing text on it. Buttons use the solid `--color-primary` (5.9:1), never the gradient, for exactly this reason.
 
@@ -300,6 +491,15 @@ Target: WCAG 2.1 AA. All pairs below are computed (relative luminance formula), 
 - ❌ Don't paint a surface's background on an inner wrapper when an outer element owns its padding/border → ✅ the element with the padding owns the background. Under FR-15's transparent window an unpainted box is not "one shade off", it is a hole straight through to the desktop — this is exactly how v2.3 left a see-through gutter inside every terminal pane's focus outline
 - ❌ Don't render a message into always-visible chrome without an owned lifetime → ✅ anything in persistent chrome (the sidebar footer, a status bar) needs an auto-clear timer, a dismiss control, or both, and every write to it should go through the one helper that owns that lifetime. A raw assignment at each call site is how the sidebar's error banner became permanent
 - ❌ Don't add a second confirmation modal/step on top of the master-password-change form → ✅ the three-field form (current, new, confirm) is itself the friction gate; a nested confirm dialog is ceremony this app's "perceived speed" principle doesn't want
+- ❌ Don't assume a floor, alpha coefficient, or surface ordering computed for one theme transfers to the other (v2.5) → ✅ re-derive from the theme's own worst case every time — §4.6's light glass floors are far tighter than dark's, §4.7's light window floor is wider than dark's, and modal/menu even swap which one is more restrictive; "it's the same formula, just different colors" is exactly the assumption that produces a shipped contrast failure
+- ❌ Don't reuse `--glass-edge`'s dark-theme rgba (`rgba(255,255,255,0.08)`) under `[data-theme="light"]` → ✅ light mode has its own `--glass-edge: rgba(0,0,0,0.08)` — a light-on-light rim is invisible; this is why it's declared inside the light override block, not left to inherit
+- ❌ Don't give `--color-backdrop` a light-mode override "for consistency with the theme" → ✅ it's deliberately unchanged in both themes (§4.1a) — a modal scrim recedes the app regardless of chrome color; making it light would defeat the purpose of a scrim
+- ❌ Don't add a raw `@media (prefers-color-scheme: light)` block to `tokens.css` to implement "System" → ✅ theme resolution (including live OS-change tracking) is JS's job; CSS only ever reads the `data-theme` attribute the frontend sets (§4.1a, §9) — a parallel media-query path would let CSS and JS disagree about which theme is active
+- ❌ Don't persist `"app-default-light"` as a distinct preset id (v2.6) → ✅ the stored id stays `"app-default"` in both themes and the frontend picks the variant at render time (§4.5a); a theme-dependent stored id breaks the round-trip the moment the user switches chrome themes, and violates ADR-0009's "the backend only ever persists an id" model
+- ❌ Don't make Dracula, Nord, Solarized Dark/Light, or GitHub Light follow the chrome theme "for consistency with App Default" (v2.6) → ✅ App Default follows because it is *defined* as "derived from the app's own tokens" (§4.5a); the named palettes are chosen by name, and silently swapping Dracula for something else when the theme flips would be selecting a palette the user never picked
+- ❌ Don't "fix" the contrast of Solarized Light, GitHub Light, Dracula, or Nord to make them pass AA → ✅ third-party reference palettes ship verbatim (§4.5a); their recognizability is the feature, and an altered Dracula is not Dracula. Only App Default (ours) is held to §7's bar
+- ❌ Don't tighten the FR-14 glass floors because a light terminal preset can now sit under dark chrome (v2.6) → ✅ that combination is a documented accepted risk whose bound did not move (§4.6's v2.6 re-examination); holding it at AA needs a 0.94 menu floor = 76/765 see-through, re-creating exactly the imperceptibility v2.0 was written to fix. The escape hatches are `--glass-intensity: 0` and light chrome
+- ❌ Don't assume App Default Light's background is interchangeable with any other light hex → ✅ it must equal light-mode `--color-background` (`#F3F4F7`); that identity is what keeps §4.6's Finding 2 (translucency is inert on the default preset) true in light mode, and breaking it silently resurrects a setting that visibly does nothing
 
 ## 9. Instructions for AI agents
 
@@ -313,12 +513,17 @@ You are implementing UI for this project. Follow these rules:
 6. **Do not modify `tokens.css`/`tokens.json`** unless explicitly asked; propose changes instead.
 7. **This is a Tauri + Svelte app** (architecture.md §7) — implement components as Svelte components consuming these CSS custom properties directly; there is no Tailwind/CSS-in-JS layer assumed by this package.
 8. **Respect the one-place-only gradient rule** (Principle 2) literally — if you're about to use `--color-accent-gradient` a second place, stop and flag it for review rather than proceeding.
-9. **Terminal theme preset colors (§4.5) are not tokens** — implement them as the frontend-only data module architecture.md ADR-0009 specifies (`src/lib/theme-presets.ts`), not as additions to `tokens.css`/`tokens.json`. Rule 2's "never invent values" still applies to app-chrome colors; it does not extend to these — §4.5's table is itself the source of truth for them.
+9. **Terminal theme preset colors (§4.5) are not tokens** — implement them as the frontend-only data module architecture.md ADR-0009 specifies (`src/lib/theme-presets.ts`), not as additions to `tokens.css`/`tokens.json`. Rule 2's "never invent values" still applies to app-chrome colors; it does not extend to these — §4.5's tables are themselves the source of truth for them.
+10. **App-chrome theme (§4.1a, v2.5) is driven by a `data-theme="dark"|"light"` attribute on `<html>`, set by frontend JS — never by a CSS media query.** The settings store resolves the user's Dark/Light/System preference to a concrete value (System reads `matchMedia('(prefers-color-scheme: light)')` and subscribes to its `change` event) and writes the attribute before first paint. Components never branch on theme in component logic or markup — they reference the same semantic tokens (`--color-background`, `--color-text`, etc.) in both themes, and `tokens.css`'s override block does the substitution. If you find yourself writing `if (theme === 'light')` in a component, stop — that almost certainly means a needed token doesn't exist yet; propose it instead (Rule 2).
+11. **App Default is the one theme-aware preset (§4.5a, v2.6).** It has two variants (dark/light) selected by the resolved `data-theme` from Rule 10; every other preset is fixed regardless of chrome theme. Two invariants an implementation must preserve: the **persisted id stays `"app-default"`** for both variants (never a second id — ADR-0009 stores an id, and a theme-dependent id breaks the round-trip), and **App Default's background must equal the active `--color-background`** (`#0D0F14` dark / `#F3F4F7` light), which is what keeps §4.6's Finding 2 true. Resolve the variant where the `xterm.js` theme object is built, next to where FR-15's scrim alpha is already composed (§4.7 Finding 4) — not by mutating the preset data.
 
 ## 10. Changelog
 
 | Version | Date | Change |
 |---|---|---|
+| 2.7 | 2026-07-23 | EVOLVE per architecture.md v1.8 (keybinding registry extended to `sidebar.toggle`, Ctrl+B) — no new visual spec, same "behavioral only" precedent as v1.7's zoom/tab-cycling additions and the original Ctrl+Shift+C/V clipboard shortcuts. The existing "Sidebar show/hide toggle" pattern (v1.4, hamburger ☰ icon since v1.7) gains a keyboard trigger for its already-implemented `appStore.toggleSidebar()`; the button remains the only visual affordance. No new tokens, no visual direction change. |
+| 2.6 | 2026-07-23 | EVOLVE + DRIFT FIX — added light terminal presets (§4.5a), reversing v1.6's "a light terminal preset is an explicit non-goal." **The drift this fixes matters as much as the feature:** §4.5 justified dark-only presets by "extending the app's dark-only stance (§1, §3)" — a premise **v2.5 deleted** when it gave chrome a light theme, leaving §4.5 standing on a rule that no longer existed. Three further sites asserted "every shipped terminal preset is dark" as load-bearing argument (§4.1a, and both of §4.6's accepted-risk bounds); all were re-examined rather than reworded. New presets: **Solarized Light** and **GitHub Light** (upstream palettes, verbatim) plus an **App Default Light** variant derived from §4.1a's light tokens — its `blue`/`magenta`/`cyan` had to be re-derived (`#1D63D2`/`#8B3FD9`/`#0E6E8C`) because the dark preset's fail AA on a light background (3.34/2.40/2.17), and its `bright*` row is *darker* than normal, the light-mode direction of "brighter." **The coupling rule (§4.5a) is the load-bearing decision:** App Default follows the chrome theme — not new coupling, but honoring its existing definition as "derived from §4.1's tokens," which v2.5 made two-valued — while every named palette stays a fixed manual choice. **This choice is what preserved §4.6's contrast math.** Re-derived the blurred backdrop per preset: dark presets average `#4D5055`–`#274A53` (at or under the existing `#56575A` model), light ones `#B0B1B5`–`#CFD1C6`. The dangerous combination is dark chrome + a light preset, where muted text falls to 3.19–3.89:1. Floors deliberately **unchanged**, for three computed reasons: the bound didn't move (every value sits inside the already-accepted pathological envelope of 3.27/2.72, and primary text stays ≥8.01:1); the coupling keeps "the user actively chose something unusual" true, which full independence would have invalidated; and holding AA there needs a 0.94 menu floor = 76/765 see-through, re-creating precisely the imperceptibility v2.0 was written to correct. Light chrome + light preset measures *better* than today (5.19–6.10:1). §4.6's Finding 2 survives on its real identity ("App Default's background equals the active `--color-background`") rather than a hex. §4.7/FR-15 untouched — its floors depend on the wallpaper, never on preset colors. Six new §8 rules and a new §9 rule 11 guard this area (theme-dependent preset ids, coupling the named palettes, "fixing" third-party palette contrast, tightening the glass floors). No token changes: presets have never been tokens, and this pass did not make them one. |
+| 2.5 | 2026-07-23 | EVOLVE — added light theme, reversing the v1.0–v2.4 "dark-only for MVP" decision (§1). New §4.1a documents the mechanism (`data-theme` attribute, resolved by frontend JS from a Dark/Light/System preference — never a CSS media query) and the systematic-inversion rule: every role, hue, and relationship from §3 is preserved, only the neutral ramp (`--paper-*`/`--graphite-*`, replacing `--ink-*`/`--white-*`) and three accent shades (security, warning, danger — re-derived darker to clear AA on a light background) actually change. `--color-primary`/`--color-focus` needed **no** light-specific value — `#16741C` already clears 5.38:1+ against every light surface. Re-derived FR-14 (§4.6) and FR-15 (§4.7) for light mode rather than assuming the dark floors' shape transfers, and both re-derivations surfaced genuine, non-obvious asymmetries: light glass floors are far *tighter* than dark's (a light surface darkens as it goes more see-through over dark terminal content — the opposite dynamic from dark mode) and modal/menu even swap which one is more restrictive; light window-transparency's floor is *wider* than dark's (0.55 vs 0.64), because the black-wallpaper-on-light-paper composite chain saturates less aggressively per unit of alpha than the white-wallpaper-on-dark-ink chain does. Both re-derivations keep the same accepted-risk structure as their dark-mode originals (primary text guaranteed, muted text knowingly not, at the true worst-case bound). New Settings Panel group "Appearance" (components.md) — a three-option `Segmented Control` (Dark/Light/System), the first real 3-option instance of that component. Terminal theme presets (§4.5) are explicitly unaffected — they stay dark-only, by design, independent of this app-chrome switch. Seven new §8 rules guard the mistakes this area invites (assuming a floor transfers between themes, reusing the wrong-theme `--glass-edge`, giving `--color-backdrop` a light override, implementing "System" via `@media` instead of the JS-set attribute). |
 | 1.0 | 2026-07-17 | Initial design system: brief, "Warp Modern" direction, full token set (verified contrast), 8 core components + 4 patterns. |
 | 1.1 | 2026-07-18 | EVOLVE: added Tab drag-to-split interaction — new `dragging` Tab state, Split Pane Container drop-zone system (4-triangle targeting, no center zone — this app has no per-pane tab strips, unlike VS Code), new `--color-primary-bg-subtle` token, new "Tab drag-to-split" pattern. No visual direction change. |
 | 1.2 | 2026-07-19 | EVOLVE per PRD v1.3: left-click on a sidebar project now switches to its existing tab instead of always duplicating; new "Menu" component (overflow + right-click context variant, identical content, keeps "Open in new tab" keyboard-reachable) replaces the old inline overflow-menu description in Sidebar Project List Item; new `open`/`active` left-edge bar states replace the unimplemented "opened once" dot-color idea from v1.0. No new tokens, no visual direction change. |

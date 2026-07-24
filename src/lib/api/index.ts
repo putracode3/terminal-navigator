@@ -135,7 +135,20 @@ export function pathExists(path: string): Promise<boolean> {
 	return invoke("path_exists", { path });
 }
 
+/** FR-17: `path`'s current git branch (or a detached-HEAD short hash),
+ * for display in a pane's title. `null` when `path` isn't inside a git
+ * repository — not an error. */
+export function getGitBranch(path: string): Promise<string | null> {
+	return invoke("get_git_branch", { path });
+}
+
 export type SidebarPosition = "left" | "right";
+
+/** design.md §4.1a (v2.5) — app-chrome appearance, distinct from
+ * `themePreset` (terminal content colors only, §4.5). "system" is resolved
+ * to "dark"/"light" by the frontend via `matchMedia`; the backend only
+ * persists the raw preference. */
+export type ThemeMode = "dark" | "light" | "system";
 
 export interface SettingsDto {
 	themePreset: string;
@@ -148,6 +161,9 @@ export interface SettingsDto {
 	 *  glassIntensity by design (ADR-0012): glass is panel-over-panel inside
 	 *  the app, this is the whole app over the desktop. */
 	windowTransparency: number;
+	/** design.md §4.1a (v2.5). Defaults to "dark" server-side for settings
+	 * files written before this field existed. */
+	themeMode: ThemeMode;
 }
 
 /** FR-13 — readable/writable without `unlock` (NFR-8/ADR-0009): callable

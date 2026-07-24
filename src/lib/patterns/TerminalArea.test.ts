@@ -68,6 +68,7 @@ vi.mock("$lib/api", async (importOriginal) => {
 import TerminalArea from "./TerminalArea.svelte";
 import { terminalStore } from "$lib/stores/terminal.svelte";
 import { settingsStore } from "$lib/stores/settings.svelte";
+import { appStore } from "$lib/stores/app.svelte";
 import { DEFAULT_KEYBINDINGS } from "$lib/keybindings";
 import { __resetTerminalRegistryForTests } from "$lib/terminal-registry";
 
@@ -86,6 +87,7 @@ beforeEach(() => {
 	terminalStore.tabs = [];
 	terminalStore.activeTabId = null;
 	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
+	appStore.sidebarHidden = false;
 	vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
 	vi.stubGlobal(
 		"ResizeObserver",
@@ -422,5 +424,55 @@ describe("TerminalArea — terminal.closeSession shortcut (Ctrl+Shift+W)", () =>
 		await fireEvent.keyDown(window, { altKey: true, shiftKey: true, code: "KeyX" });
 		await flush();
 		expect(closeTerminalMock).toHaveBeenCalledWith(idA);
+	});
+});
+
+describe("TerminalArea — sidebar.toggle shortcut (Ctrl+B)", () => {
+	function ctrlB(target: Window | Element = window) {
+		return fireEvent.keyDown(target, { ctrlKey: true, code: "KeyB" });
+	}
+
+	it("flips appStore.sidebarHidden", async () => {
+		render(TerminalArea);
+		expect(appStore.sidebarHidden).toBe(false);
+
+		await ctrlB();
+		expect(appStore.sidebarHidden).toBe(true);
+
+		await ctrlB();
+		expect(appStore.sidebarHidden).toBe(false);
+	});
+
+	it("works with no active tab (unlike every other shortcut in this suite)", async () => {
+		render(TerminalArea);
+		expect(terminalStore.activeTabId).toBeNull();
+
+		await expect(ctrlB()).resolves.not.toThrow();
+		expect(appStore.sidebarHidden).toBe(true);
+	});
+
+	it("owns the keystroke fully — Ctrl+B must not also reach xterm as terminal input", async () => {
+		render(TerminalArea);
+		terminalStore.openTab("proj-a", "a", "/a");
+		await flush();
+
+		const event = new KeyboardEvent("keydown", { ctrlKey: true, code: "KeyB", bubbles: true, cancelable: true });
+		const stopPropagationSpy = vi.spyOn(event, "stopPropagation");
+		window.dispatchEvent(event);
+		await flush();
+
+		expect(stopPropagationSpy).toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("respects a rebound combo instead of a hardcoded Ctrl+B", async () => {
+		settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS, "sidebar.toggle": "Alt+Shift+S" };
+		render(TerminalArea);
+
+		await ctrlB();
+		expect(appStore.sidebarHidden).toBe(false);
+
+		await fireEvent.keyDown(window, { altKey: true, shiftKey: true, code: "KeyS" });
+		expect(appStore.sidebarHidden).toBe(true);
 	});
 });

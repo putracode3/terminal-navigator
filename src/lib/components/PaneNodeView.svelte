@@ -1,5 +1,6 @@
 <script lang="ts">
 	import TerminalPane from "./TerminalPane.svelte";
+	import PaneTitle from "./PaneTitle.svelte";
 	// Self-import for recursion (the modern replacement for the deprecated
 	// <svelte:self>) — Vite/the Svelte compiler resolve this fine since it's
 	// the same module being imported from itself.
@@ -115,12 +116,6 @@
 		dropZone = null;
 	}
 
-	function truncateMiddle(path: string, max = 40): string {
-		if (path.length <= max) return path;
-		const half = Math.floor((max - 1) / 2);
-		return `${path.slice(0, half)}…${path.slice(path.length - half)}`;
-	}
-
 	function startDrag(splitNode: Extract<PaneNode, { type: "split" }>, index: number, e: PointerEvent) {
 		e.preventDefault();
 		const container = containerEl;
@@ -184,7 +179,7 @@
 			{#if child.type === "leaf"}
 				<div class="leaf">
 					<div class="pane-header">
-						<span class="cwd" title={child.cwd}>{truncateMiddle(child.cwd)}</span>
+						<PaneTitle cwd={child.cwd} />
 						<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(child.sessionId)}>✕</button>
 					</div>
 					<div
@@ -267,15 +262,6 @@
 		padding: 0 var(--space-2);
 		background: var(--color-surface);
 		border-bottom: var(--border-width-sm) solid var(--color-border);
-	}
-
-	.cwd {
-		font-family: var(--font-family-mono);
-		font-size: var(--text-xs);
-		color: var(--color-text-muted);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 
 	.pane-close {

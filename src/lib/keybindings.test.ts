@@ -86,12 +86,16 @@ describe("actionLabel", () => {
 });
 
 describe("KEYBINDING_ACTIONS / DEFAULT_KEYBINDINGS", () => {
-	it("has exactly 13 actions, matching architecture.md §5.6's registry", () => {
-		expect(KEYBINDING_ACTIONS).toHaveLength(13);
+	it("has exactly 14 actions, matching architecture.md §5.6's registry", () => {
+		expect(KEYBINDING_ACTIONS).toHaveLength(14);
 	});
 
 	it("terminal.closeSession defaults to Ctrl+Shift+W (Tilix/Terminator parity)", () => {
 		expect(DEFAULT_KEYBINDINGS["terminal.closeSession"]).toBe("Ctrl+Shift+W");
+	});
+
+	it("sidebar.toggle defaults to Ctrl+B", () => {
+		expect(DEFAULT_KEYBINDINGS["sidebar.toggle"]).toBe("Ctrl+B");
 	});
 
 	it("every action has a default combo, and every default combo is unique", () => {

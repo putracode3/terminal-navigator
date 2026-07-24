@@ -10,7 +10,8 @@
 	import ThemePresetCard from "$lib/components/ThemePresetCard.svelte";
 	import KeybindingRow from "$lib/components/KeybindingRow.svelte";
 	import SegmentedControl from "$lib/components/SegmentedControl.svelte";
-	import { THEME_PRESETS } from "$lib/theme-presets";
+	import { THEME_PRESETS, getThemePreset } from "$lib/theme-presets";
+	import { themeStore } from "$lib/stores/theme.svelte";
 	import { KEYBINDING_ACTIONS, actionLabel, type ActionId } from "$lib/keybindings";
 	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { changeMasterPassword, isAppError, errorMessage } from "$lib/api";
@@ -141,6 +142,16 @@
 		{ value: "right", label: "Right" },
 	];
 
+	// design.md §4.1a / components.md Settings Panel (v2.5). Its own group,
+	// not folded into "Theme" below — that section is §4.5's terminal
+	// *content* presets, a deliberately separate system from app-chrome
+	// appearance (see §4.5's own separation rule).
+	const themeModeOptions = [
+		{ value: "dark", label: "Dark" },
+		{ value: "light", label: "Light" },
+		{ value: "system", label: "System" },
+	];
+
 	// Master password change — the one field group with real, hard-to-reverse
 	// consequences (rotates the encryption key), so it gets its own scoped
 	// submit rather than autosaving per keystroke.
@@ -215,6 +226,19 @@
 	{#snippet children()}
 		{#if settingsError}<p class="error">{settingsError}</p>{/if}
 		<section>
+			<h3>Appearance</h3>
+			<SegmentedControl
+				options={themeModeOptions}
+				value={settingsStore.themeMode}
+				onChange={(value) => {
+					settingsError = "";
+					settingsStore.setThemeMode(value as "dark" | "light" | "system").catch((e) => (settingsError = errorMessage(e)));
+				}}
+				ariaLabel="App appearance"
+			/>
+		</section>
+
+		<section>
 			<h3>Theme</h3>
 			<!-- svelte-ignore a11y_interactive_supports_focus -- WAI-ARIA radiogroup pattern: the group container is never a tab stop itself; each ThemePresetCard button carries its own native tabindex/focus, this container only adds arrow-key navigation between them -->
 			<div
@@ -224,7 +248,12 @@
 				bind:this={themeGridEl}
 				onkeydown={handleThemeGridKeydown}
 			>
-				{#each THEME_PRESETS as preset (preset.id)}
+				<!-- Resolved, not raw: App Default's card must preview the variant
+				     the chrome theme actually renders (components.md, Theme Preset
+				     Card Behavior). One card per preset in both themes — never a
+				     separate "App Default Light" entry (design.md §9 rule 11). -->
+				{#each THEME_PRESETS as listed (listed.id)}
+					{@const preset = getThemePreset(listed.id, themeStore.resolved)}
 					<ThemePresetCard
 						{preset}
 						selected={settingsStore.themePreset === preset.id}

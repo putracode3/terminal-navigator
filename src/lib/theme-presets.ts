@@ -2,13 +2,60 @@
 // data — the backend only ever persists a preset id (string); it never sees
 // these color values. Do not add these to tokens.css/tokens.json: they
 // govern terminal content only, never app chrome (design.md §4.5).
+//
+// v2.6 (design.md §4.5a): six presets, of which exactly ONE is theme-aware.
+// App Default has a dark and a light variant selected by the resolved chrome
+// theme, because that preset is *defined* as "derived from the app's own
+// tokens" and v2.5 made those tokens two-valued. Every other preset is a
+// fixed palette chosen by name — do not make them follow the theme (§8).
 import type { ITheme } from "@xterm/xterm";
+import type { ResolvedTheme } from "$lib/stores/theme.svelte";
 
 export interface ThemePresetDef {
 	id: string;
 	name: string;
 	theme: ITheme;
 }
+
+/** design.md §9 rule 11: App Default's light variant is NOT a separate preset
+ *  id. It is the same `"app-default"` id rendered against the light tokens —
+ *  persisting a distinct id would make the stored setting theme-dependent and
+ *  break the round-trip the moment the user switches chrome themes.
+ *
+ *  Its background must equal light-mode `--color-background` (#F3F4F7). That
+ *  identity is what keeps design.md §4.6 Finding 2 true (terminal-pane
+ *  translucency is inert on the default preset, because the preset composites
+ *  over itself) — see `appDefaultTheme` below. */
+const APP_DEFAULT_LIGHT: ITheme = {
+	background: "#F3F4F7",
+	foreground: "#14161B",
+	cursor: "#16741C",
+	cursorAccent: "#F3F4F7",
+	// Systematic inversion of the dark variant, including bright*: on a light
+	// background the emphatic direction is DARKER, so bright* sits below its
+	// normal counterpart rather than above it (design.md §4.5a). `black` takes
+	// the text color and `white` the surface color — the mirror of the dark
+	// variant's ink-900/white-90 mapping.
+	black: "#14161B",
+	red: "#DB0A0A",
+	green: "#16741C",
+	yellow: "#8D6703",
+	// blue/magenta/cyan are re-derived, not reused: the dark variant's
+	// #3B82F6/#C084FC/#36B4E2 measure 3.34/2.40/2.17 against #F3F4F7 and fail
+	// AA there. These clear 4.5:1 (design.md §7).
+	blue: "#1D63D2",
+	magenta: "#8B3FD9",
+	cyan: "#0E6E8C",
+	white: "#F9FAFB",
+	brightBlack: "#565D6B",
+	brightRed: "#A80808",
+	brightGreen: "#0C4010",
+	brightYellow: "#6B4E02",
+	brightBlue: "#0F52A8",
+	brightMagenta: "#6D28B4",
+	brightCyan: "#0B5F79",
+	brightWhite: "#FFFFFF",
+};
 
 export const THEME_PRESETS: ThemePresetDef[] = [
 	{
@@ -119,12 +166,86 @@ export const THEME_PRESETS: ThemePresetDef[] = [
 			brightWhite: "#FDF6E3",
 		},
 	},
+	// The two light palettes below are reproduced verbatim from upstream and
+	// are deliberately NOT contrast-adjusted — same stance as Dracula/Nord/
+	// Solarized Dark above. Their recognizability is the feature; an altered
+	// Solarized Light is not Solarized Light (design.md §4.5a, §8).
+	{
+		id: "solarized-light",
+		name: "Solarized Light",
+		theme: {
+			background: "#FDF6E3",
+			foreground: "#657B83",
+			cursor: "#586E75",
+			cursorAccent: "#FDF6E3",
+			black: "#073642",
+			red: "#DC322F",
+			green: "#859900",
+			yellow: "#B58900",
+			blue: "#268BD2",
+			magenta: "#D33682",
+			cyan: "#2AA198",
+			white: "#EEE8D5",
+			brightBlack: "#002B36",
+			brightRed: "#CB4B16",
+			brightGreen: "#586E75",
+			brightYellow: "#657B83",
+			brightBlue: "#839496",
+			brightMagenta: "#6C71C4",
+			brightCyan: "#93A1A1",
+			brightWhite: "#FDF6E3",
+		},
+	},
+	{
+		id: "github-light",
+		name: "GitHub Light",
+		theme: {
+			background: "#FFFFFF",
+			foreground: "#24292F",
+			cursor: "#24292F",
+			cursorAccent: "#FFFFFF",
+			black: "#24292F",
+			red: "#CF222E",
+			green: "#116329",
+			yellow: "#4D2D00",
+			blue: "#0969DA",
+			magenta: "#8250DF",
+			cyan: "#1B7C83",
+			white: "#6E7781",
+			brightBlack: "#57606A",
+			brightRed: "#A40E26",
+			brightGreen: "#1A7F37",
+			brightYellow: "#633C01",
+			brightBlue: "#218BFF",
+			brightMagenta: "#A475F9",
+			brightCyan: "#3192AA",
+			brightWhite: "#8C959F",
+		},
+	},
 ];
 
 const DEFAULT_PRESET = THEME_PRESETS[0];
 
-export function getThemePreset(id: string): ThemePresetDef {
-	return THEME_PRESETS.find((p) => p.id === id) ?? DEFAULT_PRESET;
+/** design.md §4.6 Finding 2's invariant, in one place: App Default's
+ *  background is whatever the active `--color-background` is. */
+function appDefaultTheme(resolved: ResolvedTheme): ITheme {
+	return resolved === "light" ? APP_DEFAULT_LIGHT : DEFAULT_PRESET.theme;
+}
+
+/** Resolves a persisted preset id to the theme actually rendered.
+ *
+ *  `resolved` only ever changes the result for `"app-default"` (design.md
+ *  §4.5a) — every other preset is a fixed palette and ignores it. Callers
+ *  pass `themeStore.resolved`; the default keeps pre-v2.6 behaviour for any
+ *  caller that genuinely has no theme context.
+ *
+ *  The returned object's `id` is always the persisted id, never a
+ *  variant-specific one (§9 rule 11) — the light variant of App Default is
+ *  still `"app-default"`. */
+export function getThemePreset(id: string, resolved: ResolvedTheme = "dark"): ThemePresetDef {
+	const preset = THEME_PRESETS.find((p) => p.id === id) ?? DEFAULT_PRESET;
+	if (preset.id !== DEFAULT_PRESET.id) return preset;
+	return { ...preset, theme: appDefaultTheme(resolved) };
 }
 
 /** FR-15 (design.md §4.7): makes the terminal's own background paint nothing,
@@ -159,8 +280,16 @@ export function withWindowTransparency(theme: ITheme, transparency: number): ITh
  *
  *  The 0.36 coefficient mirrors `--window-scrim-alpha` in tokens.css; if that
  *  floor is re-derived (design.md §4.7), both must move together. */
-export function paneBackground(theme: ITheme, transparency: number): string {
-	const hex = theme.background ?? "#0D0F14";
+export function paneBackground(
+	theme: ITheme,
+	transparency: number,
+	resolved: ResolvedTheme = "dark",
+): string {
+	// The fallback follows the active theme rather than being pinned to the
+	// dark background: under light chrome an unpainted pane would otherwise
+	// flash near-black, and — with FR-15's transparent window — a wrong-theme
+	// fallback is not "one shade off" but a visibly wrong surface.
+	const hex = theme.background ?? (appDefaultTheme(resolved).background as string);
 	if (transparency <= 0) return hex;
 	const alpha = 1 - 0.36 * Math.min(1, Math.max(0, transparency));
 	return hexToRgba(hex, alpha);

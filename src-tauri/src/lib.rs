@@ -3,6 +3,7 @@ mod commands;
 mod config_sync;
 mod crypto;
 mod error;
+mod git_status;
 mod project_store;
 mod pty_manager;
 mod settings_store;
@@ -88,6 +89,7 @@ pub fn run() {
             commands::export_config,
             commands::import_config,
             commands::path_exists,
+            commands::get_git_branch,
             commands::get_settings,
             commands::save_settings,
             commands::change_master_password,

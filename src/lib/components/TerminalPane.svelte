@@ -4,9 +4,16 @@
 	import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 	import { Terminal } from "@xterm/xterm";
 	import { FitAddon } from "@xterm/addon-fit";
+	import { WebLinksAddon } from "@xterm/addon-web-links";
 	import "@xterm/xterm/css/xterm.css";
+	import { openUrl } from "@tauri-apps/plugin-opener";
 	import { writeTerminal, resizeTerminal } from "$lib/api";
 	import { getThemePreset, withWindowTransparency, paneBackground } from "$lib/theme-presets";
+	// design.md §9 rule 11: App Default is theme-aware, so every preset lookup
+	// here needs the RESOLVED chrome theme (not settingsStore.themeMode, which
+	// may be "system"). This is the single resolution point for terminal
+	// content — no other component branches on theme.
+	import { themeStore } from "$lib/stores/theme.svelte";
 	import { matchesCombo } from "$lib/keybindings";
 	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { getTerminalHandle, registerTerminalHandle, type TerminalHandle } from "$lib/terminal-registry";
@@ -90,6 +97,16 @@
 		);
 	}
 
+	/** WebLinksAddon fires this for a plain click too — xterm.js itself does
+	 *  no modifier gating, it just activates whatever link the pointer is
+	 *  over. Requiring Ctrl+left-click here (VS Code/Tilix convention) is
+	 *  what keeps a bare click selecting/positioning in the shell instead of
+	 *  hijacking it to open a browser. */
+	function openTerminalLink(event: MouseEvent, uri: string) {
+		if (!event.ctrlKey || event.button !== 0) return;
+		openUrl(uri).catch((err) => console.error(`openUrl(${uri}) failed:`, err));
+	}
+
 	/** Serializes a write onto the session's (not just this component
 	 *  instance's) write queue — shared by typed input (onData) and a
 	 *  Ctrl+Shift+V paste, so a paste can never race ahead of/behind
@@ -114,12 +131,13 @@
 				// replaces the old partial CSS-var-derived object that left the
 				// ANSI palette as xterm's unspecified defaults.
 				theme: withWindowTransparency(
-					getThemePreset(settingsStore.themePreset).theme,
+					getThemePreset(settingsStore.themePreset, themeStore.resolved).theme,
 					settingsStore.windowTransparency,
 				),
 			});
 			const newFitAddon = new FitAddon();
 			newTerm.loadAddon(newFitAddon);
+			newTerm.loadAddon(new WebLinksAddon(openTerminalLink));
 
 			// ADR-0006's own pre-approved revisit trigger: WebGL proved unreliable
 			// (debugger session 2026-07-21) — @xterm/addon-webgl 0.19.0 paired with
@@ -356,7 +374,10 @@
 	// FR-13: applies the newly-selected preset to this (already-open) pane
 	// immediately, per the acceptance criteria — no separate "Apply" step.
 	$effect(() => {
-		const preset = getThemePreset(settingsStore.themePreset);
+		// Reads themeStore.resolved, so this effect also re-runs when the user
+		// switches Appearance — that is what repaints an already-open pane from
+		// App Default dark to App Default light without reopening it.
+		const preset = getThemePreset(settingsStore.themePreset, themeStore.resolved);
 		const transparency = settingsStore.windowTransparency;
 		if (!term) return;
 		// FR-15: `allowTransparency` is deliberately NOT set — measured inert
@@ -380,8 +401,9 @@
 	class:focused
 	role="presentation"
 	style:background-color={paneBackground(
-		getThemePreset(settingsStore.themePreset).theme,
+		getThemePreset(settingsStore.themePreset, themeStore.resolved).theme,
 		settingsStore.windowTransparency,
+		themeStore.resolved,
 	)}
 	onclick={onFocus}
 	onfocusin={onFocus}

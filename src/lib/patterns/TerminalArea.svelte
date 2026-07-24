@@ -4,6 +4,7 @@
 	import { terminalStore, type SplitDirection, type DropZone } from "$lib/stores/terminal.svelte";
 	import { closeTerminal, splitPane as splitPaneApi, openTerminal, errorMessage } from "$lib/api";
 	import { settingsStore } from "$lib/stores/settings.svelte";
+	import { appStore } from "$lib/stores/app.svelte";
 	import { matchesCombo } from "$lib/keybindings";
 	import { disposeTerminalHandle } from "$lib/terminal-registry";
 
@@ -84,10 +85,22 @@
 		// state the very first keydown after launch can land in.
 		if (e.target instanceof Element && e.target.closest('[role="dialog"]')) return;
 
+		const kb = settingsStore.keybindings;
+
+		// Unlike every other action below, sidebar.toggle doesn't operate on
+		// the active tab/pane — it must still fire with no tab open at all
+		// (e.g. hiding the sidebar to reclaim width on the empty-state view),
+		// so it's checked before the tab/pane guard those actions need.
+		if (matchesCombo(e, kb["sidebar.toggle"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			appStore.toggleSidebar();
+			return;
+		}
+
 		const tabId = terminalStore.activeTabId;
 		const tab = terminalStore.activeTab;
 		if (!tabId || !tab) return;
-		const kb = settingsStore.keybindings;
 
 		// preventDefault() alone only suppresses the browser's own default
 		// action — it does NOT stop this capture-phase event from continuing

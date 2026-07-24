@@ -18,11 +18,31 @@ pub enum SidebarPosition {
     Right,
 }
 
+/// App-chrome appearance (design.md §4.1a, v2.5) — distinct from `theme_preset`
+/// above, which governs terminal *content* colors only (§4.5) and is
+/// unaffected by this. `System` is resolved to `Dark`/`Light` by the
+/// frontend via `matchMedia`; the backend never interprets this value, it
+/// only persists it (same "opaque to the backend" stance the rest of this
+/// module already takes with e.g. keybinding action ids).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+    System,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     pub theme_preset: String,
     pub keybindings: HashMap<String, String>,
     pub sidebar_position: SidebarPosition,
+    /// App-chrome light/dark/system (design.md §4.1a, v2.5). `#[serde(default)]`
+    /// for the same backward-compatibility reason as `glass_intensity` below —
+    /// every settings.json written before this field existed must still load.
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
     /// FR-14 glass intensity, 0.0..=1.0 (0 = fully opaque).
     ///
     /// `#[serde(default)]` is load-bearing, not decoration: `load()` treats
@@ -50,6 +70,8 @@ impl Default for Settings {
             theme_preset: "app-default".to_string(),
             keybindings: default_keybindings(),
             sidebar_position: SidebarPosition::Left,
+            // design.md §4.1a: dark remains the default app-chrome theme.
+            theme_mode: ThemeMode::Dark,
             // design.md §4.6: the app looks exactly as it does today until
             // the user opts in.
             glass_intensity: 0.0,
@@ -77,6 +99,7 @@ fn default_keybindings() -> HashMap<String, String> {
         ("terminal.closeSession", "Ctrl+Shift+W"),
         ("terminal.nextTab", "Ctrl+Tab"),
         ("terminal.previousTab", "Ctrl+Shift+Tab"),
+        ("sidebar.toggle", "Ctrl+B"),
     ]
     .into_iter()
     .map(|(action, combo)| (action.to_string(), combo.to_string()))
@@ -172,9 +195,9 @@ mod tests {
     }
 
     #[test]
-    fn defaults_include_all_twelve_registry_actions() {
+    fn defaults_include_all_fourteen_registry_actions() {
         let settings = Settings::default();
-        assert_eq!(settings.keybindings.len(), 13);
+        assert_eq!(settings.keybindings.len(), 14);
         assert_eq!(settings.keybindings.get("clipboard.copy"), Some(&"Ctrl+Shift+C".to_string()));
         assert_eq!(settings.keybindings.get("pane.moveFocusDown"), Some(&"Alt+ArrowDown".to_string()));
         assert_eq!(settings.keybindings.get("terminal.zoomIn"), Some(&"Ctrl+=".to_string()));
@@ -182,6 +205,7 @@ mod tests {
         assert_eq!(settings.keybindings.get("terminal.closeSession"), Some(&"Ctrl+Shift+W".to_string()));
         assert_eq!(settings.keybindings.get("terminal.nextTab"), Some(&"Ctrl+Tab".to_string()));
         assert_eq!(settings.keybindings.get("terminal.previousTab"), Some(&"Ctrl+Shift+Tab".to_string()));
+        assert_eq!(settings.keybindings.get("sidebar.toggle"), Some(&"Ctrl+B".to_string()));
     }
 
     /// Regression: adding `glass_intensity` (FR-14) must not orphan the
@@ -257,6 +281,41 @@ mod tests {
         assert_eq!(settings.theme_preset, "nord");
         assert_eq!(settings.glass_intensity, 0.6);
         assert_eq!(settings.window_transparency, 0.0, "missing field defaults to opaque");
+    }
+
+    /// Regression for the third field added this way (design.md §4.1a,
+    /// v2.5): a settings.json written by the FR-15 build (window_transparency
+    /// present, no theme_mode) must still load, defaulting to Dark.
+    #[test]
+    fn load_accepts_settings_file_written_before_theme_mode_existed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "theme_preset": "solarized-dark",
+                "keybindings": {"clipboard.copy": "Ctrl+Shift+C"},
+                "sidebar_position": "left",
+                "glass_intensity": 0.2,
+                "window_transparency": 0.1
+            }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path).expect("FR-15-era settings file must still load");
+        assert_eq!(settings.theme_preset, "solarized-dark");
+        assert_eq!(settings.theme_mode, ThemeMode::Dark, "missing field defaults to Dark");
+    }
+
+    #[test]
+    fn theme_mode_persists_through_save_and_load() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for mode in [ThemeMode::Dark, ThemeMode::Light, ThemeMode::System] {
+            let settings = Settings { theme_mode: mode, ..Settings::default() };
+            save(&path, &settings).unwrap();
+            assert_eq!(load(&path).unwrap().theme_mode, mode);
+        }
     }
 
     #[test]

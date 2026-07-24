@@ -20,6 +20,7 @@ import {
 	exportConfig,
 	importConfig,
 	pathExists,
+	getGitBranch,
 	mergeProjects,
 	moveProject,
 	reorderFolder,
@@ -112,6 +113,11 @@ describe("api/index — IPC command mapping", () => {
 	it("pathExists() passes path", () => {
 		pathExists("/tmp/some-project");
 		expect(invokeMock).toHaveBeenCalledWith("path_exists", { path: "/tmp/some-project" });
+	});
+
+	it("getGitBranch() passes path", () => {
+		getGitBranch("/tmp/some-project");
+		expect(invokeMock).toHaveBeenCalledWith("get_git_branch", { path: "/tmp/some-project" });
 	});
 
 	it("mergeProjects() passes draggedId and targetId", () => {

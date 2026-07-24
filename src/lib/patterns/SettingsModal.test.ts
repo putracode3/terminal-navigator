@@ -23,12 +23,14 @@ beforeEach(() => {
 	settingsStore.themePreset = "app-default";
 	settingsStore.keybindings = { ...DEFAULT_KEYBINDINGS };
 	settingsStore.sidebarPosition = "left";
+	settingsStore.themeMode = "dark";
 });
 
 describe("SettingsModal — structure", () => {
-	it("renders all four section headings when open", () => {
+	it("renders all five section headings when open", () => {
 		render(SettingsModal, { open: true, onClose: vi.fn() });
 
+		expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "Theme" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "Master password" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "Keybindings" })).toBeInTheDocument();
@@ -38,7 +40,11 @@ describe("SettingsModal — structure", () => {
 	it("renders one Theme Preset Card per preset, and a row per registry action", () => {
 		render(SettingsModal, { open: true, onClose: vi.fn() });
 
-		expect(screen.getAllByRole("radio", { name: /App Default|Dracula|Nord|Solarized Dark/ })).toHaveLength(4);
+		expect(
+			screen.getAllByRole("radio", {
+				name: /App Default|Dracula|Nord|Solarized Dark|Solarized Light|GitHub Light/,
+			}),
+		).toHaveLength(6);
 		expect(screen.getByText("Copy selection")).toBeInTheDocument();
 		expect(screen.getByText("Move focus down")).toBeInTheDocument();
 	});
@@ -51,6 +57,27 @@ describe("SettingsModal — structure", () => {
 	});
 });
 
+describe("SettingsModal — appearance (autosaves immediately)", () => {
+	it("selecting Light autosaves without a separate Save step", async () => {
+		render(SettingsModal, { open: true, onClose: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("radio", { name: "Light" }));
+
+		await waitFor(() => expect(saveSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ themeMode: "light" })));
+		expect(settingsStore.themeMode).toBe("light");
+	});
+
+	it("shows an error and reverts the selection when the save fails", async () => {
+		saveSettingsMock.mockRejectedValueOnce(new Error("failed to read/write settings file"));
+		render(SettingsModal, { open: true, onClose: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("radio", { name: "System" }));
+
+		expect(await screen.findByText("failed to read/write settings file")).toBeInTheDocument();
+		await waitFor(() => expect(settingsStore.themeMode).toBe("dark")); // rolled back
+	});
+});
+
 describe("SettingsModal — theme (autosaves immediately)", () => {
 	it("selecting a preset autosaves without a separate Save step", async () => {
 		render(SettingsModal, { open: true, onClose: vi.fn() });
@@ -59,6 +86,45 @@ describe("SettingsModal — theme (autosaves immediately)", () => {
 
 		await waitFor(() => expect(saveSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ themePreset: "dracula" })));
 		expect(settingsStore.themePreset).toBe("dracula");
+	});
+});
+
+describe("SettingsModal — App Default preset card is theme-aware (design.md §4.5a, §9 rule 11)", () => {
+	it("renders App Default as ONE card in light chrome, never a second 'App Default Light' entry", () => {
+		settingsStore.themeMode = "light";
+		render(SettingsModal, { open: true, onClose: vi.fn() });
+
+		expect(screen.getAllByRole("radio", { name: /App Default/ })).toHaveLength(1);
+		expect(screen.queryByRole("radio", { name: /App Default Light/ })).toBeNull();
+	});
+
+	/** Invariant 1 at the UI level: whichever variant is previewed, selecting
+	 *  the card must persist the plain "app-default" id — a theme-dependent id
+	 *  would not round-trip when the user switches chrome themes. */
+	it("persists the id 'app-default' when selected under light chrome", async () => {
+		settingsStore.themeMode = "light";
+		settingsStore.themePreset = "dracula";
+		render(SettingsModal, { open: true, onClose: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("radio", { name: /App Default/ }));
+
+		await waitFor(() =>
+			expect(saveSettingsMock).toHaveBeenCalledWith(expect.objectContaining({ themePreset: "app-default" })),
+		);
+		expect(settingsStore.themePreset).toBe("app-default");
+	});
+
+	it("keeps App Default selected across a chrome-theme switch — the stored id never changed", async () => {
+		settingsStore.themePreset = "app-default";
+		settingsStore.themeMode = "dark";
+		const { rerender } = render(SettingsModal, { open: true, onClose: vi.fn() });
+		expect(screen.getByRole("radio", { name: /App Default/ })).toBeChecked();
+
+		settingsStore.themeMode = "light";
+		await rerender({ open: true, onClose: vi.fn() });
+
+		expect(screen.getByRole("radio", { name: /App Default/ })).toBeChecked();
+		expect(settingsStore.themePreset).toBe("app-default");
 	});
 });
 

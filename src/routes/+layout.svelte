@@ -2,6 +2,7 @@
 	import "../../docs/design/tokens.css";
 	import "$lib/styles/base.css";
 	import { settingsStore } from "$lib/stores/settings.svelte";
+	import { themeStore } from "$lib/stores/theme.svelte";
 
 	let { children } = $props();
 
@@ -33,6 +34,28 @@
 			"--window-transparency",
 			String(settingsStore.windowTransparency),
 		);
+	});
+
+	// design.md §4.1a (v2.5) — app-chrome light/dark/system. The resolution
+	// itself (including the live `matchMedia` subscription that makes
+	// "system" follow OS theme changes without a reload) lives in
+	// themeStore, because the terminal preset resolver needs the same
+	// resolved value (§9 rule 11). Two independent matchMedia subscriptions
+	// could drift out of step; one store cannot.
+	//
+	// The attribute is written here, never via a CSS `prefers-color-scheme`
+	// query (design.md §8) — a parallel CSS-only path would let CSS and JS
+	// disagree about which theme is active.
+	//
+	// Applied in the layout, not the page, so it's live at the unlock screen
+	// too (NFR-8) — same reasoning as the glass/window-transparency effects
+	// above. `color-scheme` is set alongside `data-theme` so native form
+	// controls (e.g. Input's password variant) render for the right theme,
+	// not just app-chrome tokens.
+	$effect(() => {
+		const resolved = themeStore.resolved;
+		document.documentElement.dataset.theme = resolved;
+		document.documentElement.style.colorScheme = resolved;
 	});
 </script>
 
