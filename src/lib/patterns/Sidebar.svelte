@@ -1,20 +1,15 @@
 <script lang="ts">
-	import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
-	import Input from "$lib/components/Input.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import SidebarProjectListItem from "$lib/components/SidebarProjectListItem.svelte";
 	import SidebarFolder from "$lib/components/SidebarFolder.svelte";
 	import ProjectFormModal from "./ProjectFormModal.svelte";
-	import SettingsModal from "./SettingsModal.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
 	import { settingsStore } from "$lib/stores/settings.svelte";
 	import { terminalStore, type TabState } from "$lib/stores/terminal.svelte";
 	import type { SidebarDropBand } from "$lib/sidebar-drop-zones";
 	import {
 		deleteProject,
-		exportConfig,
-		importConfig,
 		pathExists,
 		closeTerminal,
 		errorMessage,
@@ -38,9 +33,7 @@
 		onForceNewTab: (project: ProjectDto) => void;
 	} = $props();
 
-	let search = $state("");
 	let formOpen = $state(false);
-	let settingsOpen = $state(false);
 	let editingProject = $state<ProjectDto | undefined>(undefined);
 	let pendingDelete = $state<ProjectDto | undefined>(undefined);
 	let deleteError = $state("");
@@ -59,44 +52,28 @@
 		);
 	});
 
-	let pendingImportSource = $state<string | undefined>(undefined);
-	let syncStatus = $state("");
-	let syncError = $state("");
-	let syncing = $state(false);
-
-	function flashStatus(message: string) {
-		syncStatus = message;
-		setTimeout(() => {
-			if (syncStatus === message) syncStatus = "";
-		}, 3000);
-	}
-
-	/** The sidebar footer is always-visible chrome, so anything shown there
-	 *  needs an owned lifetime or it becomes permanent. Every write to
-	 *  `syncError` goes through here (and every clear through `dismissError`)
-	 *  so exactly one place owns the banner's lifetime — the bug this
-	 *  replaces was six raw `syncError = …` assignments with nothing clearing
-	 *  them, so one transient failure left a red line under Export/Import for
-	 *  the rest of the session.
-	 *
-	 *  Longer window than `flashStatus`: an error carries a backend reason
-	 *  the user has to actually read, where "Exported" does not. Tracked by
-	 *  timer handle rather than `flashStatus`'s compare-the-message trick,
-	 *  because the same error message recurring (retrying a failing export)
-	 *  must restart the window, not let the first timeout close the second
-	 *  banner early. */
+	/** v2.8: Export/Import (and their success flash) moved to SettingsModal's
+	 *  Data group — this banner is now exclusively for drag/rename/move
+	 *  failures (still Sidebar's own concern). The sidebar has no persistent
+	 *  footer chrome anymore (components.md, Sidebar layout), so this only
+	 *  ever renders conditionally, at the bottom of the list, while an error
+	 *  is actually live — but it still needs an owned lifetime (design.md
+	 *  v2.4 rule): every write goes through `flashError` (and every clear
+	 *  through `dismissError`) so exactly one place owns the timer, the same
+	 *  discipline the pre-v2.8 footer banner established. */
+	let dragError = $state("");
 	const ERROR_DISMISS_MS = 8000;
 	let errorTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function flashError(message: string) {
-		syncError = message;
+		dragError = message;
 		clearTimeout(errorTimer);
-		errorTimer = setTimeout(() => (syncError = ""), ERROR_DISMISS_MS);
+		errorTimer = setTimeout(() => (dragError = ""), ERROR_DISMISS_MS);
 	}
 
 	function dismissError() {
 		clearTimeout(errorTimer);
-		syncError = "";
+		dragError = "";
 	}
 
 	// FR-11: while searching, folders/grouping are set aside in favor of a
@@ -105,17 +82,12 @@
 	// scope), so this is a deliberate simplification, not an oversight: a
 	// flat "search mode" is simple to reason about and doesn't require
 	// inventing nested-match-highlighting UI this pass wasn't asked for.
-	const searching = $derived(search.trim().length > 0);
+	const searching = $derived(appStore.search.trim().length > 0);
 	const filteredProjects = $derived(
 		searching
-			? appStore.allProjects.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+			? appStore.allProjects.filter((p) => p.name.toLowerCase().includes(appStore.search.trim().toLowerCase()))
 			: [],
 	);
-
-	function openAddForm() {
-		editingProject = undefined;
-		formOpen = true;
-	}
 
 	function openEditForm(project: ProjectDto) {
 		editingProject = project;
@@ -155,48 +127,6 @@
 			pendingDelete = undefined;
 		} catch (e) {
 			deleteError = errorMessage(e);
-		}
-	}
-
-	// FR-07: export/import the single encrypted data file (ADR-0004/ADR-0008).
-	// Reuses the already-unlocked session's password from appStore — the user
-	// never re-types it, since import validates against that same password.
-	async function handleExport() {
-		const destination = await saveDialog({ defaultPath: "terminal-navigator-export.enc" });
-		if (!destination) return;
-		dismissError();
-		syncing = true;
-		try {
-			await exportConfig(destination);
-			flashStatus("Exported");
-		} catch (e) {
-			flashError(errorMessage(e));
-		} finally {
-			syncing = false;
-		}
-	}
-
-	async function handleImportPick() {
-		const source = await openDialog({ multiple: false, directory: false });
-		if (typeof source === "string") {
-			dismissError();
-			pendingImportSource = source;
-		}
-	}
-
-	async function confirmImport() {
-		if (!pendingImportSource) return;
-		syncing = true;
-		try {
-			const entries = await importConfig(pendingImportSource, appStore.password);
-			appStore.setEntries(entries);
-			pendingImportSource = undefined;
-			flashStatus("Imported — project list replaced");
-		} catch (e) {
-			flashError(errorMessage(e));
-			pendingImportSource = undefined;
-		} finally {
-			syncing = false;
 		}
 	}
 
@@ -240,6 +170,18 @@
 		try {
 			await renameFolder(folderId, name);
 			appStore.setEntries(await listSidebarEntries());
+		} catch (e) {
+			flashError(errorMessage(e));
+		}
+	}
+
+	/** FR-11: persists a folder's expand/collapse toggle. `settingsStore`
+	 *  already rolls its own state back on a failed save (which flows back
+	 *  into `SidebarFolder`'s display via its `expanded` prop) — this only
+	 *  needs to surface the error, same as every other mutating action here. */
+	async function handleToggleFolderExpanded(folderId: string, expanded: boolean) {
+		try {
+			await settingsStore.setFolderExpanded(folderId, expanded);
 		} catch (e) {
 			flashError(errorMessage(e));
 		}
@@ -302,12 +244,6 @@
 {/snippet}
 
 <aside class="sidebar">
-	<div class="search-wrap">
-		<Input id="project-search" label="Search" placeholder="Search projects…" bind:value={search} />
-		<Button variant="ghost" size="icon" ariaLabel="Hide sidebar" onclick={() => appStore.toggleSidebar()}>
-			☰
-		</Button>
-	</div>
 	<!-- svelte-ignore a11y_no_static_element_interactions -- FR-11 "ungrouped" drop target: a project dragged onto genuinely empty list space (below the last row) moves back to top level. Drag has no keyboard equivalent anywhere in this app (documented gap, components.md Sidebar Folder Accessibility) — this container is a drop *target* only, never itself clicked/focused. -->
 	<div class="list" ondragover={handleListDragOver} ondrop={handleListDrop}>
 		{#if searching}
@@ -324,6 +260,8 @@
 				{:else}
 					<SidebarFolder
 						folder={entry}
+						expanded={settingsStore.isFolderExpanded(entry.id)}
+						onToggleExpanded={(expanded) => handleToggleFolderExpanded(entry.id, expanded)}
 						sidebarDragId={appStore.sidebarDrag?.id ?? null}
 						sidebarDragKind={appStore.sidebarDrag?.kind ?? null}
 						onSidebarDrop={(band) => handleSidebarDrop(band, entry.id, { type: "topLevel" }, topIndex)}
@@ -339,28 +277,15 @@
 			{/if}
 		{/if}
 	</div>
-	<div class="footer">
-		<div class="add-row">
-			<Button variant="ghost" onclick={openAddForm}>+ Add project</Button>
-			<Button variant="ghost" size="icon" ariaLabel="Settings" onclick={() => (settingsOpen = true)}>⚙</Button>
+	{#if dragError}
+		<div class="error-banner" role="alert">
+			<p class="error">{dragError}</p>
+			<button class="error-dismiss" aria-label="Dismiss error" onclick={dismissError}>✕</button>
 		</div>
-		<div class="sync-row">
-			<Button variant="secondary" size="sm" onclick={handleExport} loading={syncing}>Export</Button>
-			<Button variant="secondary" size="sm" onclick={handleImportPick} loading={syncing}>Import</Button>
-		</div>
-		{#if syncStatus}<p class="sync-status">{syncStatus}</p>{/if}
-		{#if syncError}
-			<div class="error-banner" role="alert">
-				<p class="error">{syncError}</p>
-				<button class="error-dismiss" aria-label="Dismiss error" onclick={dismissError}>✕</button>
-			</div>
-		{/if}
-	</div>
+	{/if}
 </aside>
 
 <ProjectFormModal open={formOpen} project={editingProject} onClose={() => (formOpen = false)} />
-
-<SettingsModal open={settingsOpen} onClose={() => (settingsOpen = false)} />
 
 <Modal
 	open={!!pendingDelete}
@@ -378,28 +303,6 @@
 	{#snippet footer()}
 		<Button variant="secondary" onclick={() => (pendingDelete = undefined)}>Cancel</Button>
 		<Button variant="danger" onclick={confirmDelete}>Delete project</Button>
-	{/snippet}
-</Modal>
-
-<Modal
-	open={!!pendingImportSource}
-	title="Import project data"
-	variant="confirm"
-	onClose={() => (pendingImportSource = undefined)}
->
-	{#snippet children()}
-		<p>
-			This replaces <strong>all</strong> projects currently in Terminal Navigator with the contents
-			of the selected file (ADR-0008 — import is replace, not merge). This cannot be undone.
-		</p>
-		<p>
-			Imported projects' setup commands will run automatically the next time their terminal opens
-			— only import files from sources you trust.
-		</p>
-	{/snippet}
-	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (pendingImportSource = undefined)}>Cancel</Button>
-		<Button variant="danger" onclick={confirmImport} loading={syncing}>Replace and import</Button>
 	{/snippet}
 </Modal>
 
@@ -421,18 +324,6 @@
 		border-left: var(--border-width-sm) solid var(--color-border);
 	}
 
-	.search-wrap {
-		display: flex;
-		align-items: flex-end;
-		gap: var(--space-2);
-		padding: var(--space-3);
-	}
-
-	.search-wrap > :global(.field) {
-		flex: 1;
-		min-width: 0;
-	}
-
 	.list {
 		flex: 1;
 		overflow-y: auto;
@@ -448,49 +339,21 @@
 		color: var(--color-text-muted);
 	}
 
-	.footer {
-		padding: var(--space-3);
-		border-top: var(--border-width-sm) solid var(--color-border);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-	}
-
-	.add-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-	}
-
-	.add-row > :global(.btn-md) {
-		flex: 1;
-	}
-
-	.sync-row {
-		display: flex;
-		gap: var(--space-2);
-	}
-
-	.sync-row > :global(.btn) {
-		flex: 1;
-	}
-
-	.sync-status {
-		margin: 0;
-		font-size: var(--text-xs);
-		color: var(--color-security);
-	}
-
 	.error {
 		margin: 0;
 		color: var(--color-danger);
 		font-size: var(--text-xs);
 	}
 
+	/* v2.8: no longer inside a persistent footer (Sidebar has none anymore) —
+	   this only mounts while `dragError` is actually set, so it needs its own
+	   spacing rather than inheriting a footer's padding/border-top. */
 	.error-banner {
 		display: flex;
 		align-items: flex-start;
 		gap: var(--space-2);
+		padding: var(--space-3);
+		border-top: var(--border-width-sm) solid var(--color-border);
 	}
 
 	.error-banner > .error {

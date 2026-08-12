@@ -15,12 +15,14 @@ use crate::project_store::{Folder, MoveDestination, Project, ProjectInput, Proje
 use crate::pty_manager::PtyManager;
 use crate::settings_store::{self, Settings, SidebarPosition, ThemeMode};
 
-/// Shared app state: `None` while locked, `Some(store)` once unlocked with the
-/// master password. `data_file` is resolved once at startup (see lib.rs).
-/// `pty_manager` needs no lock/unlock state — terminal sessions are runtime-only
-/// (architecture.md §5.3) and independent of whether the project store is open.
-/// `settings_file` is deliberately outside `store`'s lock/unlock lifecycle
-/// (ADR-0009/NFR-8) — settings commands never check `store`.
+/// Shared app state: `None` until `init_store`/`migrate_and_load` populates
+/// it on startup (ADR-0014 — no more lock/unlock state; this is a startup
+/// ordering detail, not a security gate). `data_file` is resolved once at
+/// startup (see lib.rs). `pty_manager` needs no such state — terminal
+/// sessions are runtime-only (architecture.md §5.3) and independent of
+/// whether the project store has loaded. `settings_file` is deliberately
+/// outside `store`'s lifecycle (ADR-0009) — settings commands never check
+/// `store`.
 pub struct AppState {
     pub store: Mutex<Option<ProjectStore>>,
     pub data_file: PathBuf,
@@ -168,6 +170,10 @@ pub struct SettingsDto {
     /// design.md §4.1a (v2.5) — see `settings_store::Settings::theme_mode`.
     #[serde(default)]
     pub theme_mode: ThemeMode,
+    /// FR-11 — see `settings_store::Settings::folder_expanded`. `default`
+    /// here too, so a frontend that predates this field still round-trips.
+    #[serde(default)]
+    pub folder_expanded: std::collections::HashMap<String, bool>,
 }
 
 impl From<Settings> for SettingsDto {
@@ -179,6 +185,7 @@ impl From<Settings> for SettingsDto {
             glass_intensity: s.glass_intensity,
             window_transparency: s.window_transparency,
             theme_mode: s.theme_mode,
+            folder_expanded: s.folder_expanded,
         }
     }
 }
@@ -192,13 +199,34 @@ impl From<SettingsDto> for Settings {
             glass_intensity: dto.glass_intensity,
             window_transparency: dto.window_transparency,
             theme_mode: dto.theme_mode,
+            folder_expanded: dto.folder_expanded,
         }
     }
 }
 
+/// Called once on startup (ADR-0014). If the data file is missing or already
+/// in the current plain format, this loads it directly — no password is
+/// ever asked. If it's still in the pre-ADR-0014 encrypted format, this
+/// returns a `needs_migration` error instead of loading anything; the
+/// frontend should then show a one-time password prompt and call
+/// `migrate_and_load`.
 #[tauri::command]
-pub fn unlock(password: String, state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
-    let store = ProjectStore::unlock(state.data_file.clone(), &password)?;
+pub fn init_store(state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
+    let store = ProjectStore::load(state.data_file.clone())?;
+    let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
+    *state.store.lock().unwrap() = Some(store);
+    Ok(entries)
+}
+
+/// One-time migration off the pre-ADR-0014 encrypted format (called only
+/// after `init_store` returns a `needs_migration` error): decrypts the
+/// existing data file with the legacy master password, immediately
+/// re-persists it as plain, and loads it into app state. Never called
+/// again after that — the next `init_store` call takes the plain-format
+/// path directly.
+#[tauri::command]
+pub fn migrate_and_load(legacy_password: String, state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
+    let store = ProjectStore::migrate_from_legacy(state.data_file.clone(), &legacy_password)?;
     let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(entries)
@@ -210,14 +238,14 @@ pub fn unlock(password: String, state: State<AppState>) -> Result<Vec<SidebarEnt
 #[tauri::command]
 pub fn list_sidebar_entries(state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
     let guard = state.store.lock().unwrap();
-    let store = guard.as_ref().ok_or_else(AppError::locked)?;
+    let store = guard.as_ref().ok_or_else(AppError::not_ready)?;
     Ok(store.entries().iter().map(SidebarEntryDto::from).collect())
 }
 
 #[tauri::command]
 pub fn add_project(input: ProjectInputDto, state: State<AppState>) -> Result<ProjectDto, AppError> {
     let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let store = guard.as_mut().ok_or_else(AppError::not_ready)?;
     let project = store.add(input.into())?;
     Ok((&project).into())
 }
@@ -230,7 +258,7 @@ pub fn update_project(
 ) -> Result<ProjectDto, AppError> {
     let id = parse_uuid(&id)?;
     let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let store = guard.as_mut().ok_or_else(AppError::not_ready)?;
     let project = store.update(id, input.into())?;
     Ok((&project).into())
 }
@@ -239,7 +267,7 @@ pub fn update_project(
 pub fn delete_project(id: String, state: State<AppState>) -> Result<(), AppError> {
     let id = parse_uuid(&id)?;
     let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let store = guard.as_mut().ok_or_else(AppError::not_ready)?;
     store.delete(id)?;
     Ok(())
 }
@@ -257,7 +285,7 @@ pub fn merge_projects(
     let dragged_id = parse_uuid(&dragged_id)?;
     let target_id = parse_uuid(&target_id)?;
     let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let store = guard.as_mut().ok_or_else(AppError::not_ready)?;
     let folder_id = store.merge_or_join(dragged_id, target_id)?;
     let folder = store
         .entries()
@@ -286,7 +314,7 @@ pub fn move_project(
         MoveDestinationDto::Folder { folder_id } => MoveDestination::Folder(parse_uuid(&folder_id)?),
     };
     let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let store = guard.as_mut().ok_or_else(AppError::not_ready)?;
     store.move_project(project_id, destination, index)?;
     Ok(())
 }
@@ -296,7 +324,7 @@ pub fn move_project(
 pub fn reorder_folder(folder_id: String, index: usize, state: State<AppState>) -> Result<(), AppError> {
     let folder_id = parse_uuid(&folder_id)?;
     let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let store = guard.as_mut().ok_or_else(AppError::not_ready)?;
     store.reorder_folder(folder_id, index)?;
     Ok(())
 }
@@ -309,7 +337,7 @@ pub fn reorder_folder(folder_id: String, index: usize, state: State<AppState>) -
 pub fn rename_folder(folder_id: String, name: String, state: State<AppState>) -> Result<String, AppError> {
     let folder_id = parse_uuid(&folder_id)?;
     let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
+    let store = guard.as_mut().ok_or_else(AppError::not_ready)?;
     Ok(store.rename_folder(folder_id, name)?)
 }
 
@@ -327,7 +355,7 @@ pub fn open_terminal(
     let session_id = parse_uuid(&session_id)?;
 
     let guard = state.store.lock().unwrap();
-    let store = guard.as_ref().ok_or_else(AppError::locked)?;
+    let store = guard.as_ref().ok_or_else(AppError::not_ready)?;
     let project = store
         .find_project(project_id)
         .ok_or_else(|| AppError { kind: "not_found", message: "Project not found".to_string() })?;
@@ -363,7 +391,7 @@ pub fn split_pane(
     // `state.store` (it needs no project data), so without this check it
     // was the one command that could spawn a real shell before the app was
     // ever unlocked — every other stateful command already gates on this.
-    state.store.lock().unwrap().as_ref().ok_or_else(AppError::locked)?;
+    state.store.lock().unwrap().as_ref().ok_or_else(AppError::not_ready)?;
     let session_id = parse_uuid(&session_id)?;
     let event_name = output_event_name(session_id);
     let exit_event_name = exit_event_name(session_id);
@@ -408,7 +436,7 @@ pub fn close_terminal(session_id: String, state: State<AppState>) -> Result<(), 
     Ok(())
 }
 
-/// Copies the current encrypted data file to `destination` (FR-07).
+/// Copies the current data file to `destination` (FR-07).
 #[tauri::command]
 pub fn export_config(destination: String, state: State<AppState>) -> Result<(), AppError> {
     config_sync::export(&state.data_file, &PathBuf::from(destination))?;
@@ -434,24 +462,20 @@ pub fn get_git_branch(path: String) -> Option<String> {
 }
 
 /// Imports `source`, replacing all local project data (ADR-0008 — replace,
-/// not merge). Re-unlocks from the new file afterward so the in-memory list
+/// not merge). Re-loads from the new file afterward so the in-memory list
 /// reflects the import immediately, without requiring an app restart.
 #[tauri::command]
-pub fn import_config(
-    source: String,
-    password: String,
-    state: State<AppState>,
-) -> Result<Vec<SidebarEntryDto>, AppError> {
-    config_sync::import(&PathBuf::from(source), &state.data_file, &password)?;
-    let store = ProjectStore::unlock(state.data_file.clone(), &password)?;
+pub fn import_config(source: String, state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
+    config_sync::import(&PathBuf::from(source), &state.data_file)?;
+    let store = ProjectStore::load(state.data_file.clone())?;
     let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(entries)
 }
 
 /// Reads current settings (FR-13). Deliberately does **not** check
-/// `state.store` — settings must be readable before `unlock` is ever called
-/// (NFR-8), unlike every project-data command above.
+/// `state.store` — settings must be readable before `init_store` is ever
+/// called, unlike every project-data command above.
 #[tauri::command]
 pub fn get_settings(state: State<AppState>) -> Result<SettingsDto, AppError> {
     let settings = settings_store::load(&state.settings_file)?;
@@ -460,8 +484,8 @@ pub fn get_settings(state: State<AppState>) -> Result<SettingsDto, AppError> {
 
 /// Saves settings wholesale (FR-13) — same whole-object style as
 /// `update_project`, not per-field patches. Validates keybinding conflicts
-/// (settings_store::save) before writing. No unlock check, same reasoning
-/// as `get_settings`.
+/// (settings_store::save) before writing. No store-readiness check, same
+/// reasoning as `get_settings`.
 #[tauri::command]
 pub fn save_settings(settings: SettingsDto, state: State<AppState>) -> Result<SettingsDto, AppError> {
     let settings: Settings = settings.into();
@@ -469,21 +493,6 @@ pub fn save_settings(settings: SettingsDto, state: State<AppState>) -> Result<Se
     Ok(settings.into())
 }
 
-/// Rotates the master password (FR-13, ADR-0010). Unlike settings commands,
-/// this requires the store to already be unlocked — it operates on the
-/// live `ProjectStore`, not a file path, since rotation needs the
-/// currently-held key/salt in memory (project_store::change_password).
-#[tauri::command]
-pub fn change_master_password(
-    current_password: String,
-    new_password: String,
-    state: State<AppState>,
-) -> Result<(), AppError> {
-    let mut guard = state.store.lock().unwrap();
-    let store = guard.as_mut().ok_or_else(AppError::locked)?;
-    store.change_password(&current_password, &new_password)?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

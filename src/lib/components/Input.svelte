@@ -21,8 +21,8 @@
 		error?: string;
 		disabled?: boolean;
 		/** Focuses this field as soon as it's mounted — use only for the one
-		 *  field a screen should land on (e.g. the unlock screen's password
-		 *  field), never more than one per view. */
+		 *  field a screen should land on (e.g. the migration prompt's legacy
+		 *  password field), never more than one per view. */
 		autofocus?: boolean;
 		onBrowse?: () => void;
 		onEnter?: () => void;
@@ -42,7 +42,7 @@
 		{#if variant === "password"}
 			<span class="affix-icon" aria-hidden="true">🔒</span>
 		{/if}
-		<!-- svelte-ignore a11y_autofocus -- opt-in only, via the `autofocus` prop, and used exactly once per view (e.g. the unlock screen's sole field) — the accepted exception to "avoid autofocus", not indiscriminate use -->
+		<!-- svelte-ignore a11y_autofocus -- opt-in only, via the `autofocus` prop, and used exactly once per view (e.g. the migration prompt's sole field) — the accepted exception to "avoid autofocus", not indiscriminate use -->
 		<input
 			{id}
 			{placeholder}

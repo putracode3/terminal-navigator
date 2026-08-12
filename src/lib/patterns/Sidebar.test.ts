@@ -1,15 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 
-const saveDialogMock = vi.fn();
-const openDialogMock = vi.fn();
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-	save: (...args: unknown[]) => saveDialogMock(...args),
-	open: (...args: unknown[]) => openDialogMock(...args),
-}));
-
-const exportConfigMock = vi.fn();
-const importConfigMock = vi.fn();
 const deleteProjectMock = vi.fn();
 const pathExistsMock = vi.fn();
 const closeTerminalMock = vi.fn();
@@ -22,8 +13,6 @@ vi.mock("$lib/api", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("$lib/api")>();
 	return {
 		...actual,
-		exportConfig: (...args: unknown[]) => exportConfigMock(...args),
-		importConfig: (...args: unknown[]) => importConfigMock(...args),
 		deleteProject: (...args: unknown[]) => deleteProjectMock(...args),
 		pathExists: (...args: unknown[]) => pathExistsMock(...args),
 		closeTerminal: (...args: unknown[]) => closeTerminalMock(...args),
@@ -79,10 +68,6 @@ function stubRect(el: HTMLElement, top: number, height: number) {
 }
 
 beforeEach(() => {
-	saveDialogMock.mockReset();
-	openDialogMock.mockReset();
-	exportConfigMock.mockReset();
-	importConfigMock.mockReset();
 	deleteProjectMock.mockReset();
 	pathExistsMock.mockReset();
 	closeTerminalMock.mockReset();
@@ -95,38 +80,15 @@ beforeEach(() => {
 	deleteProjectMock.mockResolvedValue(undefined);
 	pathExistsMock.mockResolvedValue(true);
 	appStore.entries = [];
-	appStore.password = "master-pw";
 	appStore.sidebarHidden = false;
 	appStore.sidebarDrag = null;
 	terminalStore.tabs = [];
 	terminalStore.activeTabId = null;
 });
 
-describe("Sidebar — show/hide toggle", () => {
-	it("clicking 'Hide sidebar' sets appStore.sidebarHidden", async () => {
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
-
-		expect(appStore.sidebarHidden).toBe(true);
-	});
-});
-
-describe("Sidebar — Settings trigger (FR-13)", () => {
-	it("does not render the Settings modal until opened", () => {
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
-	});
-
-	it("clicking the Settings button opens the Settings modal", async () => {
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-
-		expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
-	});
-});
+// v2.8: show/hide toggle and Settings trigger moved to TitleBar.svelte — see
+// TitleBar.test.ts. Export/Import moved to SettingsModal.svelte's Data group
+// — see SettingsModal.test.ts.
 
 describe("Sidebar — invalid path indicator (FR-01 edge case)", () => {
 	it("marks a project invalid when its path no longer exists, and clicking shows a message instead of opening it", async () => {
@@ -207,95 +169,7 @@ describe("Sidebar — delete project with open sessions (FR-08 v1.4 edge case)",
 	});
 });
 
-describe("Sidebar — export (FR-07)", () => {
-	it("does nothing if the user cancels the save dialog", async () => {
-		saveDialogMock.mockResolvedValue(null);
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-
-		expect(exportConfigMock).not.toHaveBeenCalled();
-	});
-
-	it("exports to the chosen destination and shows a confirmation", async () => {
-		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
-		exportConfigMock.mockResolvedValue(undefined);
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-
-		expect(exportConfigMock).toHaveBeenCalledWith("/tmp/backup.enc");
-		expect(await screen.findByText("Exported")).toBeInTheDocument();
-	});
-
-	it("shows the backend error when export fails", async () => {
-		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
-		exportConfigMock.mockRejectedValue({ kind: "invalid_input", message: "Nothing to export yet." });
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-
-		expect(await screen.findByText("Nothing to export yet.")).toBeInTheDocument();
-	});
-});
-
-describe("Sidebar — import (FR-07, ADR-0008 replace-only)", () => {
-	it("does nothing if the user cancels the file picker", async () => {
-		openDialogMock.mockResolvedValue(null);
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Import" }));
-
-		expect(screen.queryByRole("dialog", { name: "Import project data" })).toBeNull();
-	});
-
-	it("shows a replace-data confirmation before importing", async () => {
-		openDialogMock.mockResolvedValue("/tmp/incoming.enc");
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Import" }));
-
-		expect(await screen.findByText(/This cannot be undone/i)).toBeInTheDocument();
-		expect(importConfigMock).not.toHaveBeenCalled();
-	});
-
-	it("cancelling the confirmation does not call importConfig", async () => {
-		openDialogMock.mockResolvedValue("/tmp/incoming.enc");
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-		await fireEvent.click(screen.getByRole("button", { name: "Import" }));
-		await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-		expect(importConfigMock).not.toHaveBeenCalled();
-	});
-
-	it("confirming imports using the already-unlocked session's password and replaces the project list", async () => {
-		openDialogMock.mockResolvedValue("/tmp/incoming.enc");
-		const imported: SidebarEntryDto[] = [projectEntry({ id: "x", name: "imported-project", path: "/tmp/x" })];
-		importConfigMock.mockResolvedValue(imported);
-		appStore.entries = [projectEntry({ id: "old", name: "old-project", path: "/tmp/old" })];
-
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-		await fireEvent.click(screen.getByRole("button", { name: "Import" }));
-		await fireEvent.click(screen.getByRole("button", { name: "Replace and import" }));
-
-		expect(importConfigMock).toHaveBeenCalledWith("/tmp/incoming.enc", "master-pw");
-		expect(appStore.entries).toEqual(imported);
-	});
-
-	it("shows the backend error when import validation fails (wrong password / bad file)", async () => {
-		openDialogMock.mockResolvedValue("/tmp/incoming.enc");
-		importConfigMock.mockRejectedValue({
-			kind: "invalid_input",
-			message: "Import file could not be decrypted.",
-		});
-
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-		await fireEvent.click(screen.getByRole("button", { name: "Import" }));
-		await fireEvent.click(screen.getByRole("button", { name: "Replace and import" }));
-
-		expect(await screen.findByText("Import file could not be decrypted.")).toBeInTheDocument();
-	});
-});
+// v2.8: export/import coverage relocated to SettingsModal.test.ts.
 
 describe("Sidebar — FR-11 sidebar folder drag-drop", () => {
 	it("dropping one project row onto another's merge band calls mergeProjects and refreshes the tree from the backend", async () => {
@@ -482,7 +356,13 @@ describe("Sidebar — FR-11 sidebar folder drag-drop", () => {
 // `syncStatus` had a lifecycle helper (`flashStatus`, auto-clearing) but
 // `syncError` was assigned raw at six catch sites with nothing owning its
 // lifetime.
-describe("Sidebar — transient error banner lifecycle", () => {
+// v2.8: this banner is now exclusively for drag/rename/move failures —
+// export/import's own status/error lifecycle moved to SettingsModal.test.ts
+// along with the buttons that trigger it. The dismiss-timing behavior itself
+// (auto-dismiss after 8s, immediate manual dismiss) is shared logic that
+// both components implement independently; each gets its own coverage using
+// whichever trigger is actually its own.
+describe("Sidebar — transient error banner lifecycle (drag/rename/move failures)", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 	});
@@ -491,48 +371,24 @@ describe("Sidebar — transient error banner lifecycle", () => {
 		vi.useRealTimers();
 	});
 
-	it("auto-dismisses a sync error after its display window elapses", async () => {
-		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
-		exportConfigMock.mockRejectedValue({ kind: "invalid_input", message: "Nothing to export yet." });
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-		await vi.advanceTimersByTimeAsync(0);
-		expect(screen.getByText("Nothing to export yet.")).toBeInTheDocument();
-
-		await vi.advanceTimersByTimeAsync(8000);
-
-		expect(screen.queryByText("Nothing to export yet.")).toBeNull();
-	});
-
 	it("can be dismissed immediately, without waiting out the timeout", async () => {
-		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
-		exportConfigMock.mockRejectedValue({ kind: "invalid_input", message: "Nothing to export yet." });
+		appStore.entries = [projectEntry({ id: "a", name: "alpha" }), projectEntry({ id: "b", name: "beta" })];
+		moveProjectMock.mockRejectedValue({ kind: "invalid_input", message: "move failed" });
 		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
+		await vi.advanceTimersByTimeAsync(10);
 
-		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-		await vi.advanceTimersByTimeAsync(0);
+		appStore.startDraggingSidebarEntry("project", "a");
+		await vi.advanceTimersByTimeAsync(10);
+		const targetRow = screen.getByText("beta").closest(".item") as HTMLElement;
+		stubRect(targetRow, 0, 40);
+		dragOverAt(targetRow, 2);
+		await fireEvent.drop(targetRow);
+		await vi.advanceTimersByTimeAsync(10);
+		expect(screen.getByText("move failed")).toBeInTheDocument();
 
 		await fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
 
-		expect(screen.queryByText("Nothing to export yet.")).toBeNull();
-	});
-
-	it("a later successful operation clears a still-visible error rather than leaving it stacked under a success message", async () => {
-		saveDialogMock.mockResolvedValue("/tmp/backup.enc");
-		exportConfigMock.mockRejectedValueOnce({ kind: "invalid_input", message: "Nothing to export yet." });
-		render(Sidebar, { onOpenProject: vi.fn(), onForceNewTab: vi.fn() });
-
-		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-		await vi.advanceTimersByTimeAsync(0);
-		expect(screen.getByText("Nothing to export yet.")).toBeInTheDocument();
-
-		exportConfigMock.mockResolvedValueOnce(undefined);
-		await fireEvent.click(screen.getByRole("button", { name: "Export" }));
-		await vi.advanceTimersByTimeAsync(0);
-
-		expect(screen.queryByText("Nothing to export yet.")).toBeNull();
-		expect(screen.getByText("Exported")).toBeInTheDocument();
+		expect(screen.queryByText("move failed")).toBeNull();
 	});
 
 	it("a failed folder drag-drop error also auto-dismisses (not just export/import)", async () => {

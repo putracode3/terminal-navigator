@@ -1,6 +1,6 @@
 # ADR-0010: Master password rotation via verify-then-atomic-re-encrypt
 
-- **Status:** accepted
+- **Status:** superseded by [ADR-0014](0014-remove-master-password-encryption.md) (2026-08-12) — there is no master password left to rotate. The atomic write pattern this ADR introduced (temp file + rename) is retained and now applies to `project_store`'s plain-format `persist()` directly.
 - **Date:** 2026-07-20
 - **Drivers:** NFR-3, FR-13
 

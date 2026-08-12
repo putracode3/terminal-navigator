@@ -10,8 +10,8 @@ Paste this into your project's agent instructions file (`CLAUDE.md` / `AGENTS.md
 2. **Base/primitives** — Button, Input, Textarea, Security Badge (these compose into everything else).
 3. **App-shell components** — Sidebar Project List Item, Sidebar Folder (v1.8, FR-11), Tab, Split Pane Container.
 4. **Modal/Dialog** + the two Patterns that use it (Add/Edit Project form, confirmations).
-5. **Full-page patterns** — Unlock screen, Terminal tab + split grid area, Sidebar layout — these compose everything above.
-6. **Settings Panel** (v1.6, FR-13) — Theme Preset Card, Keybinding Row, Segmented Control, then the Settings Panel pattern composing them with Modal/Input/Button/Security Badge. Build last — it depends on everything above.
+5. **Full-page patterns** — Unlock screen, Terminal tab + split grid area, **Title Bar (v2.8, ADR-0013 — build before Sidebar layout below, since the sidebar's old header/footer controls move here)**, Sidebar layout (now list-only, v2.8) — these compose everything above. Wire the window drag region and edge/corner resize handles (design.md §5) as part of Title Bar, not as an afterthought — without them the window is immovable/fixed-size once native decorations are off.
+6. **Settings Panel** (v1.6, FR-13) — Theme Preset Card, Keybinding Row, Segmented Control, then the Settings Panel pattern composing them with Modal/Input/Button/Security Badge, **including the Data group (v2.8) — Export/Import relocated from the sidebar footer, same status/error lifecycle, now scoped to reset on modal close.** Build last — it depends on everything above.
 
 ## Notes
 

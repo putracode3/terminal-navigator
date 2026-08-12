@@ -23,6 +23,7 @@ function dto(overrides: Partial<SettingsDto> = {}): SettingsDto {
 		glassIntensity: 0,
 		windowTransparency: 0,
 		themeMode: "dark",
+		folderExpanded: {},
 		...overrides,
 	};
 }
@@ -39,6 +40,7 @@ beforeEach(() => {
 	settingsStore.glassIntensity = 0;
 	settingsStore.windowTransparency = 0;
 	settingsStore.themeMode = "dark";
+	settingsStore.folderExpanded = {};
 	settingsStore.loaded = false;
 });
 
@@ -76,7 +78,7 @@ describe("settingsStore.load()", () => {
 		expect(settingsStore.sidebarPosition).toBe("left");
 	});
 
-	it("calls getSettings() with no arguments (load() takes none itself, per NFR-8 — callable before unlock)", async () => {
+	it("calls getSettings() with no arguments (load() takes none itself — callable before initStore)", async () => {
 		getSettingsMock.mockResolvedValue(dto());
 
 		await settingsStore.load();
@@ -181,5 +183,47 @@ describe("settingsStore.setWindowTransparency() — FR-15", () => {
 		expect(saveSettingsMock).toHaveBeenLastCalledWith(
 			expect.objectContaining({ glassIntensity: 0.9, windowTransparency: 0.3 }),
 		);
+	});
+});
+
+describe("settingsStore.isFolderExpanded() / setFolderExpanded() — FR-11", () => {
+	it("treats a folder absent from the map as expanded (components.md's documented default)", () => {
+		expect(settingsStore.isFolderExpanded("unknown-folder")).toBe(true);
+	});
+
+	it("applies immediately and persists, keyed by folder id", async () => {
+		await settingsStore.setFolderExpanded("folder-1", false);
+
+		expect(settingsStore.isFolderExpanded("folder-1")).toBe(false);
+		expect(saveSettingsMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ folderExpanded: { "folder-1": false } }),
+		);
+	});
+
+	it("tracks multiple folders independently", async () => {
+		await settingsStore.setFolderExpanded("folder-1", false);
+		await settingsStore.setFolderExpanded("folder-2", false);
+		await settingsStore.setFolderExpanded("folder-1", true);
+
+		expect(settingsStore.isFolderExpanded("folder-1")).toBe(true);
+		expect(settingsStore.isFolderExpanded("folder-2")).toBe(false);
+	});
+
+	it("rolls back when the save fails, same as every other autosaving setter", async () => {
+		await settingsStore.setFolderExpanded("folder-1", false);
+		saveSettingsMock.mockRejectedValueOnce(new Error("disk full"));
+
+		await expect(settingsStore.setFolderExpanded("folder-1", true)).rejects.toThrow("disk full");
+
+		expect(settingsStore.isFolderExpanded("folder-1")).toBe(false);
+	});
+
+	it("round-trips through load() like every other field", async () => {
+		getSettingsMock.mockResolvedValue(dto({ folderExpanded: { "folder-1": false } }));
+
+		await settingsStore.load();
+
+		expect(settingsStore.isFolderExpanded("folder-1")).toBe(false);
+		expect(settingsStore.isFolderExpanded("folder-2")).toBe(true);
 	});
 });

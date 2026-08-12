@@ -15,8 +15,8 @@
 	// at intensity 0 the property must be absent rather than zero. Every
 	// glass rule is therefore nested under [data-glass="on"].
 	//
-	// Applied in the layout (not the page) so it is live at the unlock
-	// screen too — settings load without the master password per NFR-8.
+	// Applied in the layout (not the page) so it is live at the migration
+	// prompt too — settings load independently of the project store.
 	$effect(() => {
 		const root = document.documentElement;
 		const intensity = settingsStore.glassIntensity;
@@ -27,8 +27,8 @@
 	// FR-15 (design.md §4.7, ADR-0012). Separate from glass on purpose: the
 	// window flag itself is fixed at creation and never varies, so this
 	// value drives only the alpha of the app's own background layers.
-	// Also applied here rather than in the page so it is live at the unlock
-	// screen (NFR-8).
+	// Also applied here rather than in the page so it is live at the
+	// migration prompt too.
 	$effect(() => {
 		document.documentElement.style.setProperty(
 			"--window-transparency",
@@ -47,8 +47,8 @@
 	// query (design.md §8) — a parallel CSS-only path would let CSS and JS
 	// disagree about which theme is active.
 	//
-	// Applied in the layout, not the page, so it's live at the unlock screen
-	// too (NFR-8) — same reasoning as the glass/window-transparency effects
+	// Applied in the layout, not the page, so it's live at the migration
+	// prompt too — same reasoning as the glass/window-transparency effects
 	// above. `color-scheme` is set alongside `data-theme` so native form
 	// controls (e.g. Input's password variant) render for the right theme,
 	// not just app-chrome tokens.

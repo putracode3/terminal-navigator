@@ -1,6 +1,6 @@
 // FR-13 non-sensitive preferences (theme, keybindings, sidebar position) —
-// loaded independently of appStore's lock state (NFR-8/ADR-0009): this
-// store's `load()` must be safe to call before `unlock`.
+// loaded independently of appStore's project-data state (ADR-0009): this
+// store's `load()` must be safe to call before `initStore`.
 import { getSettings, saveSettings, type SettingsDto, type SidebarPosition, type ThemeMode } from "$lib/api";
 import { DEFAULT_KEYBINDINGS } from "$lib/keybindings";
 
@@ -13,8 +13,8 @@ class SettingsStore {
 	sidebarPosition = $state<SidebarPosition>("left");
 	// design.md §4.1a (v2.5). Starts at the real default ("dark") for the
 	// same reason keybindings starts at DEFAULT_KEYBINDINGS above — the
-	// unlock screen renders before load() resolves (NFR-8) and must not
-	// flash a placeholder theme.
+	// migration prompt (or the app shell) renders before load() resolves
+	// and must not flash a placeholder theme.
 	themeMode = $state<ThemeMode>("dark");
 	// FR-14 (design.md §4.6). 0 = fully opaque, matching the backend
 	// default: the app looks exactly as it did until the user opts in.
@@ -22,6 +22,11 @@ class SettingsStore {
 	// FR-15 (design.md §4.7). 0 = fully opaque window, matching the backend
 	// default — the app looks unchanged until the user opts in.
 	windowTransparency = $state(0);
+	// FR-11 (components.md "Sidebar Folder") — per-folder expand/collapse,
+	// keyed by folder id. A folder id absent here renders expanded (see
+	// `isFolderExpanded`), so this starts empty rather than needing a
+	// placeholder per folder.
+	folderExpanded = $state<Record<string, boolean>>({});
 	loaded = $state(false);
 
 	async load(): Promise<void> {
@@ -37,6 +42,7 @@ class SettingsStore {
 		this.glassIntensity = settings.glassIntensity;
 		this.windowTransparency = settings.windowTransparency;
 		this.themeMode = settings.themeMode;
+		this.folderExpanded = settings.folderExpanded;
 	}
 
 	private toDto(): SettingsDto {
@@ -47,7 +53,15 @@ class SettingsStore {
 			glassIntensity: this.glassIntensity,
 			windowTransparency: this.windowTransparency,
 			themeMode: this.themeMode,
+			folderExpanded: this.folderExpanded,
 		};
+	}
+
+	/** A folder id absent from `folderExpanded` renders expanded —
+	 *  components.md's Anatomy table gives "expanded" as the default state,
+	 *  so callers never need to special-case a folder's first toggle. */
+	isFolderExpanded(folderId: string): boolean {
+		return this.folderExpanded[folderId] ?? true;
 	}
 
 	/** Every setter here autosaves immediately (components.md, Settings Panel
@@ -123,6 +137,21 @@ class SettingsStore {
 			await saveSettings(this.toDto());
 		} catch (e) {
 			this.keybindings = previous;
+			throw e;
+		}
+	}
+
+	/** FR-11 — persists a folder's expand/collapse state across restarts.
+	 *  Same optimistic-update-with-rollback shape as every other setter
+	 *  here, so a failed save never leaves the sidebar showing a state that
+	 *  isn't actually on disk. */
+	async setFolderExpanded(folderId: string, expanded: boolean): Promise<void> {
+		const previous = this.folderExpanded;
+		this.folderExpanded = { ...this.folderExpanded, [folderId]: expanded };
+		try {
+			await saveSettings(this.toDto());
+		} catch (e) {
+			this.folderExpanded = previous;
 			throw e;
 		}
 	}

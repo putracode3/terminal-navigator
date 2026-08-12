@@ -1,6 +1,4 @@
 <script lang="ts">
-	import SecurityBadge from "./SecurityBadge.svelte";
-
 	let {
 		id,
 		label,
@@ -43,7 +41,6 @@
 <div class="field">
 	<div class="field-header">
 		<label for={id}>{label}</label>
-		<SecurityBadge variant="inline" />
 	</div>
 	<textarea
 		{id}

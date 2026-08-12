@@ -87,6 +87,21 @@ textarea {
 	}
 }
 
+/* v2.8: Title Bar sits above everything else (locked or unlocked, ADR-0013),
+   so .app-shell/UnlockScreen no longer own the full viewport height
+   themselves — they fill whatever's left below the bar instead. */
+.app-root {
+	height: 100%;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+}
+
+.app-below-titlebar {
+	flex: 1;
+	min-height: 0; /* without this a flex child can't shrink below its content size, breaking internal scroll containers */
+}
+
 .app-shell {
 	height: 100%;
 	width: 100%;

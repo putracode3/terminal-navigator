@@ -1,24 +1,24 @@
 # System Architecture — Terminal Navigator
 
-> Version 1.11 · 2026-07-24 · Status: approved
+> Version 1.13 · 2026-08-12 · Status: approved
 > Package: architecture.md (this file) · adr/ (decision records)
 > Downstream: db-schema-designer → §5 (optional/light-touch — see note) · backend-implementer → all · design-implementer → §5.7 + §7 (frontend structure)
-> Source PRD: docs/prd-terminal-navigator.md (v1.11)
+> Source PRD: docs/prd-terminal-navigator.md (v1.12)
 
 ## 1. System overview
 
-Terminal Navigator is a single-user Rust + Tauri desktop application that replaces the author's Tilix + zsh workflow. It stores a list of local project entries (path, auto-run setup commands, notes) and lets the user open a terminal already `cd`-ed into a project's path with one click. Terminals live in a Tilix-style tab + split-pane grid: each project opens in a new tab, and any tab can be split into multiple independently-running terminal panes. All data (paths, commands, notes) is encrypted at rest behind a master password, since it may contain credentials. There is no server, no network calls, and no multi-user concern — everything runs on one machine for one person.
+Terminal Navigator is a single-user Rust + Tauri desktop application that replaces the author's Tilix + zsh workflow. It stores a list of local project entries (path, auto-run setup commands, notes) and lets the user open a terminal already `cd`-ed into a project's path with one click. Terminals live in a Tilix-style tab + split-pane grid: each project opens in a new tab, and any tab can be split into multiple independently-running terminal panes. All data (paths, commands, notes) is stored in a single plain local file — no master password, no encryption at rest (ADR-0014; see §9 for the migration path off the previous encrypted format). There is no server, no network calls, and no multi-user concern — everything runs on one machine for one person.
 
 ## 2. Non-functional requirements & constraints
 
 NFR-1: Performance — opening a terminal + running its auto-command must feel instant (no perceptible app-side lag before the shell takes over).
 NFR-2: Availability — N/A, local single-user desktop app.
-NFR-3: Security / data sensitivity — paths, commands, and notes may contain credentials/API keys; must be encrypted at rest; no network transmission.
+NFR-3: Security / data sensitivity — paths, commands, and notes may contain credentials/API keys; stored as a plain local file, protected only by OS filesystem permissions (0600/0700); no network transmission. Encryption at rest was tried (ADR-0005) and removed (ADR-0014) as not worth the daily-use friction for a single-user local tool.
 NFR-4: Scalability — personal scale only (tens to low hundreds of projects); not designed for large multi-team catalogs.
 NFR-5: Portability — config must be git-trackable and/or export/importable across devices.
 NFR-6: Learnability — author is new to Rust and Tauri; favor mature, well-documented, pure-Rust-where-possible libraries over cutting-edge/exotic choices.
 NFR-7: Resource efficiency — app must be lightweight, fast to start, and memory-friendly, especially with several concurrent PTY sessions/panes open for long periods.
-NFR-8: Security / data sensitivity — non-sensitive preferences (theme, keybindings, sidebar position — FR-13) must NOT require the app to be unlocked to read or apply; stored separately from the encrypted data blob (NFR-3/ADR-0004) so app chrome renders correctly even at the unlock screen.
+NFR-8: N/A as of ADR-0014 — there is no unlock state left to gate against. Historically required that non-sensitive preferences (theme, keybindings, sidebar position — FR-13) not require an unlock step to read or apply; kept here for changelog continuity only, no longer a live constraint.
 CON-1: Solo developer, casual side-project pace, no fixed schedule.
 CON-2: Author's first project in Rust and Tauri.
 CON-3: No hard deadline.
@@ -31,7 +31,7 @@ CON-5: Primary target OS is Linux; Windows/macOS support is optional, not requir
 graph TB
     User(("Solo Developer<br/>(single user)"))
     App["Terminal Navigator<br/>(Tauri desktop app)"]
-    FS[("Local Filesystem<br/>project folders + encrypted data file")]
+    FS[("Local Filesystem<br/>project folders + plain data file")]
     Shell["OS Shell (zsh/bash)<br/>spawned via PTY, one per pane"]
     Git["Git (manual, user-driven)<br/>syncs the encrypted data file across devices"]
 
@@ -41,9 +41,9 @@ graph TB
     User -->|commits/pulls data file manually| Git
 ```
 
-- **Local Filesystem** — project directories the app launches terminals into, the single encrypted data file holding all project data, and (since FR-13) a separate unencrypted `settings.json` holding non-sensitive preferences (ADR-0009).
+- **Local Filesystem** — project directories the app launches terminals into, the single plain data file holding all project data (ADR-0014), and (since FR-13) a separate `settings.json` holding non-sensitive preferences (ADR-0009) — both plain files now, distinguished only by content, not by protection level.
 - **OS Shell** — one PTY-spawned shell process per open pane; the app never talks to a shell except through a PTY.
-- **Git** — not integrated into the app; the user manually commits/pulls the encrypted data file as part of their own dotfiles-style workflow (NFR-5).
+- **Git** — not integrated into the app; the user manually commits/pulls the data file as part of their own dotfiles-style workflow (NFR-5).
 
 ## 4. Architecture style
 
@@ -54,15 +54,16 @@ graph TB
 ### 5.1 project_store (Rust)
 - **Responsibility:** CRUD for project entries; holds the in-memory + persisted sidebar tree of projects and folders.
 - **Owns entities:** `Project` (id, name, path, setup_commands, notes, created_at/updated_at — field-level detail is backend-implementer's concern, not architecture's); `Folder` (id, name, ordered `members: Vec<Project>` — FR-11, v1.4/ADR-0011).
-- **Depends on:** `crypto` (to encrypt/decrypt its persisted data).
+- **Depends on:** `crypto`, but only for the one-time migration path (ADR-0014) — no dependency on any new read/write.
 - **Notes:** Sole owner of `Project` and `Folder`. No other module reads/writes project or folder data directly — `pty_manager` and `command_runner` go through this module (a `find_project(id)` lookup, not a flat list index — see below) to read a project's path/commands.
-- **FR-11, v1.4 (ADR-0011):** persisted root is `Vec<SidebarEntry>` (`SidebarEntry::Project` | `SidebarEntry::Folder`), replacing the pre-FR-11 bare `Vec<Project>` — a `Folder` owns its members directly (`Vec<Project>`), so a Vec's own order *is* position (top-level and within a folder alike), flat-only nesting is enforced by the type system (a `Folder` cannot contain a `SidebarEntry`, only a `Project`), and an empty folder is removed by filtering rather than by a referential-integrity sweep. The encrypted plaintext now carries a magic-byte version marker ahead of the `bincode` payload so `unlock` can tell a pre-FR-11 file (bare `Vec<Project>`, no marker) from the new `StoreData` shape and transparently upgrade it in memory, immediately re-persisting in the new marked format from within `unlock` itself (not deferred to whatever mutating call happens to come next) — no explicit migration step, and a purely read-only session still upgrades the file on disk. `list()`'s old flat-slice accessor is gone; downstream consumers use `entries()` (for the IPC tree DTO) and `find_project(id)` (for `command_runner`/`pty_manager`'s existing by-id reads) instead.
+- **FR-11, v1.4 (ADR-0011):** persisted root is `Vec<SidebarEntry>` (`SidebarEntry::Project` | `SidebarEntry::Folder`), replacing the pre-FR-11 bare `Vec<Project>` — a `Folder` owns its members directly (`Vec<Project>`), so a Vec's own order *is* position (top-level and within a folder alike), flat-only nesting is enforced by the type system (a `Folder` cannot contain a `SidebarEntry`, only a `Project`), and an empty folder is removed by filtering rather than by a referential-integrity sweep. The file carries a magic-byte version marker ahead of the `bincode` payload so `load` can tell a pre-FR-11 file (bare `Vec<Project>`, no marker), the old AES-GCM envelope, and the current plain `StoreData` shape apart, transparently upgrading in memory and immediately re-persisting in the new marked format from within `load` itself — no explicit migration step, and a purely read-only session still upgrades the file on disk. `list()`'s old flat-slice accessor is gone; downstream consumers use `entries()` (for the IPC tree DTO) and `find_project(id)` (for `command_runner`/`pty_manager`'s existing by-id reads) instead.
+- **Removed, ADR-0014:** the encrypted-envelope write path and the `locked`/`unlock` state machine. `load` no longer requires a password except transiently, during the one-time migration of a pre-existing encrypted file (see `crypto`, below).
 
-### 5.2 crypto (Rust)
-- **Responsibility:** Derive the encryption key from the master password; encrypt/decrypt the app's data blob.
+### 5.2 crypto (Rust) — scope reduced, ADR-0014
+- **Responsibility:** Migration-only. Decrypt a legacy AES-GCM-encrypted data file (using a password supplied once by the user) so `project_store` can rewrite it in the current plain format. No longer used for any new write, and no longer derives keys for anything but this one-time read.
 - **Owns entities:** none (a service module, not a data owner).
 - **Depends on:** none.
-- **Notes:** The only module that ever holds the derived key in memory. See ADR-0005.
+- **Notes:** Formerly the only module that ever held a derived key in memory (ADR-0005, superseded). Slated for full removal, along with the `argon2`/`aes-gcm`/`subtle` dependencies, once the author confirms their own live data file has been migrated at least once — see ADR-0014's "explicitly deferred" note. Until then it stays, since it's the only thing that can still read the author's pre-existing file.
 
 ### 5.3 pty_manager (Rust)
 - **Responsibility:** Spawn and track one PTY session per open pane; stream I/O between each PTY and its frontend pane over Tauri events, including notifying the frontend when the shell exits on its own (`pty://exit/{session_id}`, no payload — user typed `exit`, shell crashed, etc.), so the pane can close itself the same way a user-initiated "Close pane" would.
@@ -76,9 +77,9 @@ graph TB
 - **Depends on:** `project_store` (to read a project's configured commands).
 
 ### 5.5 config_sync (Rust)
-- **Responsibility:** Export the current encrypted data file to a chosen location; import (replace) it from a chosen file.
+- **Responsibility:** Export the current data file to a chosen location; import (replace) it from a chosen file.
 - **Owns entities:** none.
-- **Depends on:** `crypto` (import must decrypt with the current master password to validate before replacing local data).
+- **Depends on:** none, as of ADR-0014 — import validates the plain file's shape directly (magic-byte marker check, §5.1), no decrypt step.
 - **Notes:** MVP import is replace-only, not merge. See ADR-0008.
 
 ### 5.6 settings_store (Rust) — added FR-13, v1.1
@@ -120,9 +121,9 @@ graph TB
 - **project_list_ui** — renders the project list; add/edit/delete forms; the native folder-browse dialog trigger (calls Tauri's dialog API).
 - **layout_manager** — owns tab/pane grid state (which panes exist, their arrangement, active tab); pure UI state, no PTY knowledge beyond session IDs. *Extended, FR-13:* also resolves "adjacent pane in direction X" (for keyboard pane-focus movement) and exposes a "split focused pane in direction X" operation callable from a keybinding as well as from drag-to-split (FR-08) — same underlying split operation, two trigger sources. *Corrected (debugger session, 2026-07-23):* "adjacent pane in direction X" is now resolved **geometrically**, using the split `sizes` fractions the pane tree already carries, rather than by entering the neighbouring subtree at its first leaf. The old i3/tmux-style pure-tree traversal picked the correct neighbouring *subtree* but then always focused that subtree's first leaf, so in any grid deeper than one split (a 2×2, the common four-pane case) it landed on a diagonal pane instead of the adjacent one, and moving left/up entered the neighbour from its far edge. Adjacency is a screen-geometry question, and the tree alone under-determines it; `sizes` is the geometry the model already has, so no new pixel-position tracking was needed. Exact-boundary ties resolve to the first/upper pane, matching tiling-WM convention. *Extended again, FR-17:* the pane title bar (`PaneNodeView.svelte`'s `pane-header`, already showing the pane's cwd) is extracted into its own `PaneTitle.svelte` — one instance per leaf, so each can independently call `get_git_branch` (→ `git_status`, §5.6a) once on mount and append the result after the path. Deliberately not a `layout_manager` state field: the branch is display-only, per-pane derived data with no bearing on tab/pane grid state itself, so it lives in the new component rather than `terminal.svelte.ts`'s store. The lookup itself is routed through `$lib/git-branch-cache` (per-cwd memoization, same module-level-singleton-plus-test-reset-hook shape as `$lib/terminal-registry`) rather than called directly, so a forced leaf remount — the same class of pane-tree restructuring `terminal-registry` exists to survive for `TerminalPane` — reuses the already-resolved value instead of repeating the IPC round-trip. *Extended again, FR-17 focus-refresh follow-up:* `PaneTitle.svelte` now also takes a `focused` prop (`child.sessionId === focusedPaneId`, the same expression `TerminalPane`'s own `focused` prop already uses) and, on every transition to focused, calls `git-branch-cache`'s new `refreshGitBranch` — a cache-*bypassing* re-fetch, distinct from `getCachedGitBranch`'s reuse-what's-cached behavior — so a `git checkout` run inside the pane is reflected the next time the user clicks back into it. A manual refresh button next to the title calls the same `refreshGitBranch` path on click, for updating without a focus round-trip. Deliberately not a poll timer or a filesystem watcher on `.git/HEAD` (both considered — see PRD FR-17's edge cases for the cost/complexity reasoning): this reuses a signal (`focused`) `layout_manager` already computes, rather than adding a new per-pane background resource.
 - **terminal_view** — one `xterm.js` instance per *session*, rendering PTY output and forwarding keystrokes; subscribes to that session's event stream. *Extended, FR-13:* applies the selected theme preset's full xterm `Theme` object (see `theme_presets`, below) instead of a partial set of CSS-var-derived colors; looks up clipboard copy/paste combos from `keybindings` state instead of the hardcoded Ctrl+Shift+C/V. *Extended again (debugger session, perpendicular-split remount bug):* the `Terminal` instance, its scrollback, and its PTY subscriptions are no longer owned by `<TerminalPane>`'s own Svelte component lifecycle — they live in a small session-keyed registry (`$lib/terminal-registry`) that survives a forced component remount, because certain `layout_manager` tree restructurings (a cross-direction split, a drag-to-split graft) force Svelte to destroy and recreate the component even though the session itself never closed, and no `{#each}` keying strategy can prevent that (the leaf's key leaves its old block's key space entirely). Disposal is centralized to the two call sites that actually confirm a session closed (`TerminalArea.svelte`'s `handleClosePane`, `Sidebar.svelte`'s `closeSession`), never `<TerminalPane>`'s own `onDestroy`. *Extended again, FR-16:* loads `@xterm/addon-web-links` alongside the existing fit addon to detect `http(s)://` URLs in a pane's buffer; the addon's activation handler is `terminal_view`'s own, gating on `event.ctrlKey && event.button === 0` before calling `openUrl()` from `@tauri-apps/plugin-opener` — xterm.js does no modifier gating itself, so an ungated handler would hijack every plain click. No new Tauri command: `opener:default` was already granted in `src-tauri/capabilities/default.json` for FR-01's file-browse dialog and its `allow-open-url` permission covers `http(s)://` directly. Like Ctrl+Scroll zoom (§5.6), this is a fixed gesture, not a `keybindings` registry entry — there is no keyboard combo to rebind, only a mouse-click modifier.
-- **unlock_screen** — master password entry on launch; calls `crypto` (via IPC) to unlock.
+- ~~**unlock_screen** — master password entry on launch; calls `crypto` (via IPC) to unlock.~~ **Removed, ADR-0014** — no unlock step; the app opens straight to the project list. A one-time migration prompt (not a persistent screen/module) may still ask for the legacy password exactly once if the author's existing encrypted file hasn't been migrated yet — see ADR-0014.
 - **notes_editor** — per-project notes view/edit, shown alongside a project's detail.
-- **settings_ui** *(new, FR-13)* — renders the Settings modal (theme picker, master-password-change form, keybinding rebind list with conflict feedback, sidebar-position toggle); reads/writes through `get_settings`/`save_settings`/`change_master_password` IPC commands.
+- **settings_ui** *(new, FR-13; master-password-change sub-form removed, ADR-0014)* — renders the Settings modal (theme picker, keybinding rebind list with conflict feedback, sidebar-position toggle); reads/writes through `get_settings`/`save_settings` IPC commands.
 - **theme_presets** *(new, FR-13)* — static, frontend-only data module: the fixed list of named presets, each a complete xterm.js `Theme` (background, foreground, cursor, cursorAccent, full ANSI 16-color table). Owns no Rust-visible state — the backend only ever sees the selected preset's id (ADR-0009). Concrete preset values are ui-ux-designer's to define (PRD Q6).
 
 ```mermaid
@@ -131,15 +132,13 @@ graph LR
     IPC --> pty_manager
     IPC --> config_sync
     IPC --> settings_store
-    project_store --> crypto
-    config_sync --> crypto
+    project_store -.->|migration only, ADR-0014| crypto
     pty_manager --> command_runner
     command_runner --> project_store
 
     layout_manager --> IPC
     terminal_view --> IPC
     project_list_ui --> IPC
-    unlock_screen --> IPC
     notes_editor --> IPC
     settings_ui --> IPC
     terminal_view --> theme_presets
@@ -153,22 +152,23 @@ graph LR
 
 | Concern | Decision | Driven by | ADR |
 |---|---|---|---|
-| AuthN | Master password unlocks local data on app launch; not multi-user auth | NFR-3 | 0005 |
+| AuthN | N/A, ADR-0014 — no login/unlock step; the app opens directly | — | 0014 (supersedes 0005) |
 | AuthZ | N/A — single user, no roles | — | — |
-| Key derivation | Argon2id (password → encryption key) | NFR-3, NFR-6 | 0005 |
-| Encryption at rest | AES-256-GCM over the whole data blob | NFR-3 | 0004, 0005 |
+| Key derivation | N/A, ADR-0014 — `crypto`'s Argon2id path survives only to decrypt a pre-existing legacy file during the one-time migration | — | 0014 (supersedes 0005) |
+| Encryption at rest | Removed, ADR-0014 — the author decided the daily password friction wasn't worth the confidentiality guarantee for a single-user local tool; data is now a plain file protected only by OS filesystem permissions | — | 0014 (supersedes 0004/0005) |
 | Background jobs | None needed | — | — |
 | Caching | None needed (personal-scale in-memory data) | NFR-4 | — |
-| File storage | Single encrypted file (JSON/bincode + AES-GCM), doubles as the git-trackable/export artifact | NFR-5, NFR-6 | 0004 |
-| Envelope schema evolution | Magic-byte version marker ahead of the `bincode` payload; unmarked files are the pre-FR-11 legacy shape, auto-upgraded on load and rewritten in the new format on next save | FR-11, NFR-3 | 0011 |
+| File storage | Single plain file (JSON/bincode), doubles as the git-trackable/export artifact; a legacy AES-GCM-encrypted file is transparently migrated to this format the first time it's loaded post-ADR-0014 | NFR-5, NFR-6 | 0004, 0014 |
+| Envelope schema evolution | Magic-byte version marker ahead of the `bincode` payload distinguishes the pre-FR-11 legacy shape, the old AES-GCM envelope, and the current plain `StoreData` shape; any older shape is auto-upgraded on load and rewritten in the current format on next save | FR-11, NFR-3 | 0011, 0014 |
 | Terminal rendering | `xterm.js` + WebGL renderer addon | NFR-7 | 0006 |
 | Window transparency | Window created `transparent: true` **unconditionally** in `tauri.conf.json`; the user's intensity setting drives CSS root-background alpha only, never the window flag (which is creation-time-only in Tauri 2.11 — there is no `set_transparent()`). Requires a compositing WM; degrades to opaque without one | FR-15, NFR-10, CON-6 | 0012 |
+| Window decorations | `decorations: false` unconditionally in `tauri.conf.json`, uniformly on every platform (no macOS-idiomatic branch) — native title bar/controls are replaced by an in-app custom control set. Frontend gains explicit `core:window:allow-{minimize,toggle-maximize,close,start-resize-dragging}` capabilities — trimmed to exactly what's called; dragging uses the declarative `data-tauri-drag-region` attribute (no permission needed), and `allow-maximize`/`allow-unmaximize` aren't granted since only `toggleMaximize()` is used. Dragging/resizing, previously free from the OS, are built in the frontend (drag region + resize handles) | CON-5 | 0013 |
 | Notifications | N/A | — | — |
 | Logging & errors | `tracing` crate → local log file, for the author's own debugging while learning Rust | NFR-6, CON-2 | — |
 | Backups | Covered by FR-07 export; no separate backup system | NFR-4 | — |
 | Packaging | Tauri's built-in bundler → AppImage + `.deb` | CON-4, CON-5 | — |
-| Non-sensitive settings storage | Plaintext `settings.json` in the same `app_data_dir()`, owned by `settings_store`, no unlock gate | NFR-8, FR-13 | 0009 |
-| Master password rotation | Verify current password → derive new key/salt → atomic re-encrypt (temp file + rename) via `ProjectStore::change_password` | NFR-3, FR-13 | 0010 |
+| Non-sensitive settings storage | Plain `settings.json` in the same `app_data_dir()`, owned by `settings_store` — no longer a distinct "unencrypted" category once `project_store`'s own file is also plain (ADR-0014) | FR-13 | 0009 |
+| Master password rotation | Removed, ADR-0014 — no master password left to rotate. The atomic-write pattern (temp file + rename) this decision introduced is retained and now applies directly to `project_store`'s plain `persist()` | — | 0014 (supersedes 0010) |
 
 ## 7. Tech stack
 
@@ -179,8 +179,8 @@ graph LR
 | Frontend framework | Svelte | Compiles away the framework at build time — no virtual DOM, smaller bundle, lower runtime memory than React — directly serves NFR-7 with FR-08's many concurrent panes. See ADR-0002 |
 | Terminal renderer | `xterm.js`, default (non-WebGL) renderer | Industry standard (VS Code, Hyper). `@xterm/addon-webgl` was tried for cheaper multi-pane CPU/memory (NFR-7) but disabled 2026-07-21 after proving it never actually paints — see ADR-0006's revisit |
 | PTY | `portable-pty` (WezTerm project) | Mature, cross-platform (Linux/macOS/Windows via ConPTY), proven in production. See ADR-0003 |
-| Storage | Single encrypted file (`bincode`/`serde_json` + `aes-gcm` crate) | Simplest for a Rust beginner (NFR-6); pure-Rust, no C-library linking; file itself satisfies NFR-5. See ADR-0004 |
-| Crypto | `argon2` (key derivation) + `aes-gcm` (RustCrypto) | Pure-Rust, no OpenSSL/C linking pain (NFR-6); standard modern recipe. See ADR-0005 |
+| Storage | Single plain file (`bincode`/`serde_json`) | Simplest for a Rust beginner (NFR-6); pure-Rust; file itself satisfies NFR-5. See ADR-0004; encryption removed by ADR-0014 |
+| Crypto | `argon2` + `aes-gcm` (RustCrypto) — migration-only, ADR-0014 | Retained solely to decrypt the author's one pre-existing legacy file on first load post-migration; slated for full removal once that's confirmed done. See ADR-0005 (superseded), ADR-0014 |
 | Logging | `tracing` | Standard Rust ecosystem choice, low overhead |
 | Packaging | Tauri bundler (AppImage, `.deb`) | Built in, free, no extra tooling (CON-4) |
 
@@ -196,15 +196,16 @@ One box: the author's own Linux machine, running the AppImage or `.deb` package 
 2. **WebGL renderer availability.** ~~`@xterm/addon-webgl` requires a working WebGL context in the webview...~~ **Resolved 2026-07-21 (ADR-0006 revisit):** the risk materialized, but not as originally framed — WebGL context creation succeeded (no errors, not lost), yet the addon never issued a single visible draw call, confirmed via `gl.readPixels()` on the framebuffer. Not a context-availability problem the `try/catch` fallback could catch. Disabled app-wide; xterm.js's default renderer is now the only path. Revisit only once a newer `@xterm/addon-webgl` release is confirmed (by the same read-pixels method, not just absence of console errors) to actually paint.
 3. **Import replace-only (ADR-0008) may feel limiting later** if the author wants to merge project lists from two devices rather than fully replace. *Revisit if:* this friction is actually felt in practice — add merge logic as a next-iteration feature at that point, not before.
 4. **Windows/macOS support (CON-5, optional)** is not blocked by any decision here — `portable-pty` and Tauri both support all three OSes — but has not been tested. *Revisit when/if the author actually wants to run on those platforms.*
-5. **User-rebound keybindings colliding with OS/webview-native commands (FR-13).** The clipboard shortcut bug fixed 2026-07-20 (`TerminalPane.svelte`'s Ctrl+Shift+V silently double-firing because the browser/webview's own native paste action wasn't suppressed) is one instance of a general class: once users can rebind shortcuts to arbitrary combinations, any combo the OS/WebKitGTK treats as a native command is a similar risk, not just the one already fixed. *Mitigation:* design-implementer/backend-implementer should call `event.preventDefault()` for every custom-handled combo (not just the two already covered), and ui-ux-designer should consider warning the user in the rebind UI if a chosen combo is a common OS-reserved one. No architectural blocker — this is an implementation-discipline risk, not a structural one.
+5. **One-time migration off the encrypted format (ADR-0014).** The migration path (decrypt the author's one existing legacy file, rewrite as plain, never touch `crypto` again after that) is new code exercised against the author's real, only copy of their project data. *Mitigation:* write-to-temp-then-atomic-rename (the same pattern ADR-0010 already established), and don't delete/overwrite the original encrypted bytes until the new plain file is confirmed written. *Revisit:* once the author confirms migration succeeded, delete the migration code, the `crypto` module, and the `argon2`/`aes-gcm`/`subtle` dependencies outright — see ADR-0014's "explicitly deferred" note. Also flag `security-auditor` for a fresh pass: this removes a control (encryption at rest) that `docs/security/audit-2026-07-20.md` previously verified sound, so the trust-boundary section of that audit is now stale and needs re-evaluation, not just a note.
+6. **User-rebound keybindings colliding with OS/webview-native commands (FR-13).** The clipboard shortcut bug fixed 2026-07-20 (`TerminalPane.svelte`'s Ctrl+Shift+V silently double-firing because the browser/webview's own native paste action wasn't suppressed) is one instance of a general class: once users can rebind shortcuts to arbitrary combinations, any combo the OS/WebKitGTK treats as a native command is a similar risk, not just the one already fixed. *Mitigation:* design-implementer/backend-implementer should call `event.preventDefault()` for every custom-handled combo (not just the two already covered), and ui-ux-designer should consider warning the user in the rebind UI if a chosen combo is a common OS-reserved one. No architectural blocker — this is an implementation-discipline risk, not a structural one.
 
 ## 10. Instructions for AI agents
 
 You are working within this architecture. Follow these rules:
 
 1. **Source-of-truth order:** `adr/` (rationale) → this file (structure) → downstream docs for their own domains. On conflict, report it; don't silently pick.
-2. **Respect module boundaries.** Code for one module never reaches into another module's entities directly (e.g., frontend `terminal_view` never reads `project_store` data except through the IPC layer; `pty_manager` never persists data itself — that's `project_store`'s job via `crypto`). New cross-module dependencies require updating §5 + an ADR.
-3. **Entity ownership is exclusive.** Only `project_store` reads/writes `Project` and `Folder`; only `pty_manager` creates/destroys `PtySession`; only `settings_store` reads/writes `Settings` (theme/keybindings/sidebar position) — it has no `crypto` dependency and must stay that way (NFR-8).
+2. **Respect module boundaries.** Code for one module never reaches into another module's entities directly (e.g., frontend `terminal_view` never reads `project_store` data except through the IPC layer; `pty_manager` never persists data itself — that's `project_store`'s job). New cross-module dependencies require updating §5 + an ADR.
+3. **Entity ownership is exclusive.** Only `project_store` reads/writes `Project` and `Folder`; only `pty_manager` creates/destroys `PtySession`; only `settings_store` reads/writes `Settings` (theme/keybindings/sidebar position) — it has no `crypto` dependency and must stay that way.
 4. **Cross-cutting concerns use §6's decisions** — never introduce a second storage format, crypto scheme, or terminal-rendering approach without a new ADR.
 5. **Uncovered cases:** follow the nearest decision's pattern, flag as "unspecified — architecture review needed" in your summary.
 6. **Do not modify this package** unless explicitly asked; propose changes as draft ADRs instead.
@@ -215,6 +216,8 @@ You are working within this architecture. Follow these rules:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.13 | 2026-08-12 | EVOLVE per direct product decision (routed via project-navigator → system-architect): added ADR-0014, removing the master password / encryption-at-rest feature entirely. Supersedes ADR-0005 and ADR-0010. §5.1 `project_store` now reads/writes a plain file; `crypto` (§5.2) scope reduced to a one-time legacy-file migration only (retained until the author confirms their live data has migrated, then slated for full removal per ADR-0014); `unlock_screen` (§5.7) removed; `settings_ui`'s master-password-change sub-form removed; `config_sync` (§5.5) no longer depends on `crypto`. §6 table updated (AuthN/key derivation/encryption-at-rest/master-password-rotation rows marked removed or superseded). §2 NFR-3 rewritten to drop the encryption mandate; NFR-8 marked N/A (no unlock state to gate against). Added risk #5 (migration correctness + flags `security-auditor` for a fresh pass, since this removes a control the 2026-07-20 audit previously verified sound). PRD updated in the same change-set (v1.12): FR-06 marked removed, US-05 marked removed, FR-13's master-password-change sub-feature removed. |
+| 1.12 | 2026-07-29 | EVOLVE per direct product decision (no PRD FR yet), routed via project-navigator: added ADR-0013 and a cross-cutting "Window decorations" row (§6). `decorations: false` set unconditionally on the `main` window in `tauri.conf.json`, uniformly across platforms — native title bar/controls are replaced by a custom in-app control set, per the user's request for a top bar with right-anchored minimize/maximize/close. `src-tauri/capabilities/default.json` gains explicit window-mutation permissions (`core:window:default`, already granted via `core:default`, only covers read-only queries) — trimmed during design-implementer's build to exactly the four commands the frontend actually calls (`allow-minimize`, `allow-toggle-maximize`, `allow-close`, `allow-start-resize-dragging`); `allow-maximize`/`allow-unmaximize`/`allow-start-dragging`, present in the original draft, were dropped as unused once the frontend settled on `toggleMaximize()` and the declarative `data-tauri-drag-region` attribute (which bypasses the permission pipeline entirely). Dragging and edge/corner resizing, previously supplied by the OS, are now the frontend's responsibility — `TitleBar.svelte` (drag region) and new `WindowResizeHandles.svelte` (8 edge/corner regions). New global layout classes `.app-root`/`.app-below-titlebar` (`src/lib/styles/base.css`) let `TitleBar` sit above `UnlockScreen`/`.app-shell` instead of either owning the full viewport height directly — the Title Bar now renders unconditionally regardless of lock state (window controls must work before unlock, since native decorations no longer do), while its Settings/Add-project/search/toggle zones stay gated behind `!appStore.locked`, matching their pre-v2.8 reachability exactly. No new Rust module or command; same "one config key, no window-builder code" shape as ADR-0012, and composes with it without touching its `transparent` key. |
 | 1.11 | 2026-07-24 | FR-17 focus-refresh follow-up (PRD v1.11): `git-branch-cache.ts` gains `refreshGitBranch` (cache-bypassing, overwrites the memoized entry), alongside the existing `getCachedGitBranch` (cache-reusing). `PaneTitle.svelte` takes a new `focused` prop (`layout_manager`/`PaneNodeView.svelte` passes `child.sessionId === focusedPaneId`, same expression `TerminalPane` already uses) and calls `refreshGitBranch` on every transition to focused, plus from a new manual refresh button next to the title. Deliberately not a poll timer or an `.git/HEAD` filesystem watcher — both would add a new per-pane background resource; this reuses a signal `layout_manager` already computes. Branch text also gets its own token (`--color-primary`, distinct from the path's `--color-text-muted`) per the PRD's new acceptance criterion that it be visually distinguishable. |
 | 1.10 | 2026-07-24 | FR-17 (Pane Title Shows Active Git Branch, PRD v1.10): new Rust module `git_status` (§5.6a) reads `.git/HEAD` directly (no `git` subprocess, no `libgit2`) to find a directory's current branch or detached-HEAD short hash; new thin command `get_git_branch` mirrors `path_exists`'s shape (stateless, `Option` result, no error surfaced for "not a git repo"). `layout_manager` (§5.7) extended: the pane title bar's cwd label is extracted from `PaneNodeView.svelte` into its own `PaneTitle.svelte` (one instance per leaf) so each pane can independently fetch and append its branch once on mount — deliberately not added to `terminal.svelte.ts`'s pane-tree state, since it's derived display data with no bearing on layout. |
 | 1.9 | 2026-07-24 | FR-16 (Clickable Terminal Links, PRD v1.9): `terminal_view` (§5.7) loads `@xterm/addon-web-links` for URL detection and gates its activation handler on `event.ctrlKey && event.button === 0` before opening via `@tauri-apps/plugin-opener`'s `openUrl()`. No new module, no new Tauri command, no capability change — reuses the `opener:default` permission already granted for FR-01. A fixed mouse gesture, not a `keybindings` registry entry, same category as Ctrl+Scroll zoom. |

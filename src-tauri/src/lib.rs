@@ -28,10 +28,12 @@ pub fn run() {
                 .expect("failed to resolve app data directory");
             std::fs::create_dir_all(&data_dir).expect("failed to create app data directory");
             // Security audit 2026-07-20, M3: restrict the directory holding
-            // the encrypted project data to owner-only. Without this, the
-            // directory (and the data file inside it) end up with whatever
+            // the project data to owner-only. Without this, the directory
+            // (and the data file inside it) end up with whatever
             // permissions the OS default/umask gives — this app shouldn't
             // rely on an ancestor directory happening to be locked down.
+            // Since ADR-0014 removed encryption, this is the data's only
+            // protection, not a defense-in-depth layer.
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -72,7 +74,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::unlock,
+            commands::init_store,
+            commands::migrate_and_load,
             commands::list_sidebar_entries,
             commands::add_project,
             commands::update_project,
@@ -92,7 +95,6 @@ pub fn run() {
             commands::get_git_branch,
             commands::get_settings,
             commands::save_settings,
-            commands::change_master_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

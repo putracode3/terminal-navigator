@@ -7,7 +7,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 // Imported after the mock so the module under test picks up the mocked `invoke`.
 import {
-	unlock,
+	initStore,
+	migrateAndLoad,
 	listSidebarEntries,
 	addProject,
 	updateProject,
@@ -42,9 +43,14 @@ describe("api/index — IPC command mapping", () => {
 	// feature silently at runtime, so this is the single highest-value test
 	// in the whole frontend suite.
 
-	it("unlock() invokes 'unlock' with the password", () => {
-		unlock("hunter2");
-		expect(invokeMock).toHaveBeenCalledWith("unlock", { password: "hunter2" });
+	it("initStore() invokes 'init_store' with no args", () => {
+		initStore();
+		expect(invokeMock).toHaveBeenCalledWith("init_store");
+	});
+
+	it("migrateAndLoad() invokes 'migrate_and_load' with the legacy password", () => {
+		migrateAndLoad("hunter2");
+		expect(invokeMock).toHaveBeenCalledWith("migrate_and_load", { legacyPassword: "hunter2" });
 	});
 
 	it("listSidebarEntries() invokes 'list_sidebar_entries' with no args", () => {
@@ -102,12 +108,9 @@ describe("api/index — IPC command mapping", () => {
 		expect(invokeMock).toHaveBeenCalledWith("export_config", { destination: "/tmp/out.enc" });
 	});
 
-	it("importConfig() passes source and password", () => {
-		importConfig("/tmp/in.enc", "hunter2");
-		expect(invokeMock).toHaveBeenCalledWith("import_config", {
-			source: "/tmp/in.enc",
-			password: "hunter2",
-		});
+	it("importConfig() passes source", () => {
+		importConfig("/tmp/in.enc");
+		expect(invokeMock).toHaveBeenCalledWith("import_config", { source: "/tmp/in.enc" });
 	});
 
 	it("pathExists() passes path", () => {

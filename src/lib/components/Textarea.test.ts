@@ -77,9 +77,4 @@ describe("Textarea — autosave (components.md: no manual Save button)", () => {
 		await vi.advanceTimersByTimeAsync(2000);
 		expect(screen.queryByText("Saving…")).toBeNull();
 	});
-
-	it("always renders the inline SecurityBadge — notes may hold credentials (NFR-3)", () => {
-		render(Textarea, { id: "t1", label: "Notes", value: "" });
-		expect(screen.getByTitle("This field is encrypted at rest")).toBeInTheDocument();
-	});
 });

@@ -1,12 +1,19 @@
-//! Master-password based encryption for the app's single data file (ADR-0005).
-//! Argon2id derives the key from the password; AES-256-GCM encrypts the blob.
-//! Pure-Rust crates only (argon2, aes-gcm) — no C/OpenSSL linking (NFR-6, CON-2).
+//! Legacy master-password decryption only (ADR-0014, supersedes ADR-0005).
+//! Encryption at rest was removed — this module now exists solely to decrypt
+//! a pre-existing AES-256-GCM-encrypted data file during `project_store`'s
+//! one-time migration to the plain format. Nothing in this crate encrypts
+//! anything new; `encrypt`/`generate_salt` are `#[cfg(test)]`-only, kept
+//! exclusively to construct legacy-format fixtures in tests. Pure-Rust crates
+//! only (argon2, aes-gcm) — no C/OpenSSL linking (NFR-6, CON-2).
+//!
+//! Slated for full removal, along with the `argon2`/`aes-gcm` dependencies,
+//! once the author confirms their own live data file has migrated — see
+//! ADR-0014's "explicitly deferred" note. Until then it stays, since it's
+//! the only thing that can still read a pre-existing encrypted file.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::Argon2;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use thiserror::Error;
 
 pub const SALT_LEN: usize = 16;
@@ -17,10 +24,12 @@ pub const KEY_LEN: usize = 32;
 pub enum CryptoError {
     #[error("failed to derive encryption key from password")]
     KeyDerivation,
-    #[error("failed to encrypt data")]
-    Encryption,
     #[error("failed to decrypt data — wrong password or corrupted file")]
     Decryption,
+    /// Only ever produced by the `#[cfg(test)]`-only `encrypt` fixture helper.
+    #[error("failed to encrypt data")]
+    #[cfg(test)]
+    Encryption,
 }
 
 /// Derives a 256-bit key from a master password and salt using Argon2id.
@@ -33,26 +42,6 @@ pub fn derive_key(password: &str, salt: &[u8; SALT_LEN]) -> Result<[u8; KEY_LEN]
     Ok(key)
 }
 
-/// Generates a fresh random salt for a new data file.
-pub fn generate_salt() -> [u8; SALT_LEN] {
-    let mut salt = [0u8; SALT_LEN];
-    OsRng.fill_bytes(&mut salt);
-    salt
-}
-
-/// Encrypts `plaintext` with `key`, returning a freshly generated nonce and the ciphertext.
-/// A new random nonce is generated on every call — nonces must never repeat for a given key.
-pub fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| CryptoError::Encryption)?;
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext)
-        .map_err(|_| CryptoError::Encryption)?;
-    Ok((nonce_bytes.to_vec(), ciphertext))
-}
-
 /// Decrypts `ciphertext` with `key` and `nonce`. Fails if the key is wrong or the data
 /// was tampered with — AES-GCM's authentication tag makes both cases indistinguishable
 /// from each other, which is intentional (no oracle for guessing the password).
@@ -62,6 +51,34 @@ pub fn decrypt(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8]) -> Result<V
     cipher
         .decrypt(nonce, ciphertext)
         .map_err(|_| CryptoError::Decryption)
+}
+
+/// Test-fixture-only: no production code path ever encrypts anything new
+/// (ADR-0014). Kept solely so this module's own tests, and
+/// `project_store`'s migration test, can construct a legacy-format
+/// encrypted file to decrypt.
+#[cfg(test)]
+pub(crate) fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
+    use rand::rngs::OsRng;
+    use rand::RngCore;
+
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| CryptoError::Encryption)?;
+    let mut nonce_bytes = [0u8; NONCE_LEN];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|_| CryptoError::Encryption)?;
+    Ok((nonce_bytes.to_vec(), ciphertext))
+}
+
+/// Test-fixture-only — see `encrypt`'s doc comment.
+#[cfg(test)]
+pub(crate) fn generate_salt() -> [u8; SALT_LEN] {
+    use rand::rngs::OsRng;
+    use rand::RngCore;
+
+    let mut salt = [0u8; SALT_LEN];
+    OsRng.fill_bytes(&mut salt);
+    salt
 }
 
 #[cfg(test)]

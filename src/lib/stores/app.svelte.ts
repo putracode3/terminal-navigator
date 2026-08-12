@@ -1,6 +1,8 @@
-// App-wide reactive state: lock status + the decrypted sidebar tree
-// (projects and, since FR-11, folders). Svelte 5 runes store — a single
-// shared instance (module singleton).
+// App-wide reactive state: load status + the sidebar tree (projects and,
+// since FR-11, folders). Svelte 5 runes store — a single shared instance
+// (module singleton). ADR-0014 removed the lock/unlock state machine —
+// `ready`/`needsMigration` below replace it with a one-time startup
+// sequence instead of a persistent security gate.
 import type { ProjectDto, SidebarEntryDto } from "$lib/api";
 
 /** FR-11: the sidebar-internal drag currently in progress (folder
@@ -63,17 +65,24 @@ function upsertProjectEntries(entries: SidebarEntryDto[], project: ProjectDto): 
 }
 
 class AppStore {
-	locked = $state(true);
+	/** True once `initStore`/`migrateAndLoad` has resolved and `entries`
+	 *  reflects real data — replaces the old `locked` flag (ADR-0014). */
+	ready = $state(false);
+	/** True when `initStore` reported the data file is still in the
+	 *  pre-ADR-0014 encrypted format — the app should show a one-time
+	 *  migration prompt instead of the normal shell until this resolves. */
+	needsMigration = $state(false);
 	entries = $state<SidebarEntryDto[]>([]);
-	/** Held only in memory for the lifetime of the unlocked session, to
-	 *  re-validate on import (ADR-0008); never persisted, never sent anywhere
-	 *  except back to the same `unlock`/`import_config` IPC calls. */
-	password = $state("");
 	/** Manual full hide/show (v1.4 "Sidebar show/hide toggle") — layered on
 	 *  top of, not replacing, the automatic breakpoint icon-rail collapse
 	 *  that Sidebar.svelte's own CSS still handles independently. */
 	sidebarHidden = $state(false);
 	sidebarDrag = $state<SidebarDragSource | null>(null);
+	/** v2.8: the project search query. Lives here (not local to a single
+	 *  component) because the Title Bar owns the search `Input` while
+	 *  `Sidebar` owns the filtered list it drives — the same
+	 *  shared-cross-pane-state role `sidebarHidden` already plays. */
+	search = $state("");
 
 	/** Every project regardless of folder membership — see `flattenProjects`. */
 	get allProjects(): ProjectDto[] {
@@ -84,10 +93,16 @@ class AppStore {
 		this.sidebarHidden = !this.sidebarHidden;
 	}
 
-	unlockWith(password: string, entries: SidebarEntryDto[]) {
-		this.password = password;
+	/** ADR-0014: called after either `initStore` or `migrateAndLoad`
+	 *  resolves — same end state either way, so one method covers both. */
+	finishLoading(entries: SidebarEntryDto[]) {
 		this.entries = entries;
-		this.locked = false;
+		this.ready = true;
+		this.needsMigration = false;
+	}
+
+	setNeedsMigration() {
+		this.needsMigration = true;
 	}
 
 	setEntries(entries: SidebarEntryDto[]) {

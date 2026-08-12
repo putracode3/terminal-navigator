@@ -1,21 +1,25 @@
 <script lang="ts">
+	// ADR-0014: shown only once, ever, per pre-existing installation — when
+	// `initStore` reports the data file is still in the pre-ADR-0014
+	// encrypted format. Asks for the legacy master password exactly once to
+	// migrate the file to the current plain format; never shown again after
+	// that migration succeeds.
 	import Input from "$lib/components/Input.svelte";
 	import Button from "$lib/components/Button.svelte";
-	import SecurityBadge from "$lib/components/SecurityBadge.svelte";
-	import { unlock, errorMessage } from "$lib/api";
+	import { migrateAndLoad, errorMessage } from "$lib/api";
 	import { appStore } from "$lib/stores/app.svelte";
 
 	let password = $state("");
 	let error = $state("");
 	let loading = $state(false);
 
-	async function handleUnlock() {
+	async function handleMigrate() {
 		if (!password) return;
 		loading = true;
 		error = "";
 		try {
-			const entries = await unlock(password);
-			appStore.unlockWith(password, entries);
+			const entries = await migrateAndLoad(password);
+			appStore.finishLoading(entries);
 		} catch (e) {
 			error = errorMessage(e);
 		} finally {
@@ -28,17 +32,20 @@
 	<div class="glow" aria-hidden="true"></div>
 	<div class="card">
 		<h1>Terminal Navigator</h1>
-		<SecurityBadge variant="labeled" label="Encrypted" />
+		<p class="explainer">
+			Your existing project data is still in the old encrypted format. Enter your previous master password once to
+			migrate it — you won't be asked again.
+		</p>
 		<Input
-			id="master-password"
-			label="Master password"
+			id="legacy-password"
+			label="Previous master password"
 			variant="password"
 			autofocus
 			bind:value={password}
-			onEnter={handleUnlock}
+			onEnter={handleMigrate}
 			error={error || undefined}
 		/>
-		<Button variant="primary" onclick={handleUnlock} loading={loading}>Unlock</Button>
+		<Button variant="primary" onclick={handleMigrate} loading={loading}>Migrate</Button>
 	</div>
 </div>
 
@@ -92,6 +99,13 @@
 
 	h1 {
 		font-size: var(--text-xl);
+		text-align: center;
+	}
+
+	.explainer {
+		margin: 0;
+		font-size: var(--text-sm);
+		color: var(--color-text-muted);
 		text-align: center;
 	}
 </style>

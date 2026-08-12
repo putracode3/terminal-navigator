@@ -1,12 +1,12 @@
 <script lang="ts">
 	// components.md — Settings Panel pattern (FR-13). Reuses Modal's `form`
 	// variant as-is (no new modal size). Theme/keybindings/sidebar-position
-	// autosave per-control; master password change is the one scoped submit
-	// action in the panel (Modal's amended Do/Don't).
+	// autosave per-control. Master password change removed (ADR-0014) — no
+	// master password left to change.
+	import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 	import Modal from "$lib/components/Modal.svelte";
 	import Input from "$lib/components/Input.svelte";
 	import Button from "$lib/components/Button.svelte";
-	import SecurityBadge from "$lib/components/SecurityBadge.svelte";
 	import ThemePresetCard from "$lib/components/ThemePresetCard.svelte";
 	import KeybindingRow from "$lib/components/KeybindingRow.svelte";
 	import SegmentedControl from "$lib/components/SegmentedControl.svelte";
@@ -14,7 +14,8 @@
 	import { themeStore } from "$lib/stores/theme.svelte";
 	import { KEYBINDING_ACTIONS, actionLabel, type ActionId } from "$lib/keybindings";
 	import { settingsStore } from "$lib/stores/settings.svelte";
-	import { changeMasterPassword, isAppError, errorMessage } from "$lib/api";
+	import { appStore } from "$lib/stores/app.svelte";
+	import { exportConfig, importConfig, errorMessage } from "$lib/api";
 
 	let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
@@ -152,72 +153,95 @@
 		{ value: "system", label: "System" },
 	];
 
-	// Master password change — the one field group with real, hard-to-reverse
-	// consequences (rotates the encryption key), so it gets its own scoped
-	// submit rather than autosaving per keystroke.
-	let currentPassword = $state("");
-	let newPassword = $state("");
-	let confirmPassword = $state("");
-	let currentPasswordError = $state("");
-	let newPasswordError = $state("");
-	let confirmPasswordError = $state("");
-	let passwordSuccess = $state("");
-	let changingPassword = $state(false);
-	let successTimeout: ReturnType<typeof setTimeout> | undefined;
+	// v2.8 (components.md, Settings Panel — Data group): Export/Import,
+	// relocated from the sidebar footer (FR-07, ADR-0004/ADR-0008). Since
+	// ADR-0014 removed encryption, import no longer needs a password at all
+	// — it just validates the source file's shape server-side. Status/error
+	// lifecycle carried over verbatim from the old footer banner (design.md
+	// v2.4 rule: an owned lifetime or a dismiss affordance), just renamed to
+	// make clear this is Data-group-scoped, not shared with `settingsError`
+	// above.
+	let dataSyncStatus = $state("");
+	let dataSyncError = $state("");
+	let dataSyncing = $state(false);
+	let pendingImportSource = $state<string | undefined>(undefined);
+	const DATA_ERROR_DISMISS_MS = 8000;
+	let dataErrorTimer: ReturnType<typeof setTimeout> | undefined;
 
-	function clearPasswordErrors() {
-		currentPasswordError = "";
-		newPasswordError = "";
-		confirmPasswordError = "";
+	function flashDataStatus(message: string) {
+		dataSyncStatus = message;
+		setTimeout(() => {
+			if (dataSyncStatus === message) dataSyncStatus = "";
+		}, 3000);
 	}
 
-	async function handleChangePassword() {
-		clearPasswordErrors();
-		passwordSuccess = "";
-		if (!newPassword) {
-			newPasswordError = "New password cannot be empty.";
-			return;
-		}
-		if (newPassword !== confirmPassword) {
-			confirmPasswordError = "Passwords don't match.";
-			return;
-		}
-		changingPassword = true;
+	function flashDataError(message: string) {
+		dataSyncError = message;
+		clearTimeout(dataErrorTimer);
+		dataErrorTimer = setTimeout(() => (dataSyncError = ""), DATA_ERROR_DISMISS_MS);
+	}
+
+	function dismissDataError() {
+		clearTimeout(dataErrorTimer);
+		dataSyncError = "";
+	}
+
+	async function handleExport() {
+		const destination = await saveDialog({ defaultPath: "terminal-navigator-export.enc" });
+		if (!destination) return;
+		dismissDataError();
+		dataSyncing = true;
 		try {
-			await changeMasterPassword(currentPassword, newPassword);
-			currentPassword = "";
-			newPassword = "";
-			confirmPassword = "";
-			passwordSuccess = "Password changed";
-			successTimeout = setTimeout(() => {
-				if (passwordSuccess === "Password changed") passwordSuccess = "";
-			}, 2000);
+			await exportConfig(destination);
+			flashDataStatus("Exported");
 		} catch (e) {
-			if (isAppError(e) && e.kind === "wrong_password") {
-				currentPasswordError = "Current password is incorrect";
-			} else {
-				confirmPasswordError = errorMessage(e);
-			}
+			flashDataError(errorMessage(e));
 		} finally {
-			changingPassword = false;
+			dataSyncing = false;
+		}
+	}
+
+	async function handleImportPick() {
+		const source = await openDialog({ multiple: false, directory: false });
+		if (typeof source === "string") {
+			dismissDataError();
+			pendingImportSource = source;
+		}
+	}
+
+	async function confirmImport() {
+		if (!pendingImportSource) return;
+		dataSyncing = true;
+		try {
+			const entries = await importConfig(pendingImportSource);
+			appStore.setEntries(entries);
+			pendingImportSource = undefined;
+			flashDataStatus("Imported — project list replaced");
+		} catch (e) {
+			flashDataError(errorMessage(e));
+			pendingImportSource = undefined;
+		} finally {
+			dataSyncing = false;
 		}
 	}
 
 	$effect(() => {
-		return () => clearTimeout(successTimeout);
+		return () => clearTimeout(dataErrorTimer);
 	});
 
-	// code review m2: this modal stays permanently mounted (Sidebar.svelte
+	// code review m2: this modal stays permanently mounted (TitleBar.svelte
 	// renders it unconditionally), so without this reset, closing without
-	// submitting and reopening left stale password text/errors in place.
+	// submitting and reopening left stale status/errors in place.
+	// v2.8: also resets the Data group's status/error — components.md is
+	// explicit that a stale "Exported" flash or dismissed error must not
+	// reappear the next time the modal reopens, since this state now lives
+	// inside a dismissible modal rather than always-visible chrome.
 	$effect(() => {
 		if (open) {
-			currentPassword = "";
-			newPassword = "";
-			confirmPassword = "";
-			clearPasswordErrors();
-			passwordSuccess = "";
 			settingsError = "";
+			dismissDataError();
+			dataSyncStatus = "";
+			pendingImportSource = undefined;
 		}
 	});
 </script>
@@ -267,41 +291,6 @@
 		</section>
 
 		<section>
-			<div class="section-header">
-				<h3>Master password</h3>
-				<SecurityBadge variant="inline" />
-			</div>
-			<Input
-				id="settings-current-password"
-				label="Current password"
-				variant="password"
-				bind:value={currentPassword}
-				error={currentPasswordError || undefined}
-			/>
-			<Input
-				id="settings-new-password"
-				label="New password"
-				variant="password"
-				bind:value={newPassword}
-				error={newPasswordError || undefined}
-			/>
-			<Input
-				id="settings-confirm-password"
-				label="Confirm new password"
-				variant="password"
-				bind:value={confirmPassword}
-				error={confirmPasswordError || undefined}
-				onEnter={handleChangePassword}
-			/>
-			<div class="password-action">
-				<Button variant="primary" onclick={handleChangePassword} loading={changingPassword}>
-					Change password
-				</Button>
-				{#if passwordSuccess}<span class="success">{passwordSuccess}</span>{/if}
-			</div>
-		</section>
-
-		<section>
 			<h3>Keybindings</h3>
 			<p class="hint">
 				Some combinations may be intercepted by your desktop environment before this app sees them.
@@ -332,6 +321,21 @@
 				}}
 				ariaLabel="Sidebar position"
 			/>
+		</section>
+
+		<section>
+			<h3>Data</h3>
+			<div class="data-row">
+				<Button variant="secondary" size="sm" onclick={handleExport} loading={dataSyncing}>Export</Button>
+				<Button variant="secondary" size="sm" onclick={handleImportPick} loading={dataSyncing}>Import</Button>
+			</div>
+			{#if dataSyncStatus}<p class="sync-status">{dataSyncStatus}</p>{/if}
+			{#if dataSyncError}
+				<div class="error-banner" role="alert">
+					<p class="error">{dataSyncError}</p>
+					<button class="error-dismiss" aria-label="Dismiss error" onclick={dismissDataError}>✕</button>
+				</div>
+			{/if}
 		</section>
 
 		<section>
@@ -389,6 +393,34 @@
 	{/snippet}
 </Modal>
 
+<!-- v2.8: relocated from Sidebar.svelte verbatim (FR-07/ADR-0008). Stacks
+     on top of the Settings modal above — both use Modal's own z-index tokens
+     and this one is the later sibling in the DOM, so it paints on top;
+     unspecified: components.md's Title Bar/Settings Panel updates didn't
+     explicitly address Modal-on-Modal stacking, review needed if this proves
+     visually wrong in practice. -->
+<Modal
+	open={!!pendingImportSource}
+	title="Import project data"
+	variant="confirm"
+	onClose={() => (pendingImportSource = undefined)}
+>
+	{#snippet children()}
+		<p>
+			This replaces <strong>all</strong> projects currently in Terminal Navigator with the contents
+			of the selected file (ADR-0008 — import is replace, not merge). This cannot be undone.
+		</p>
+		<p>
+			Imported projects' setup commands will run automatically the next time their terminal opens
+			— only import files from sources you trust.
+		</p>
+	{/snippet}
+	{#snippet footer()}
+		<Button variant="secondary" onclick={() => (pendingImportSource = undefined)}>Cancel</Button>
+		<Button variant="danger" onclick={confirmImport} loading={dataSyncing}>Replace and import</Button>
+	{/snippet}
+</Modal>
+
 <style>
 	section {
 		display: flex;
@@ -406,10 +438,53 @@
 		font-size: var(--text-xs);
 	}
 
-	.section-header {
+	/* v2.8 Data group — relocated from Sidebar.svelte's footer verbatim. */
+	.data-row {
 		display: flex;
-		align-items: center;
 		gap: var(--space-2);
+	}
+
+	.data-row > :global(.btn) {
+		flex: 1;
+	}
+
+	.sync-status {
+		margin: 0;
+		font-size: var(--text-xs);
+		color: var(--color-security);
+	}
+
+	.error-banner {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-2);
+	}
+
+	.error-banner > .error {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.error-dismiss {
+		flex-shrink: 0;
+		background: transparent;
+		border: none;
+		color: var(--color-danger);
+		cursor: pointer;
+		padding: 0 var(--space-1);
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs);
+		line-height: var(--leading-xs);
+	}
+
+	.error-dismiss:hover {
+		background: var(--color-surface-elevated);
+	}
+
+	.error-dismiss:focus-visible {
+		outline: 2px solid var(--color-focus);
+		outline-offset: -2px;
 	}
 
 	.hint {
@@ -487,14 +562,4 @@
 		letter-spacing: var(--tracking-wide);
 	}
 
-	.password-action {
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-	}
-
-	.success {
-		font-size: var(--text-xs);
-		color: var(--color-text-muted);
-	}
 </style>

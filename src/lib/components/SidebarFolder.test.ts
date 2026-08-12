@@ -96,6 +96,31 @@ describe("SidebarFolder — expand/collapse", () => {
 		await fireEvent.click(screen.getByRole("button", { name: "Expand My Folder" }));
 		expect(container.querySelector(".members")).not.toBeNull();
 	});
+
+	// FR-11 (components.md): expand/collapse persists across restarts via the
+	// caller (Sidebar.svelte owns settingsStore) — this component only needs
+	// to seed from `expanded` and report toggles via `onToggleExpanded`.
+	it("starts collapsed when the caller passes expanded={false} (a restored, previously-collapsed folder)", () => {
+		const { container } = render(SidebarFolder, baseProps({ expanded: false }));
+		expect(container.querySelector(".members")).toBeNull();
+	});
+
+	it("reports the new value via onToggleExpanded on every toggle", async () => {
+		const onToggleExpanded = vi.fn();
+		render(SidebarFolder, baseProps({ onToggleExpanded }));
+
+		await fireEvent.click(screen.getByRole("button", { name: "Collapse My Folder" }));
+		expect(onToggleExpanded).toHaveBeenLastCalledWith(false);
+
+		await fireEvent.click(screen.getByRole("button", { name: "Expand My Folder" }));
+		expect(onToggleExpanded).toHaveBeenLastCalledWith(true);
+	});
+
+	it("works standalone without onToggleExpanded (still optional, e.g. other tests in this file)", async () => {
+		const { container } = render(SidebarFolder, baseProps());
+		await fireEvent.click(screen.getByRole("button", { name: "Collapse My Folder" }));
+		expect(container.querySelector(".members")).toBeNull();
+	});
 });
 
 // components.md v2.4: rename moved from left-click to right-click. Left-click

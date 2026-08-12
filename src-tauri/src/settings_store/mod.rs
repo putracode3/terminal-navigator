@@ -62,6 +62,17 @@ pub struct Settings {
     /// existed would fail to parse.
     #[serde(default)]
     pub window_transparency: f32,
+    /// FR-11 (components.md "Sidebar Folder"): per-folder expand/collapse
+    /// state, keyed by folder id (as string, matching the id shape already
+    /// used at the IPC boundary for folders — see ADR-0011). A folder id
+    /// absent from this map is treated as expanded — components.md's
+    /// Anatomy table gives "expanded" as the default state, so this map
+    /// only ever needs to record departures from that default, not every
+    /// folder's state explicitly. Same `#[serde(default)]` reasoning as the
+    /// fields above — without it, every settings.json written before this
+    /// field existed would fail to parse.
+    #[serde(default)]
+    pub folder_expanded: HashMap<String, bool>,
 }
 
 impl Default for Settings {
@@ -77,6 +88,9 @@ impl Default for Settings {
             glass_intensity: 0.0,
             // design.md §4.7: same — 0 is a fully opaque window.
             window_transparency: 0.0,
+            // components.md: no folder has been collapsed yet, so nothing
+            // to record — absence already means expanded.
+            folder_expanded: HashMap::new(),
         }
     }
 }
@@ -316,6 +330,47 @@ mod tests {
             save(&path, &settings).unwrap();
             assert_eq!(load(&path).unwrap().theme_mode, mode);
         }
+    }
+
+    /// Regression for the fourth field added this way (FR-11): a
+    /// settings.json written by the pre-folder_expanded build (theme_mode
+    /// present, no folder_expanded) must still load, defaulting to an empty
+    /// map — i.e. every folder renders expanded, matching this app's
+    /// behavior before this field existed.
+    #[test]
+    fn load_accepts_settings_file_written_before_folder_expanded_existed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "theme_preset": "nord",
+                "keybindings": {"clipboard.copy": "Ctrl+Shift+C"},
+                "sidebar_position": "left",
+                "theme_mode": "dark",
+                "glass_intensity": 0.0,
+                "window_transparency": 0.0
+            }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path).expect("pre-FR-11-collapse-state settings file must still load");
+        assert_eq!(settings.theme_preset, "nord");
+        assert!(settings.folder_expanded.is_empty(), "missing field defaults to an empty map");
+    }
+
+    #[test]
+    fn folder_expanded_persists_through_save_and_load() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut folder_expanded = HashMap::new();
+        folder_expanded.insert("folder-1".to_string(), false);
+        folder_expanded.insert("folder-2".to_string(), true);
+        let settings = Settings { folder_expanded: folder_expanded.clone(), ..Settings::default() };
+
+        save(&path, &settings).unwrap();
+
+        assert_eq!(load(&path).unwrap().folder_expanded, folder_expanded);
     }
 
     #[test]

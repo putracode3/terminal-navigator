@@ -16,10 +16,15 @@ pub struct AppError {
 }
 
 impl AppError {
-    pub fn locked() -> Self {
+    /// Not a security gate (ADR-0014 removed the lock/unlock state machine
+    /// entirely) — just defensive null-safety against a command being
+    /// called before `init_store`/`migrate_and_load` has populated
+    /// `AppState.store` on startup, which should only ever be a brief
+    /// ordering race, never a deliberate "keep this shut" boundary.
+    pub fn not_ready() -> Self {
         Self {
-            kind: "locked",
-            message: "The store is locked. Call unlock first.".to_string(),
+            kind: "not_ready",
+            message: "The project store hasn't finished loading yet. Call init_store first.".to_string(),
         }
     }
 }
@@ -29,13 +34,13 @@ impl From<ProjectStoreError> for AppError {
         let kind = match &err {
             ProjectStoreError::EmptyName
             | ProjectStoreError::PathNotFound(_)
-            | ProjectStoreError::EmptyPassword
             | ProjectStoreError::SelfMerge => "invalid_input",
             ProjectStoreError::NotFound(_) => "not_found",
             ProjectStoreError::Crypto(_) => "crypto",
             ProjectStoreError::Io(_) => "io",
             ProjectStoreError::Corrupted => "corrupted",
             ProjectStoreError::WrongPassword => "wrong_password",
+            ProjectStoreError::NeedsMigration => "needs_migration",
         };
         Self { kind, message: err.to_string() }
     }

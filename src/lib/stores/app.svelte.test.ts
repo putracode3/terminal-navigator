@@ -24,27 +24,35 @@ function folderEntry(overrides: Partial<FolderDto> = {}): SidebarEntryDto {
 // appStore is a module-level singleton — reset it before every test so
 // tests never depend on execution order (qa-tester principle 5).
 beforeEach(() => {
-	appStore.locked = true;
+	appStore.ready = false;
+	appStore.needsMigration = false;
 	appStore.entries = [];
-	appStore.password = "";
 	appStore.sidebarHidden = false;
 	appStore.sidebarDrag = null;
 });
 
 describe("appStore", () => {
-	it("starts locked with no entries", () => {
-		expect(appStore.locked).toBe(true);
+	it("starts not ready with no entries", () => {
+		expect(appStore.ready).toBe(false);
+		expect(appStore.needsMigration).toBe(false);
 		expect(appStore.entries).toEqual([]);
 		expect(appStore.allProjects).toEqual([]);
 	});
 
-	it("unlockWith() unlocks, stores the password, and sets the sidebar tree", () => {
+	it("finishLoading() marks ready, clears needsMigration, and sets the sidebar tree", () => {
+		appStore.needsMigration = true;
 		const entries = [projectEntry({ id: "a" }), projectEntry({ id: "b" })];
-		appStore.unlockWith("hunter2", entries);
+		appStore.finishLoading(entries);
 
-		expect(appStore.locked).toBe(false);
-		expect(appStore.password).toBe("hunter2");
+		expect(appStore.ready).toBe(true);
+		expect(appStore.needsMigration).toBe(false);
 		expect(appStore.entries).toEqual(entries);
+	});
+
+	it("setNeedsMigration() flags migration without touching entries/ready", () => {
+		appStore.setNeedsMigration();
+		expect(appStore.needsMigration).toBe(true);
+		expect(appStore.ready).toBe(false);
 	});
 
 	it("setEntries() replaces the tree wholesale", () => {

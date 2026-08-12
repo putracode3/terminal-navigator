@@ -51,8 +51,20 @@ export function errorMessage(e: unknown): string {
 	return String(e);
 }
 
-export function unlock(password: string): Promise<SidebarEntryDto[]> {
-	return invoke("unlock", { password });
+/** ADR-0014: called once on startup. Resolves directly (no password) unless
+ * the data file is still in the pre-ADR-0014 encrypted format, in which case
+ * the promise rejects with an `AppError` whose `kind` is `"needs_migration"`
+ * — the caller should then prompt for the legacy master password once and
+ * call `migrateAndLoad`. */
+export function initStore(): Promise<SidebarEntryDto[]> {
+	return invoke("init_store");
+}
+
+/** ADR-0014: one-time migration off the pre-ADR-0014 encrypted format, only
+ * ever called after `initStore` rejects with `kind: "needs_migration"`.
+ * Never asked again afterward. */
+export function migrateAndLoad(legacyPassword: string): Promise<SidebarEntryDto[]> {
+	return invoke("migrate_and_load", { legacyPassword });
 }
 
 /** FR-11: renamed from `list_projects` on the Rust side — the sidebar tree
@@ -125,8 +137,8 @@ export function exportConfig(destination: string): Promise<void> {
 	return invoke("export_config", { destination });
 }
 
-export function importConfig(source: string, password: string): Promise<SidebarEntryDto[]> {
-	return invoke("import_config", { source, password });
+export function importConfig(source: string): Promise<SidebarEntryDto[]> {
+	return invoke("import_config", { source });
 }
 
 /** FR-01 edge case: a project's path may have moved/been deleted since it
@@ -164,20 +176,18 @@ export interface SettingsDto {
 	/** design.md §4.1a (v2.5). Defaults to "dark" server-side for settings
 	 * files written before this field existed. */
 	themeMode: ThemeMode;
+	/** FR-11 (components.md "Sidebar Folder") — per-folder expand/collapse
+	 *  state, keyed by folder id. A folder id absent from this map renders
+	 *  expanded, the default state per components.md's Anatomy table. */
+	folderExpanded: Record<string, boolean>;
 }
 
-/** FR-13 — readable/writable without `unlock` (NFR-8/ADR-0009): callable
- * before the master password is ever entered. */
+/** FR-13 — readable/writable independently of `initStore`/`migrateAndLoad`
+ * (ADR-0009), callable before the project store has finished loading. */
 export function getSettings(): Promise<SettingsDto> {
 	return invoke("get_settings");
 }
 
 export function saveSettings(settings: SettingsDto): Promise<SettingsDto> {
 	return invoke("save_settings", { settings });
-}
-
-/** FR-13/ADR-0010 — unlike settings above, this requires the store to
- * already be unlocked (it rotates the encryption key itself). */
-export function changeMasterPassword(currentPassword: string, newPassword: string): Promise<void> {
-	return invoke("change_master_password", { currentPassword, newPassword });
 }

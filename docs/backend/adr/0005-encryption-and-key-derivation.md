@@ -1,6 +1,6 @@
 # ADR-0005: Master password with Argon2id + AES-256-GCM
 
-- **Status:** accepted
+- **Status:** superseded by [ADR-0014](0014-remove-master-password-encryption.md) (2026-08-12) — the author decided the password-every-launch friction accepted below cost more than the confidentiality guarantee was worth for a single-user local tool. Retained here as historical record of why encryption was adopted in the first place.
 - **Date:** 2026-07-17
 - **Drivers:** NFR-3, NFR-6, CON-2, CON-4
 

@@ -1,19 +1,35 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import UnlockScreen from "$lib/patterns/UnlockScreen.svelte";
+	import MigrationPrompt from "$lib/patterns/MigrationPrompt.svelte";
 	import Sidebar from "$lib/patterns/Sidebar.svelte";
 	import TerminalArea from "$lib/patterns/TerminalArea.svelte";
-	import Button from "$lib/components/Button.svelte";
+	import TitleBar from "$lib/patterns/TitleBar.svelte";
+	import WindowResizeHandles from "$lib/components/WindowResizeHandles.svelte";
 	import { appStore } from "$lib/stores/app.svelte";
 	import { terminalStore } from "$lib/stores/terminal.svelte";
 	import { settingsStore } from "$lib/stores/settings.svelte";
-	import { openTerminal, errorMessage, type ProjectDto } from "$lib/api";
+	import { initStore, openTerminal, errorMessage, isAppError, type ProjectDto } from "$lib/api";
 
-	// FR-13/NFR-8: settings load independently of lock state — must be ready
-	// even at the unlock screen (theme/sidebar-position apply without ever
-	// entering the master password).
+	// FR-13: settings load independently of the project store — must be
+	// ready even at the migration prompt (theme/sidebar-position apply
+	// without waiting on project data at all).
 	onMount(() => {
 		settingsStore.load().catch((err) => console.error("failed to load settings:", err));
+	});
+
+	// ADR-0014: replaces the old unlock-on-submit flow. Resolves directly
+	// (no password) unless the data file is still in the pre-ADR-0014
+	// encrypted format, in which case `MigrationPrompt` takes over.
+	onMount(() => {
+		initStore()
+			.then((entries) => appStore.finishLoading(entries))
+			.catch((err) => {
+				if (isAppError(err) && err.kind === "needs_migration") {
+					appStore.setNeedsMigration();
+				} else {
+					console.error("failed to load project data:", errorMessage(err));
+				}
+			});
 	});
 
 	/** Always opens a fresh tab for `project`, regardless of whether one is
@@ -47,37 +63,30 @@
 	}
 </script>
 
-{#if appStore.locked}
-	<UnlockScreen />
-{:else}
-	<div class="app-shell" class:app-shell-reverse={settingsStore.sidebarPosition === "right"} data-sidebar-position={settingsStore.sidebarPosition}>
-		{#if !appStore.sidebarHidden}
-			<Sidebar onOpenProject={handleOpenProject} onForceNewTab={forceOpenNewTab} />
-		{:else}
-			<div class="reveal-sidebar-wrap" class:reveal-sidebar-wrap-right={settingsStore.sidebarPosition === "right"}>
-				<Button variant="ghost" size="icon" ariaLabel="Show sidebar" onclick={() => appStore.toggleSidebar()}>
-					☰
-				</Button>
+<div class="app-root">
+	<TitleBar />
+	<div class="app-below-titlebar">
+		{#if appStore.needsMigration}
+			<MigrationPrompt />
+		{:else if appStore.ready}
+			<div
+				class="app-shell"
+				class:app-shell-reverse={settingsStore.sidebarPosition === "right"}
+				data-sidebar-position={settingsStore.sidebarPosition}
+			>
+				{#if !appStore.sidebarHidden}
+					<Sidebar onOpenProject={handleOpenProject} onForceNewTab={forceOpenNewTab} />
+				{/if}
+				<TerminalArea />
 			</div>
 		{/if}
-		<TerminalArea />
 	</div>
-{/if}
+</div>
+
+<WindowResizeHandles />
 
 <style>
 	.app-shell-reverse {
 		flex-direction: row-reverse;
-	}
-
-	.reveal-sidebar-wrap {
-		position: fixed;
-		top: var(--space-3);
-		left: var(--space-3);
-		z-index: var(--z-dropdown);
-	}
-
-	.reveal-sidebar-wrap-right {
-		left: auto;
-		right: var(--space-3);
 	}
 </style>

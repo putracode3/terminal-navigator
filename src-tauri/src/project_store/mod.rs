@@ -1,18 +1,26 @@
-//! CRUD + encrypted persistence for the project list (ADR-0004, FR-01, FR-02, FR-06)
-//! and, since FR-11 (ADR-0011), user-organized drag-and-drop Folders grouping
-//! projects in the sidebar. Sole owner of the `Project` and `Folder` entities
-//! (architecture.md §5.1) — no other module reads or writes project/folder
-//! data directly.
+//! CRUD + plain-file persistence for the project list (ADR-0004, FR-01,
+//! FR-02; encryption removed by ADR-0014) and, since FR-11 (ADR-0011),
+//! user-organized drag-and-drop Folders grouping projects in the sidebar.
+//! Sole owner of the `Project` and `Folder` entities (architecture.md §5.1)
+//! — no other module reads or writes project/folder data directly.
+//!
+//! ADR-0014: the data file may still be found in the pre-ADR-0014 AES-GCM
+//! encrypted envelope format (the author's own real, pre-existing file).
+//! `load` never touches `crypto` — a file in that legacy format is reported
+//! via `ProjectStoreError::NeedsMigration` instead, and the caller (the IPC
+//! layer) is expected to prompt for the legacy master password exactly once
+//! and call `migrate_from_legacy`, which decrypts it and immediately
+//! re-persists in the current plain format. Every subsequent `load` then
+//! takes the plain-format path and never touches `crypto` again.
 
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use subtle::ConstantTimeEq;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::crypto::{self, CryptoError, KEY_LEN, NONCE_LEN, SALT_LEN};
+use crate::crypto::{self, CryptoError, NONCE_LEN, SALT_LEN};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -83,46 +91,63 @@ pub enum ProjectStoreError {
     Io(#[from] std::io::Error),
     #[error("data file is corrupted or in an unrecognized format")]
     Corrupted,
-    #[error("current password is incorrect")]
+    #[error("legacy password is incorrect")]
     WrongPassword,
-    #[error("new password cannot be empty")]
-    EmptyPassword,
+    /// `load` found a file that isn't in the current plain format — either
+    /// the pre-ADR-0014 AES-GCM envelope, still holding the author's real
+    /// data, or (only reachable in principle) an even older pre-FR-11
+    /// unmarked shape. The IPC layer should prompt for the legacy master
+    /// password once and call `migrate_from_legacy`.
+    #[error("data file is in the pre-ADR-0014 encrypted format and needs one-time migration")]
+    NeedsMigration,
 }
 
 pub struct ProjectStore {
     entries: Vec<SidebarEntry>,
     data_file: PathBuf,
-    key: [u8; KEY_LEN],
-    salt: [u8; SALT_LEN],
 }
 
 impl ProjectStore {
-    /// Unlocks the store at `data_file` using `password`. If `data_file` doesn't
-    /// exist yet, initializes a fresh empty store there instead (first run).
-    /// A pre-FR-11 legacy-format file is migrated and immediately re-persisted
-    /// in the new marked format right here (ADR-0011) — not deferred until
-    /// some future mutating call, since a purely read-only session (unlock,
-    /// look at the list, quit) would otherwise never actually upgrade the
-    /// file on disk.
-    pub fn unlock(data_file: PathBuf, password: &str) -> Result<Self, ProjectStoreError> {
-        if data_file.exists() {
-            let raw = std::fs::read(&data_file)?;
-            let envelope = split_envelope(&raw)?;
-            let key = crypto::derive_key(password, &envelope.salt)?;
-            let plaintext = crypto::decrypt(&key, &envelope.nonce, &envelope.ciphertext)?;
-            let (entries, was_legacy_format) = decode_plaintext(&plaintext)?;
-            let store = Self { entries, data_file, key, salt: envelope.salt };
-            if was_legacy_format {
-                store.persist()?;
-            }
-            Ok(store)
-        } else {
-            let salt = crypto::generate_salt();
-            let key = crypto::derive_key(password, &salt)?;
-            let store = Self { entries: Vec::new(), data_file, key, salt };
+    /// Loads the store at `data_file`. If it doesn't exist yet, initializes
+    /// a fresh empty store there instead (first run) — no password is ever
+    /// asked (ADR-0014). If the file exists but isn't in the current plain
+    /// format, returns `NeedsMigration` rather than attempting to read it —
+    /// callers must go through `migrate_from_legacy` for that case.
+    pub fn load(data_file: PathBuf) -> Result<Self, ProjectStoreError> {
+        if !data_file.exists() {
+            let store = Self { entries: Vec::new(), data_file };
             store.persist()?;
-            Ok(store)
+            return Ok(store);
         }
+
+        let raw = std::fs::read(&data_file)?;
+        if !is_plain_format(&raw) {
+            return Err(ProjectStoreError::NeedsMigration);
+        }
+        let entries = decode_plain_file(&raw)?;
+        Ok(Self { entries, data_file })
+    }
+
+    /// One-time migration (ADR-0014): decrypts a pre-existing AES-GCM-encrypted
+    /// data file with the legacy master password and immediately re-persists
+    /// it in the current plain format — `persist`'s atomic write (temp file +
+    /// rename) means a crash mid-migration leaves either the original
+    /// encrypted file or the fully-written plain file intact, never a
+    /// truncated/corrupt one. Every subsequent `load` then takes the plain
+    /// path and never calls this again. Also transparently handles the even
+    /// older pre-FR-11 unmarked shape nested inside the decrypted plaintext
+    /// (ADR-0011) — both legacy shapes collapse to the same current format
+    /// in one migration step.
+    pub fn migrate_from_legacy(data_file: PathBuf, legacy_password: &str) -> Result<Self, ProjectStoreError> {
+        let raw = std::fs::read(&data_file)?;
+        let envelope = split_envelope(&raw)?;
+        let key = crypto::derive_key(legacy_password, &envelope.salt)?;
+        let plaintext = crypto::decrypt(&key, &envelope.nonce, &envelope.ciphertext)
+            .map_err(|_| ProjectStoreError::WrongPassword)?;
+        let entries = decode_legacy_plaintext(&plaintext)?;
+        let store = Self { entries, data_file };
+        store.persist()?;
+        Ok(store)
     }
 
     /// The top-level sidebar tree, in display order — for the IPC layer to
@@ -463,74 +488,27 @@ impl ProjectStore {
         Ok(saved_name)
     }
 
-    /// Rotates the master password (FR-13, ADR-0010): verifies
-    /// `current_password` against the store's own derived key (constant-time
-    /// comparison — this is real key material, not a plain string), then
-    /// re-derives a fresh key/salt from `new_password` and re-persists.
-    /// `persist()`'s atomic write means a crash mid-rotation leaves either
-    /// the old file or the new file intact, never a partially-written one.
-    /// If the write itself fails, the in-memory key/salt are rolled back so
-    /// memory and disk never disagree about which password is current.
-    pub fn change_password(
-        &mut self,
-        current_password: &str,
-        new_password: &str,
-    ) -> Result<(), ProjectStoreError> {
-        if new_password.is_empty() {
-            return Err(ProjectStoreError::EmptyPassword);
-        }
-
-        let candidate_key = crypto::derive_key(current_password, &self.salt)?;
-        if candidate_key.ct_eq(&self.key).unwrap_u8() == 0 {
-            return Err(ProjectStoreError::WrongPassword);
-        }
-
-        // Derive the new salt/key into locals first — only assign to `self`
-        // once both have succeeded, so the sole failure window needing a
-        // rollback below is `persist()` itself. Mutating `self.salt` before
-        // `derive_key` was known to succeed would leave a mismatched
-        // salt/key pair in memory with no rollback path if that derivation
-        // ever failed (code review finding M1).
-        let new_salt = crypto::generate_salt();
-        let new_key = crypto::derive_key(new_password, &new_salt)?;
-
-        let previous_key = self.key;
-        let previous_salt = self.salt;
-
-        self.key = new_key;
-        self.salt = new_salt;
-
-        if let Err(err) = self.persist() {
-            self.key = previous_key;
-            self.salt = previous_salt;
-            return Err(err);
-        }
-        Ok(())
-    }
-
-    /// Writes the current envelope to disk. Atomic (temp file + rename in
-    /// the same directory, ADR-0010): a crash mid-write leaves either the
-    /// previous file or the fully-written new one, never a truncated/corrupt
-    /// one. This protects every caller — `add`/`update`/`delete`, the FR-11
-    /// folder operations, and `change_password` alike — not just password
-    /// rotation specifically.
+    /// Writes the current entries to disk in the plain format (ADR-0014).
+    /// Atomic (temp file + rename in the same directory, ADR-0010): a crash
+    /// mid-write leaves either the previous file or the fully-written new
+    /// one, never a truncated/corrupt one. This protects every caller —
+    /// `add`/`update`/`delete`, the FR-11 folder operations, and
+    /// `migrate_from_legacy` alike.
     fn persist(&self) -> Result<(), ProjectStoreError> {
-        let plaintext = encode_plaintext(&self.entries)?;
-        let (nonce, ciphertext) = crypto::encrypt(&self.key, &plaintext)?;
-        let envelope = build_envelope(&self.salt, &nonce, &ciphertext);
+        let body = encode_plain_file(&self.entries)?;
 
         let dir = self.data_file.parent().unwrap_or_else(|| Path::new("."));
         let file_name = self.data_file.file_name().and_then(|n| n.to_str()).unwrap_or("projects.enc");
         let tmp_path = dir.join(format!(".{file_name}.tmp"));
 
-        std::fs::write(&tmp_path, &envelope)?;
-        // Security audit 2026-07-20, M3: restrict the encrypted data file to
+        std::fs::write(&tmp_path, &body)?;
+        // Security audit 2026-07-20, M3: restrict the data file to
         // owner-only — otherwise it's written with the OS default/umask
-        // permissions (typically world-readable), letting any other local
-        // user copy the ciphertext out for unlimited offline password
-        // cracking, unconstrained by this app's own protections. Set on the
-        // temp file before the rename — permissions carry through a rename
-        // on the same filesystem.
+        // permissions (typically world-readable). Now that the file is
+        // plain (ADR-0014), this permission is the *only* protection the
+        // data has, not a defense-in-depth layer on top of encryption. Set
+        // on the temp file before the rename — permissions carry through a
+        // rename on the same filesystem.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -553,15 +531,9 @@ fn validate_input(input: &ProjectInput) -> Result<(), ProjectStoreError> {
     Ok(())
 }
 
-/// On-disk layout: [salt (16 bytes)][nonce (12 bytes)][AES-GCM ciphertext].
-fn build_envelope(salt: &[u8; SALT_LEN], nonce: &[u8], ciphertext: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(SALT_LEN + nonce.len() + ciphertext.len());
-    out.extend_from_slice(salt);
-    out.extend_from_slice(nonce);
-    out.extend_from_slice(ciphertext);
-    out
-}
-
+/// Legacy on-disk layout, pre-ADR-0014: [salt (16 bytes)][nonce (12
+/// bytes)][AES-GCM ciphertext]. Only ever read now, during migration —
+/// never written again.
 struct EnvelopeParts {
     salt: [u8; SALT_LEN],
     nonce: Vec<u8>,
@@ -579,46 +551,105 @@ fn split_envelope(raw: &[u8]) -> Result<EnvelopeParts, ProjectStoreError> {
     Ok(EnvelopeParts { salt, nonce, ciphertext })
 }
 
-/// ADR-0011 Part 2: marks the plaintext (the AES-GCM envelope's *decrypted*
-/// contents, not the on-disk envelope itself — that framing is unchanged) as
-/// the post-FR-11 `Vec<SidebarEntry>` shape rather than the pre-FR-11 bare
-/// `Vec<Project>` shape. `bincode` has no schema tag of its own, so this is
-/// the only reliable way to tell the two apart on load.
-const FORMAT_MARKER: [u8; 4] = *b"FR11";
-const FORMAT_VERSION: u8 = 1;
+/// ADR-0011 Part 2: marks the *decrypted* contents of the legacy AES-GCM
+/// envelope as the post-FR-11 `Vec<SidebarEntry>` shape rather than the
+/// pre-FR-11 bare `Vec<Project>` shape. `bincode` has no schema tag of its
+/// own, so this was the only reliable way to tell the two apart on load.
+/// Retained read-only for `migrate_from_legacy` — nothing encodes into this
+/// shape anymore (see `encode_plain_file` for the current on-disk format).
+const LEGACY_FORMAT_MARKER: [u8; 4] = *b"FR11";
+const LEGACY_FORMAT_VERSION: u8 = 1;
 
-fn encode_plaintext(entries: &[SidebarEntry]) -> Result<Vec<u8>, ProjectStoreError> {
+/// Decodes the legacy AES-GCM envelope's decrypted contents, handling both
+/// the post-FR-11 marker-prefixed `Vec<SidebarEntry>` format and the even
+/// older pre-FR-11 legacy format (a bare `bincode`-serialized `Vec<Project>`,
+/// no marker at all) — both collapse to the same `Vec<SidebarEntry>` here,
+/// since `migrate_from_legacy` re-persists in the current plain format
+/// immediately either way (each pre-FR-11 project becomes an unfoldered
+/// top-level entry, same as ADR-0011 originally specified).
+fn decode_legacy_plaintext(plaintext: &[u8]) -> Result<Vec<SidebarEntry>, ProjectStoreError> {
+    let marker_len = LEGACY_FORMAT_MARKER.len();
+    if plaintext.len() > marker_len && plaintext[..marker_len] == LEGACY_FORMAT_MARKER {
+        let version = plaintext[marker_len];
+        if version != LEGACY_FORMAT_VERSION {
+            return Err(ProjectStoreError::Corrupted);
+        }
+        let body = &plaintext[marker_len + 1..];
+        bincode::deserialize(body).map_err(|_| ProjectStoreError::Corrupted)
+    } else {
+        let legacy: Vec<Project> = bincode::deserialize(plaintext).map_err(|_| ProjectStoreError::Corrupted)?;
+        Ok(legacy.into_iter().map(SidebarEntry::Project).collect())
+    }
+}
+
+/// Test-fixture-only counterparts to `split_envelope`/`decode_legacy_plaintext`
+/// — construct a legacy AES-GCM-encrypted file the way pre-ADR-0014
+/// `persist()` used to, so migration tests exercise the exact same decrypt
+/// path a real legacy file would.
+#[cfg(test)]
+fn build_legacy_envelope(salt: &[u8; SALT_LEN], nonce: &[u8], ciphertext: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(SALT_LEN + nonce.len() + ciphertext.len());
+    out.extend_from_slice(salt);
+    out.extend_from_slice(nonce);
+    out.extend_from_slice(ciphertext);
+    out
+}
+
+#[cfg(test)]
+fn encode_legacy_plaintext_fixture(entries: &[SidebarEntry]) -> Vec<u8> {
     let mut out = Vec::new();
-    out.extend_from_slice(&FORMAT_MARKER);
-    out.push(FORMAT_VERSION);
+    out.extend_from_slice(&LEGACY_FORMAT_MARKER);
+    out.push(LEGACY_FORMAT_VERSION);
+    out.extend_from_slice(&bincode::serialize(entries).unwrap());
+    out
+}
+
+/// Current on-disk format (ADR-0014): [marker (4 bytes)][version (1
+/// byte)][`bincode`-serialized `Vec<SidebarEntry>`], with no encryption
+/// envelope around it. The marker is distinct from `LEGACY_FORMAT_MARKER`
+/// (which only ever appeared *inside* the decrypted legacy envelope, never
+/// on disk directly) so `is_plain_format` can tell a plain file apart from
+/// a legacy encrypted one — whose first 16 bytes are an effectively random
+/// salt — without needing to attempt a decrypt first.
+const PLAIN_FILE_MARKER: [u8; 4] = *b"TNPL";
+const PLAIN_FILE_VERSION: u8 = 1;
+
+fn is_plain_format(raw: &[u8]) -> bool {
+    raw.len() > PLAIN_FILE_MARKER.len() && raw[..PLAIN_FILE_MARKER.len()] == PLAIN_FILE_MARKER
+}
+
+fn encode_plain_file(entries: &[SidebarEntry]) -> Result<Vec<u8>, ProjectStoreError> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&PLAIN_FILE_MARKER);
+    out.push(PLAIN_FILE_VERSION);
     let body = bincode::serialize(entries).map_err(|_| ProjectStoreError::Corrupted)?;
     out.extend_from_slice(&body);
     Ok(out)
 }
 
-/// Decodes `project_store`'s plaintext, handling both the current
-/// marker-prefixed `Vec<SidebarEntry>` format and the pre-FR-11 legacy format
-/// (a bare `bincode`-serialized `Vec<Project>`, with no marker at all).
-/// Returns whether the legacy path was taken, so `unlock` knows to
-/// immediately re-persist in the new marked format (each project becomes an
-/// unfoldered top-level entry) — no data loss for files that predate FR-11
-/// (ADR-0011).
-fn decode_plaintext(plaintext: &[u8]) -> Result<(Vec<SidebarEntry>, bool), ProjectStoreError> {
-    let marker_len = FORMAT_MARKER.len();
-    if plaintext.len() > marker_len && plaintext[..marker_len] == FORMAT_MARKER {
-        let version = plaintext[marker_len];
-        if version != FORMAT_VERSION {
-            // No other version has ever existed yet — an unrecognized one
-            // means a newer app version wrote this file.
-            return Err(ProjectStoreError::Corrupted);
-        }
-        let body = &plaintext[marker_len + 1..];
-        let entries = bincode::deserialize(body).map_err(|_| ProjectStoreError::Corrupted)?;
-        Ok((entries, false))
-    } else {
-        let legacy: Vec<Project> = bincode::deserialize(plaintext).map_err(|_| ProjectStoreError::Corrupted)?;
-        Ok((legacy.into_iter().map(SidebarEntry::Project).collect(), true))
+fn decode_plain_file(raw: &[u8]) -> Result<Vec<SidebarEntry>, ProjectStoreError> {
+    let marker_len = PLAIN_FILE_MARKER.len();
+    let version = raw[marker_len];
+    if version != PLAIN_FILE_VERSION {
+        // No other version has ever existed yet — an unrecognized one means
+        // a newer app version wrote this file.
+        return Err(ProjectStoreError::Corrupted);
     }
+    let body = &raw[marker_len + 1..];
+    bincode::deserialize(body).map_err(|_| ProjectStoreError::Corrupted)
+}
+
+/// Read-only, crate-internal validation used by `config_sync::import` to
+/// confirm a candidate import file is a well-formed plain-format data file
+/// before it's allowed to replace local data — without needing to fully
+/// construct a `ProjectStore` (which also has persist-on-load side effects
+/// this check must not have).
+pub(crate) fn validate_plain_file(raw: &[u8]) -> Result<(), ProjectStoreError> {
+    if !is_plain_format(raw) {
+        return Err(ProjectStoreError::Corrupted);
+    }
+    decode_plain_file(raw)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -658,23 +689,23 @@ mod tests {
     }
 
     #[test]
-    fn unlock_creates_empty_store_when_no_file_exists() {
+    fn load_creates_empty_store_when_no_file_exists() {
         let dir = tempdir().unwrap();
-        let store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         assert!(store.entries().is_empty());
     }
 
     #[cfg(unix)]
     #[test]
     fn data_file_is_restricted_to_owner_only() {
-        // Regression test, security audit 2026-07-20 (M3): the encrypted
-        // data file must not be left at the OS-default/umask permissions
-        // (typically world-readable) — anyone else with local access could
-        // otherwise copy the ciphertext out for unlimited offline cracking.
+        // Regression test, security audit 2026-07-20 (M3): the data file
+        // must not be left at the OS-default/umask permissions (typically
+        // world-readable) — since ADR-0014 removed encryption, this
+        // permission is the file's *only* protection, not one layer of two.
         use std::os::unix::fs::PermissionsExt;
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
-        ProjectStore::unlock(data_file.clone(), "pw").unwrap();
+        ProjectStore::load(data_file.clone()).unwrap();
 
         let mode = std::fs::metadata(&data_file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "data file must be owner-read/write only, got {mode:o}");
@@ -683,7 +714,7 @@ mod tests {
     #[test]
     fn add_rejects_nonexistent_path() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let result = store.add(input("test", PathBuf::from("/definitely/does/not/exist/xyz")));
         assert!(matches!(result, Err(ProjectStoreError::PathNotFound(_))));
     }
@@ -691,7 +722,7 @@ mod tests {
     #[test]
     fn add_rejects_empty_name() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let result = store.add(input("   ", dir.path().to_path_buf()));
         assert!(matches!(result, Err(ProjectStoreError::EmptyName)));
     }
@@ -699,7 +730,7 @@ mod tests {
     #[test]
     fn add_then_list_returns_the_project() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let created = store.add(input("my-project", dir.path().to_path_buf())).unwrap();
         assert_eq!(store.entries().len(), 1);
         assert_eq!(project_at(&store, 0).id, created.id);
@@ -708,7 +739,7 @@ mod tests {
     #[test]
     fn update_modifies_existing_project() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let created = store.add(input("old-name", dir.path().to_path_buf())).unwrap();
 
         let mut updated_input = input("new-name", dir.path().to_path_buf());
@@ -723,7 +754,7 @@ mod tests {
     #[test]
     fn update_unknown_id_fails() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let result = store.update(Uuid::new_v4(), input("x", dir.path().to_path_buf()));
         assert!(matches!(result, Err(ProjectStoreError::NotFound(_))));
     }
@@ -731,7 +762,7 @@ mod tests {
     #[test]
     fn update_modifies_a_project_nested_inside_a_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         store.merge_or_join(a.id, b.id).unwrap();
@@ -747,7 +778,7 @@ mod tests {
     #[test]
     fn delete_removes_project() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let created = store.add(input("to-delete", dir.path().to_path_buf())).unwrap();
         store.delete(created.id).unwrap();
         assert!(store.entries().is_empty());
@@ -756,7 +787,7 @@ mod tests {
     #[test]
     fn delete_unknown_id_fails() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let result = store.delete(Uuid::new_v4());
         assert!(matches!(result, Err(ProjectStoreError::NotFound(_))));
     }
@@ -764,7 +795,7 @@ mod tests {
     #[test]
     fn deleting_a_folders_last_member_auto_deletes_the_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap();
@@ -780,115 +811,76 @@ mod tests {
     }
 
     #[test]
-    fn data_persists_across_unlock_calls() {
+    fn data_persists_across_load_calls() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
 
         {
-            let mut store = ProjectStore::unlock(data_file.clone(), "pw").unwrap();
+            let mut store = ProjectStore::load(data_file.clone()).unwrap();
             let mut proj_input = input("persisted", dir.path().to_path_buf());
             proj_input.notes = "secret note".into();
             store.add(proj_input).unwrap();
         }
 
-        let reopened = ProjectStore::unlock(data_file, "pw").unwrap();
+        let reopened = ProjectStore::load(data_file).unwrap();
         assert_eq!(reopened.entries().len(), 1);
         assert_eq!(project_at(&reopened, 0).name, "persisted");
         assert_eq!(project_at(&reopened, 0).notes, "secret note");
     }
 
+    /// ADR-0014: the whole point of removing encryption is that `load`
+    /// never asks for a password — confirms the on-disk file is genuinely
+    /// human-readable now, the mirror image of the old
+    /// `data_file_on_disk_is_not_plaintext` test this replaces.
     #[test]
-    fn wrong_password_fails_to_unlock_existing_store() {
+    fn data_file_on_disk_is_plaintext() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
-
-        {
-            let mut store = ProjectStore::unlock(data_file.clone(), "correct-password").unwrap();
-            store.add(input("p", dir.path().to_path_buf())).unwrap();
-        }
-
-        let result = ProjectStore::unlock(data_file, "wrong-password");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn data_file_on_disk_is_not_plaintext() {
-        let dir = tempdir().unwrap();
-        let data_file = dir.path().join("projects.enc");
-        let mut store = ProjectStore::unlock(data_file.clone(), "pw").unwrap();
-        let mut proj_input = input("super-secret-project", dir.path().to_path_buf());
-        proj_input.notes = "API_KEY=abc123".into();
+        let mut store = ProjectStore::load(data_file.clone()).unwrap();
+        let mut proj_input = input("visible-project", dir.path().to_path_buf());
+        proj_input.notes = "some notes".into();
         store.add(proj_input).unwrap();
 
         let raw = std::fs::read(&data_file).unwrap();
         let raw_str = String::from_utf8_lossy(&raw);
-        assert!(!raw_str.contains("super-secret-project"));
-        assert!(!raw_str.contains("API_KEY"));
+        assert!(raw_str.contains("visible-project"));
+        assert!(raw_str.contains("some notes"));
     }
 
     #[test]
-    fn change_password_allows_unlock_with_new_password_afterward() {
+    fn load_reports_needs_migration_for_a_legacy_encrypted_file() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
+        let salt = crypto::generate_salt();
+        let key = crypto::derive_key("legacy-pw", &salt).unwrap();
+        let (nonce, ciphertext) = crypto::encrypt(&key, b"irrelevant, load never decrypts").unwrap();
+        std::fs::write(&data_file, build_legacy_envelope(&salt, &nonce, &ciphertext)).unwrap();
 
-        {
-            let mut store = ProjectStore::unlock(data_file.clone(), "old-password").unwrap();
-            store.add(input("p", dir.path().to_path_buf())).unwrap();
-            store.change_password("old-password", "new-password").unwrap();
-        }
-
-        let reopened = ProjectStore::unlock(data_file, "new-password").unwrap();
-        assert_eq!(reopened.entries().len(), 1, "data must survive rotation intact");
-        assert_eq!(project_at(&reopened, 0).name, "p");
+        let result = ProjectStore::load(data_file);
+        assert!(matches!(result, Err(ProjectStoreError::NeedsMigration)));
     }
 
     #[test]
-    fn change_password_rejects_old_password_after_rotation() {
+    fn migrate_from_legacy_rejects_wrong_password_without_touching_the_file() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
+        let salt = crypto::generate_salt();
+        let key = crypto::derive_key("correct-password", &salt).unwrap();
+        let (nonce, ciphertext) = crypto::encrypt(&key, &encode_legacy_plaintext_fixture(&[])).unwrap();
+        let envelope = build_legacy_envelope(&salt, &nonce, &ciphertext);
+        std::fs::write(&data_file, &envelope).unwrap();
 
-        {
-            let mut store = ProjectStore::unlock(data_file.clone(), "old-password").unwrap();
-            store.change_password("old-password", "new-password").unwrap();
-        }
-
-        let result = ProjectStore::unlock(data_file, "old-password");
-        assert!(result.is_err(), "old password must stop working after rotation");
-    }
-
-    #[test]
-    fn change_password_rejects_wrong_current_password_without_mutating_data() {
-        let dir = tempdir().unwrap();
-        let data_file = dir.path().join("projects.enc");
-        let mut store = ProjectStore::unlock(data_file.clone(), "correct-password").unwrap();
-        store.add(input("p", dir.path().to_path_buf())).unwrap();
-        let before = std::fs::read(&data_file).unwrap();
-
-        let result = store.change_password("wrong-current-password", "new-password");
+        let result = ProjectStore::migrate_from_legacy(data_file.clone(), "wrong-password");
 
         assert!(matches!(result, Err(ProjectStoreError::WrongPassword)));
-        let after = std::fs::read(&data_file).unwrap();
-        assert_eq!(before, after, "a rejected rotation must not touch the on-disk file");
-
-        // The store must still unlock with the original password — an
-        // in-memory-only rejection, nothing was rotated.
-        let reopened = ProjectStore::unlock(data_file, "correct-password").unwrap();
-        assert_eq!(reopened.entries().len(), 1);
-    }
-
-    #[test]
-    fn change_password_rejects_empty_new_password() {
-        let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
-        let result = store.change_password("pw", "");
-        assert!(matches!(result, Err(ProjectStoreError::EmptyPassword)));
+        assert_eq!(std::fs::read(&data_file).unwrap(), envelope, "a rejected migration must not touch the on-disk file");
     }
 
     #[test]
     fn persist_leaves_no_leftover_temp_file() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
-        let mut store = ProjectStore::unlock(data_file.clone(), "pw").unwrap();
+        let mut store = ProjectStore::load(data_file.clone()).unwrap();
         store.add(input("p", dir.path().to_path_buf())).unwrap();
 
         assert!(!dir.path().join(".projects.enc.tmp").exists());
@@ -899,7 +891,7 @@ mod tests {
     #[test]
     fn merge_or_join_creates_a_new_folder_named_after_the_target() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("frontend-app", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("backend-api", dir.path().to_path_buf())).unwrap();
 
@@ -914,7 +906,7 @@ mod tests {
     #[test]
     fn merge_or_join_rejects_merging_an_entry_with_itself() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
 
         let result = store.merge_or_join(a.id, a.id);
@@ -924,7 +916,7 @@ mod tests {
     #[test]
     fn merge_or_join_onto_a_project_already_in_a_folder_joins_that_folder_instead_of_nesting() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -945,7 +937,7 @@ mod tests {
     #[test]
     fn merge_or_join_dropped_directly_on_a_folder_header_appends_to_the_end() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -967,7 +959,7 @@ mod tests {
     #[test]
     fn merge_or_join_a_1_member_folders_sole_member_onto_its_own_header_is_a_harmless_no_op() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap(); // members: [b, a]
@@ -991,7 +983,7 @@ mod tests {
     #[test]
     fn merge_or_join_between_two_members_of_the_same_folder_reorders_in_place() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1010,7 +1002,7 @@ mod tests {
     #[test]
     fn move_project_within_its_own_folder_reorders_without_pruning_it() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap(); // members: [b, a]
@@ -1030,7 +1022,7 @@ mod tests {
     #[test]
     fn move_project_between_two_folders_leaves_a_valid_1_member_folder_behind() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1055,7 +1047,7 @@ mod tests {
     #[test]
     fn move_project_to_top_level_removes_it_from_its_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1071,7 +1063,7 @@ mod tests {
     #[test]
     fn reorder_folder_repositions_it_within_the_top_level() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1086,7 +1078,7 @@ mod tests {
     #[test]
     fn rename_folder_applies_a_non_empty_name() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap();
@@ -1100,7 +1092,7 @@ mod tests {
     #[test]
     fn rename_folder_with_blank_input_reverts_to_the_previous_name() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap();
@@ -1115,7 +1107,7 @@ mod tests {
     #[test]
     fn find_project_locates_a_project_nested_inside_a_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::unlock(dir.path().join("projects.enc"), "pw").unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         store.merge_or_join(a.id, b.id).unwrap();
@@ -1125,21 +1117,16 @@ mod tests {
         assert!(store.find_project(Uuid::new_v4()).is_none());
     }
 
-    /// The most safety-critical test in this module (ADR-0011 Part 2): a
-    /// file written by the app *before* FR-11 shipped — a bare `bincode`
-    /// `Vec<Project>`, no marker — must still unlock correctly, with every
-    /// project intact as an unfoldered top-level entry, and the file must
-    /// transparently upgrade to the new marked format on the very next save.
+    /// The most safety-critical test in this module (ADR-0014): a file
+    /// written by the app *before* this change — AES-GCM-encrypted, in the
+    /// post-FR-11 marked shape — must migrate to the current plain format
+    /// via `migrate_from_legacy` with every project intact, and the file
+    /// must never be read as an encrypted envelope again afterward.
     #[test]
-    fn unlock_migrates_a_pre_fr11_legacy_format_file_without_losing_data() {
+    fn migrate_from_legacy_converts_a_post_fr11_encrypted_file_without_losing_data() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
 
-        // Hand-construct a legacy-format file the way pre-FR-11 `persist()`
-        // used to: bare `bincode::serialize(&Vec<Project>)` as the plaintext,
-        // no marker, AES-GCM-encrypted with a real derived key/salt so
-        // `unlock` exercises the exact same decrypt path a real legacy file
-        // would.
         let legacy_project = Project {
             id: Uuid::new_v4(),
             name: "pre-existing-project".to_string(),
@@ -1149,38 +1136,69 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        let legacy_plaintext = bincode::serialize(&vec![legacy_project.clone()]).unwrap();
+        let legacy_entries = vec![SidebarEntry::Project(legacy_project.clone())];
+        let legacy_plaintext = encode_legacy_plaintext_fixture(&legacy_entries);
         let salt = crypto::generate_salt();
-        let key = crypto::derive_key("pw", &salt).unwrap();
+        let key = crypto::derive_key("legacy-pw", &salt).unwrap();
         let (nonce, ciphertext) = crypto::encrypt(&key, &legacy_plaintext).unwrap();
-        let envelope = build_envelope(&salt, &nonce, &ciphertext);
+        let envelope = build_legacy_envelope(&salt, &nonce, &ciphertext);
         std::fs::write(&data_file, &envelope).unwrap();
 
-        let store = ProjectStore::unlock(data_file.clone(), "pw").unwrap();
+        // `load` must not attempt to read the legacy file itself.
+        assert!(matches!(ProjectStore::load(data_file.clone()), Err(ProjectStoreError::NeedsMigration)));
+
+        let store = ProjectStore::migrate_from_legacy(data_file.clone(), "legacy-pw").unwrap();
 
         assert_eq!(store.entries().len(), 1);
         let found = store.find_project(legacy_project.id).expect("legacy project must survive migration");
         assert_eq!(found.name, "pre-existing-project");
         assert_eq!(found.notes, "API_KEY=legacy-secret");
         assert_eq!(found.setup_commands, vec!["nvm use".to_string()]);
-        assert!(
-            matches!(store.entries()[0], SidebarEntry::Project(_)),
-            "a legacy project must come back as an unfoldered top-level entry"
-        );
 
-        // Re-reading the on-disk file's raw bytes must now show the new
-        // marker — confirming the upgrade was actually persisted, not just
+        // Re-reading the on-disk file's raw bytes must now be plain, not the
+        // old envelope — confirming migration actually persisted, not just
         // held in memory (drop `store` first so the file isn't held open).
         drop(store);
         let raw = std::fs::read(&data_file).unwrap();
-        let re_derived_key = crypto::derive_key("pw", &split_envelope(&raw).unwrap().salt).unwrap();
-        let envelope = split_envelope(&raw).unwrap();
-        let plaintext = crypto::decrypt(&re_derived_key, &envelope.nonce, &envelope.ciphertext).unwrap();
-        assert_eq!(&plaintext[..FORMAT_MARKER.len()], &FORMAT_MARKER, "file must be upgraded to the new marked format on save");
+        assert!(is_plain_format(&raw), "file must be migrated to the plain format on disk");
 
-        // And it must still unlock correctly a second time, now reading its
-        // own upgraded format back.
-        let reopened = ProjectStore::unlock(data_file, "pw").unwrap();
+        // And a normal `load` must now succeed directly, no more migration needed.
+        let reopened = ProjectStore::load(data_file).unwrap();
         assert_eq!(reopened.find_project(legacy_project.id).unwrap().name, "pre-existing-project");
+    }
+
+    /// The even-older pre-FR-11 shape (a bare, unmarked `bincode`
+    /// `Vec<Project>` inside the legacy encrypted envelope) must also
+    /// migrate correctly in one step, collapsing straight to the current
+    /// plain format (ADR-0011's original migration target, now reached via
+    /// `migrate_from_legacy` instead of the old `unlock`).
+    #[test]
+    fn migrate_from_legacy_converts_a_pre_fr11_encrypted_file_without_losing_data() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+
+        let legacy_project = Project {
+            id: Uuid::new_v4(),
+            name: "very-old-project".to_string(),
+            path: dir.path().to_path_buf(),
+            setup_commands: vec![],
+            notes: String::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        // Bare, unmarked bincode — the true pre-FR-11 shape, no LEGACY_FORMAT_MARKER at all.
+        let legacy_plaintext = bincode::serialize(&vec![legacy_project.clone()]).unwrap();
+        let salt = crypto::generate_salt();
+        let key = crypto::derive_key("legacy-pw", &salt).unwrap();
+        let (nonce, ciphertext) = crypto::encrypt(&key, &legacy_plaintext).unwrap();
+        std::fs::write(&data_file, build_legacy_envelope(&salt, &nonce, &ciphertext)).unwrap();
+
+        let store = ProjectStore::migrate_from_legacy(data_file, "legacy-pw").unwrap();
+
+        assert_eq!(store.entries().len(), 1);
+        assert!(
+            matches!(store.entries()[0], SidebarEntry::Project(ref p) if p.id == legacy_project.id),
+            "a pre-FR-11 project must come back as an unfoldered top-level entry"
+        );
     }
 }

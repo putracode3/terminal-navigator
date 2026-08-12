@@ -12,6 +12,8 @@
 	// just indented one level deeper (see the `memberRow` snippet below).
 	let {
 		folder,
+		expanded: expandedProp = true,
+		onToggleExpanded,
 		sidebarDragId = null,
 		sidebarDragKind = null,
 		onSidebarDrop,
@@ -21,6 +23,20 @@
 		memberRow,
 	}: {
 		folder: FolderDto;
+		/** FR-11: this folder's persisted expand/collapse state (components.md
+		 *  "Sidebar Folder" — persists across restarts via the unencrypted
+		 *  preferences store, ADR-0009/ADR-0011). Seeds this component's own
+		 *  `expanded` state on mount; the caller (Sidebar.svelte) owns the
+		 *  source of truth in `settingsStore` and is notified of further
+		 *  toggles via `onToggleExpanded` below, same prop-driven/callback
+		 *  shape as this component's other interactions. Defaults to `true`
+		 *  (components.md's documented default) so callers that don't yet
+		 *  track this — e.g. this component's own tests — need no change. */
+		expanded?: boolean;
+		/** Fires after a user-initiated toggle (chevron/header click), with
+		 *  the new value. Optional so this component still works standalone
+		 *  (e.g. in tests) without a caller wired up to persist it. */
+		onToggleExpanded?: (expanded: boolean) => void;
 		/** FR-11: id of whatever's currently being dragged for sidebar
 		 *  folder/reorder purposes, or null — kept prop-driven like `Sidebar
 		 *  Project List Item`'s own equivalent props. */
@@ -53,13 +69,13 @@
 		memberRow: Snippet<[ProjectDto, number, MoveDestinationDto]>;
 	} = $props();
 
-	/** Not persisted across restarts — components.md's spec calls for this
-	 *  to live in the same unencrypted preferences store FR-13 already uses
-	 *  (settings_store), which would need a new backend field; out of scope
-	 *  for this frontend-only pass (src-tauri/ isn't touched here). Flagged
-	 *  as a known gap, not a silent behavior change — see this pass's
-	 *  summary. */
-	let expanded = $state(true);
+	// svelte-ignore state_referenced_locally -- intentional: this seeds
+	// `expanded` for the very first render only (avoiding a collapsed→
+	// expanded→collapsed flash while `expandedProp` is still the `true`
+	// default, before settingsStore.load() resolves); the `$effect` below
+	// is what keeps `expanded` in sync with `expandedProp` on every change
+	// after that.
+	let expanded = $state(expandedProp);
 	let renaming = $state(false);
 	let renameValue = $state("");
 	let renameInputEl: HTMLInputElement | undefined = $state();
@@ -77,6 +93,18 @@
 			renameInputEl.focus();
 			renameInputEl.select();
 		}
+	});
+
+	/** Re-syncs from the caller's persisted value whenever it changes out
+	 *  from under this component — notably, `settingsStore.load()` resolves
+	 *  *after* this component's first render (Sidebar.svelte mounts before
+	 *  settings finish loading), so a folder collapsed in a previous session
+	 *  briefly shows the `expanded = true` default before this effect
+	 *  corrects it. Also rolls the UI back if a persisted toggle fails to
+	 *  save (`settingsStore.setFolderExpanded`'s own rollback flows back
+	 *  here through `expandedProp`). */
+	$effect(() => {
+		expanded = expandedProp;
 	});
 
 	function startRename() {
@@ -129,6 +157,7 @@
 
 	function toggleExpanded() {
 		expanded = !expanded;
+		onToggleExpanded?.(expanded);
 	}
 
 	function handleHeaderDragStart(e: DragEvent) {

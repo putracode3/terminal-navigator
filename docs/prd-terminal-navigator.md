@@ -1,6 +1,6 @@
 # PRD: Terminal Navigator
 
-> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) implemented 2026-07-22 (commits `f44736a`, `ef3d63b`, `e85d27c`), with a follow-up transparent-padding fix 2026-07-23; FR-16 (Clickable Terminal Links) implemented 2026-07-24; FR-17 (Pane Title Shows Active Git Branch) implemented 2026-07-24, with a focus-refresh + manual-refresh follow-up the same day | **Version:** 1.11 | **Date:** 2026-07-24 | **Author:** dennysetiawisnugraha@gmail.com
+> **Status:** In Development — MVP (FR-01–FR-08) implemented, undergoing real-world daily-driver testing; FR-13 (Settings) implemented 2026-07-20; FR-11 (Sidebar Folders) implemented 2026-07-21 (commit `4672712`); FR-14 (Glassmorphic Surfaces) implemented 2026-07-22 (commits `d423ec8`, `efd4cf5`); FR-15 (Native Transparent Window) implemented 2026-07-22 (commits `f44736a`, `ef3d63b`, `e85d27c`), with a follow-up transparent-padding fix 2026-07-23; FR-16 (Clickable Terminal Links) implemented 2026-07-24; FR-17 (Pane Title Shows Active Git Branch) implemented 2026-07-24, with a focus-refresh + manual-refresh follow-up the same day; **FR-06 (Encrypted Local Storage) removed 2026-08-12 (ADR-0014)** — master password / encryption at rest dropped as not worth the daily-use friction for a single-user local tool; data is now a plain file, migrated automatically (one-time, on first load) from the previous encrypted format | **Version:** 1.12 | **Date:** 2026-08-12 | **Author:** dennysetiawisnugraha@gmail.com
 
 ---
 
@@ -44,10 +44,10 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 - **US-02** — As the user, I want to click a project in the list, so that a terminal opens already `cd`-ed into that project's path.
 - **US-03** — As the user, I want to define one or more setup commands per project, so that they run automatically every time I open that project (e.g. `nvm use`, `source venv/bin/activate`).
 - **US-04** — As the user, I want to write and edit notes per project, so that I can keep context (TODO, credentials reminders, quirks) without leaving the app.
-- **US-05** — As the user, I want my notes and commands stored encrypted, so that sensitive info (API keys, credentials) in them isn't exposed in plaintext on disk.
+- ~~**US-05** — As the user, I want my notes and commands stored encrypted, so that sensitive info (API keys, credentials) in them isn't exposed in plaintext on disk.~~ — **removed 2026-08-12 (ADR-0014):** the author decided the master-password friction wasn't worth it for daily use on a single-user local machine; data is now a plain file.
 - **US-06** — As the user, I want to export/import my project list (or sync it via a git-committed config file), so that I can carry my setup across devices.
 - **US-07** — As the user, I want to remove or edit an existing project entry, so that my list stays accurate as projects come and go.
-- **US-08** — As the user, I want a single Settings panel to customize terminal theme, rebind any keyboard shortcut, change my master password, and switch which side the sidebar sits on, so that I can adjust the app to my preference without hand-editing config files.
+- **US-08** — As the user, I want a single Settings panel to customize terminal theme, rebind any keyboard shortcut, and switch which side the sidebar sits on, so that I can adjust the app to my preference without hand-editing config files. (Master-password-change clause removed 2026-08-12, ADR-0014 — no master password left to change.)
 - **US-09** — As the user, I want to organize related projects into folders via drag-and-drop in the sidebar, so that I can navigate a growing project list without scrolling through one long flat list.
 - **US-10** — As the user, I want the app's panels to have an adjustable frosted-glass look, so that the app feels visually lighter and layered to my taste instead of a flat wall of opaque boxes.
 - **US-11** — As the user, I want the app window itself to be see-through to my desktop, adjustable to my taste, so that it sits in my desktop the way Tilix does instead of blocking it out as a solid slab.
@@ -112,14 +112,11 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 - **Acceptance Criteria:**
   - [ ] User can write, edit, and save notes per project
   - [ ] Notes persist across restarts
-  - [ ] Notes are stored encrypted at rest (see NFR-3)
+  - [x] ~~Notes are stored encrypted at rest (see NFR-3)~~ — removed 2026-08-12, see FR-06
 
-#### FR-06: Encrypted Local Storage
-- **Description:** All project data (path, commands, notes) is stored encrypted on disk, since commands/notes may contain sensitive information (API keys, credentials).
-- **Acceptance Criteria:**
-  - [ ] Data file on disk is not human-readable plaintext
-  - [ ] App can decrypt and load data correctly on normal startup
-  - [ ] ⚠️ TBD — key management approach (OS keychain vs. master password) — for system-architect to decide and document as an ADR
+#### FR-06: ~~Encrypted Local Storage~~ — Removed 2026-08-12 (ADR-0014)
+- **Description (historical):** All project data (path, commands, notes) was stored encrypted on disk, since commands/notes may contain sensitive information (API keys, credentials). Removed by direct product decision: the master-password-every-launch friction this required (see the superseded FR-13 sub-feature below) cost more in daily use than the confidentiality guarantee was worth for a single-user local tool. See ADR-0014 for the full rationale and the one-time migration path that converts any existing encrypted data file to plain on first load — existing project data is preserved, not discarded.
+- **Current behavior:** project data (path, commands, notes) is stored as a plain local file, protected only by OS filesystem permissions (0600/0700, unchanged from before). See NFR-3 (rewritten).
 
 #### FR-07: Config Sync via Git / Export-Import
 - **Description:** User can sync their project list across devices either by committing the config file to a git repo (dotfiles-style) or by manually exporting/importing a config file.
@@ -127,22 +124,18 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - [ ] Config data lives in a file (or small set of files) that can be tracked by git
   - [ ] User can export current config to a file
   - [ ] User can import a config file, merging or replacing current data (behavior ⚠️ TBD — decide during design)
-  - [ ] Encrypted fields remain protected in exported files (export is not a plaintext leak)
+  - [x] ~~Encrypted fields remain protected in exported files (export is not a plaintext leak)~~ — moot as of ADR-0014 (2026-08-12): the exported file is the same plain data file, no encrypted fields exist to protect
 
 #### FR-13: Settings Panel
-- **Description:** A modal (opened from existing app chrome, not a separate full page) exposing four settings groups: terminal theme, master password change, keybinding customization, and sidebar position. Promoted directly to MVP per user decision (2026-07-20), absorbing and superseding the old FR-12 placeholder ("Terminal theme customization"). Theme, keybindings, and sidebar position are **not sensitive data** — they persist in a local, unencrypted preferences store, separate from the encrypted project-data blob (FR-06); master password change is the one sub-feature that touches the encrypted blob itself, via the existing `crypto`/`config_sync` path.
+- **Description:** A modal (opened from existing app chrome, not a separate full page) exposing three settings groups: terminal theme, keybinding customization, and sidebar position. Promoted directly to MVP per user decision (2026-07-20), absorbing and superseding the old FR-12 placeholder ("Terminal theme customization"). Theme, keybindings, and sidebar position are **not sensitive data** — they persist in a local plain preferences store (`settings_store`). ~~Master password change was originally the fourth group, touching the encrypted project-data blob via `crypto`~~ — **removed 2026-08-12 (ADR-0014):** there is no master password left to change, since encryption at rest was dropped entirely.
 - **Acceptance Criteria:**
   - [ ] Settings is opened as a modal from existing app chrome (exact entry point — e.g. sidebar footer/menu — decided by ui-ux-designer)
-  - [ ] The modal groups the four areas below; each is independently save-able
+  - [ ] The modal groups the three areas below; each is independently save-able
   - **Theme customization:**
     - [ ] User picks from a fixed set of preset themes (not a per-color custom picker)
     - [ ] Selected theme applies immediately to open terminal panes
     - [ ] Selected theme persists across app restarts
-  - **Master password change:**
-    - [ ] User must correctly enter their *current* master password before a new one is accepted
-    - [ ] On confirming a new password, the app re-derives the encryption key and re-encrypts the existing data blob under it — no data loss
-    - [ ] An incorrect current password rejects the change with a clear error and leaves existing data untouched
-    - [ ] The app requires the new master password on the next unlock (old password stops working)
+  - ~~**Master password change:** ...~~ — removed 2026-08-12 (ADR-0014)
   - **Keybinding customization:**
     - [ ] Every app shortcut (clipboard copy/paste, split-pane, close pane/tab, open in new tab, etc.) can be rebound to a different key combination
     - [ ] Assigning a combination already used by another action is blocked/flagged with a conflict warning before it's saved
@@ -152,7 +145,7 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
     - [ ] Chosen position persists across restarts
 - **Edge cases:**
   - First launch with no settings file yet → falls back to sensible defaults (default theme, default keybindings, sidebar on the left)
-  - Master password change interrupted mid-way (app crash/close) must not leave the data blob partially re-encrypted/unreadable — system-architect to define a safe rotation strategy (e.g. write-new-then-swap)
+  - ~~Master password change interrupted mid-way...~~ — moot, 2026-08-12 (ADR-0014)
   - Rebinding a shortcut to a combination the OS/webview treats as a native command (e.g. Ctrl+Shift+V's native "Paste" action — see the `TerminalPane.svelte` clipboard double-paste bug fixed 2026-07-20) is a real risk surface for custom keybindings in general; system-architect/ui-ux-designer should account for it, not just the one shortcut already fixed
 
 #### FR-11: Sidebar Folders (Project Grouping via Drag & Drop)
@@ -166,8 +159,8 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - [ ] Dropping a project row **between** two existing rows (a drop-indicator line, not directly onto a row) reorders it to that position instead of merging/moving it into whatever row it was dropped near — the same drag gesture serves both reordering and folder membership changes, disambiguated by exactly where the drop lands
   - [ ] A folder that loses its last member (dragged out, or the project deleted per FR-01) is automatically deleted — no empty folders persist
   - [ ] A project inside a folder that also has 2+ open terminal sessions still renders its automatic "grouped (2+ sessions)" sub-item list beneath it (FR-08), simply nested one level deeper inside the folder — the two concepts compose rather than conflict
-  - [ ] Folder membership and names persist across app restarts, stored in the encrypted project-data blob (extends FR-06/NFR-3 — folder names are user-authored text and get the same at-rest protection as project notes/commands)
-  - [ ] Each folder's expanded/collapsed state persists across app restarts, stored in the existing unencrypted preferences store (same mechanism FR-13/NFR-8 already uses for non-sensitive UI state — collapse state is not sensitive data and must render even at the unlock screen's sidebar chrome)
+  - [ ] Folder membership and names persist across app restarts, stored in the project-data file (extends FR-11's data model — folder names are user-authored text, same file as project notes/commands, per ADR-0014)
+  - [ ] Each folder's expanded/collapsed state persists across app restarts, stored in the existing preferences store (same mechanism FR-13 already uses for non-sensitive UI state)
   - [ ] A folder header is **not** a drag-to-split source (cannot be dragged onto a terminal pane) — same ambiguity rule `components.md` already applies to the automatic "grouped" parent row, since a folder has no single session to unambiguously drag. Only the individual project rows and session sub-items inside it remain draggable onto a pane, unchanged from FR-08.
 - **Edge cases:**
   - Dropping a project onto itself, or onto the folder it's already directly in with no position change → no-op, no rename/reorder triggered
@@ -189,14 +182,14 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - [ ] Sidebar and terminal-pane backgrounds remain fully opaque — see the scope note above; this is a deliberate exclusion, not an unimplemented criterion
   - [ ] A single control in the Settings modal (FR-13) adjusts the effect's intensity globally — one control, not per-surface tuning
   - [ ] Intensity applies immediately to already-rendered surfaces, without an app restart (same immediacy FR-13's theme switching already provides)
-  - [ ] The chosen intensity persists across app restarts, stored in the existing unencrypted preferences store (NFR-8) alongside theme/keybindings/sidebar-position — it is not sensitive data and must render even at the unlock screen
+  - [ ] The chosen intensity persists across app restarts, stored in the existing preferences store alongside theme/keybindings/sidebar-position
   - [ ] The control includes an explicit "off" end of its range that disables the effect entirely, returning every surface to today's fully-opaque appearance
   - [ ] At **every** setting the control permits, app-chrome text remains readable and meets the contrast standards in `docs/design/design.md` §7 — the range is bounded so an unreadable configuration is not reachable. Resolved by design.md v2.0 §4.6: the per-surface floors live inside `tokens.css`'s `calc()` expressions (modal `1.00 → 0.40`, menu `1.00 → 0.80` as of design.md v2.0), so this is enforced by construction rather than by the user stopping in time
   - [ ] First launch with no stored value falls back to a sensible default (exact default owned by ui-ux-designer)
   - [ ] With the effect enabled and several panes open (FR-08's multi-pane scenario), the app remains responsive and does not regress startup time — NFR-9
 
 - **Edge cases:**
-  - The unlock screen renders before any project data is decrypted; its existing ambient glow (`--shadow-glow-primary`) plus a blur layer must not fight each other visually, and the intensity setting must already be readable at that point (NFR-8)
+  - ~~The unlock screen renders before any project data is decrypted...~~ — moot, 2026-08-12 (ADR-0014): there is no unlock screen
   - ~~Terminal-pane background translucency interacts with the FR-13 theme preset's own `background` slot~~ — moot as of the 2026-07-22 scope narrowing: terminal panes stay opaque, and design.md §4.6 keeps translucency entirely within app-chrome tokens, so the two systems never compose at all (Q9 resolved)
   - A pane split perpendicular to another (FR-08) stacks two translucent surfaces; blur must not compound into visual mud where panes meet at a divider
   - If the webview does not support `backdrop-filter` at all, surfaces must degrade to plain opaque backgrounds rather than rendering as unblurred transparent panels with text showing through — an unreadable failure mode is worse than no effect
@@ -211,7 +204,7 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 - **Acceptance Criteria:**
   - [ ] With the setting enabled, the desktop is visible through the application window
   - [ ] A control in the Settings modal (FR-13) adjusts the intensity, **separate from FR-14's glass control**; both can be set independently and neither overrides the other
-  - [ ] Intensity applies immediately, without an app restart, and persists across restarts in the unencrypted preferences store (NFR-8) — same mechanism as FR-13/FR-14
+  - [ ] Intensity applies immediately, without an app restart, and persists across restarts in the existing preferences store — same mechanism as FR-13/FR-14
   - [ ] The control includes an explicit "off" end of its range returning the window to fully opaque, which is the default on first launch
   - [ ] At every reachable setting, **all app text continues to meet `docs/design/design.md` §7's contrast standards** — see NFR-10; this requires a minimum scrim, since the backdrop is outside the app's control
   - [ ] Terminal text specifically remains readable over the wallpaper at every reachable setting (dense small monospace over an arbitrary photographic backdrop is the hardest case in the app)
@@ -219,8 +212,8 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
   - [ ] Enabling it does not regress startup time or introduce input lag in a terminal pane (NFR-7/NFR-9)
 
 - **Edge cases:**
-  - The unlock screen renders before anything is decrypted; it must respect this setting too (NFR-8) and must not leak a confusing "half-visible desktop" state around the master-password field
-  - `<html>`'s `color-scheme: dark` and root background are what defeated the original spike — whatever the fix, it must not regress native form-control rendering (inputs, the password field's reveal control), which is what `color-scheme` exists to drive
+  - ~~The unlock screen renders before anything is decrypted...~~ — moot, 2026-08-12 (ADR-0014): there is no unlock screen or master-password field anymore
+  - `<html>`'s `color-scheme: dark` and root background are what defeated the original spike — whatever the fix, it must not regress native form-control rendering (inputs, scrollbars), which is what `color-scheme` exists to drive
   - A very bright or busy wallpaper is the worst case for every contrast pair in the app at once — unlike FR-14, whose backdrop was always app-controlled
   - Compositor behavior is not uniform: the same setting may look different under a different WM, and the app cannot detect "will this actually composite" reliably before drawing
 
@@ -269,12 +262,12 @@ Aplikasi desktop (Rust + Tauri) yang berfungsi sebagai **project launcher + term
 |---|---|---|
 | NFR-1 | Performance | Terminal open + auto-run command should feel instant to the user (no perceptible app-side lag before the shell/PTY takes over) |
 | NFR-2 | Availability | N/A — single-user local desktop app, no uptime requirement |
-| NFR-3 | Security / Data sensitivity | Stored data (paths, commands, notes) may contain credentials/API keys entered by the user in commands or notes. Must be encrypted at rest. No network transmission of this data (no cloud backend) |
+| NFR-3 | Security / Data sensitivity | Stored data (paths, commands, notes) may contain credentials/API keys entered by the user in commands or notes. No network transmission of this data (no cloud backend). ~~Must be encrypted at rest~~ — **repealed 2026-08-12 (ADR-0014):** encryption at rest was tried (master password, ADR-0005) and removed by direct product decision as not worth the daily-use friction for a single-user local tool; data is now a plain file, protected only by OS filesystem permissions (0600/0700) |
 | NFR-4 | Scalability | Must comfortably handle a personal-scale list (tens to low hundreds of projects) — not designed for large multi-team catalogs |
 | NFR-5 | Portability | Config/data must be portable across devices via git-trackable file(s) and/or export/import, per user's multi-device workflow |
 | NFR-6 | Learnability | Solo author is new to Rust and Tauri — downstream architecture docs should favor well-established, well-documented libraries and explain non-obvious decisions, over cutting-edge/exotic choices |
 | NFR-7 | Resource efficiency | App must be lightweight, fast to start, and memory-friendly — especially relevant given multi-pane terminal usage (FR-08) can mean many concurrent PTY sessions + rendered terminal views running for long periods |
-| NFR-8 | Security / Data sensitivity | Non-sensitive preferences (theme, keybindings, sidebar position — FR-13; glassmorphic intensity — FR-14) must NOT require the app to be unlocked (master password entered) to read or apply — stored separately from the encrypted data blob (FR-06), so app chrome can render correctly even at the unlock screen |
+| NFR-8 | N/A, 2026-08-12 (ADR-0014) | ~~Non-sensitive preferences must NOT require the app to be unlocked to read or apply~~ — moot, there is no unlock state left. Kept as a row for changelog continuity only |
 | NFR-9 | Performance / Resource efficiency | FR-14's blur effect must not compromise NFR-7. `backdrop-filter` is a per-frame compositing cost that scales with both blurred area and layer count, and this app's terminal rendering is already on xterm.js's DOM renderer rather than the GPU path (ADR-0006 disabled the WebGL renderer, so its NFR-7 headroom is *already* reduced). Enabling FR-14 must not introduce perceptible input lag or scroll stutter in a terminal pane, nor regress app startup time, under FR-08's realistic multi-pane usage. If measurement shows it does, reducing FR-14's blurred surface count is the correct response — NFR-7 outranks FR-14 |
 | NFR-10 | Accessibility / Contrast | FR-15 breaks the assumption every other contrast rule in `docs/design/design.md` §7 rests on: that the backdrop behind app text is a known token value. With the desktop showing through, the backdrop is arbitrary and outside the app's control. The intensity range must therefore guarantee a **minimum scrim** — a floor of app-controlled opacity beneath all text — such that no reachable setting can put text directly onto raw wallpaper. This is the same "unsafe configuration unreachable by construction" property FR-14 already uses (design.md §4.6), applied to a backdrop the app cannot measure. Primary text readability outranks the visual effect |
 
@@ -328,7 +321,8 @@ User wants a properly installed package from the start (not just running from so
 | Risk | Probability | Impact | Mitigation |
 |---|---|---|---|
 | Author is new to Rust/Tauri — PTY/terminal embedding, multi-pane PTY multiplexing (FR-08), and encryption are all nontrivial for a first project in the stack | Medium-High | Medium (could stall momentum) | system-architect to favor mature, well-documented libraries (e.g. established PTY crates, proven terminal frontend with native multi-instance support) and explain key decisions clearly (NFR-6); consider phasing implementation (tabs before split-panes) even though both are in architectural scope |
-| Encryption implemented incorrectly (e.g. weak key handling) could undermine NFR-3's whole purpose | Low-Medium | High (defeats the reason encryption exists) | Resolve key management approach explicitly as an ADR in system-architect phase; consider security-auditor pass once this is implemented |
+| ~~Encryption implemented incorrectly (e.g. weak key handling) could undermine NFR-3's whole purpose~~ — moot, 2026-08-12 (ADR-0014): encryption removed entirely | — | — | — |
+| One-time migration off the old encrypted data format (ADR-0014) is new code running against the author's one real, irreplaceable data file | Low | High (only copy of project data) | Atomic write (temp file + rename), same pattern as ADR-0010's rotation; original encrypted bytes untouched until the new plain file is confirmed written. `security-auditor` flagged for a fresh pass, since this removes a control the 2026-07-20 audit previously verified sound |
 | Casual pace / no deadline could lead to project stalling indefinitely | Medium | Low (personal tool, no external stakeholder) | No mitigation needed — accepted by user |
 | FR-14's `backdrop-filter` behaves differently (or costs more) in a `tauri build` release binary than in `tauri dev` — WebKitGTK on this stack has produced exactly this class of surprise twice already (the Vite-minifier TUI bug fixed in `c10a2f5`, and the WebGL renderer defect in ADR-0006's revisit) | Medium | Medium (a visual feature that only misbehaves in the real installed app) | Verify FR-14 from an actual installed `.deb` launched from the desktop launcher, per `docs/ops/runbook.md` §2 and the launch-environment charter in `docs/qa/test-plan.md` §5.1 — a green `tauri dev` session is explicitly not equivalent verification for this class |
 | FR-15 puts app text over an arbitrary wallpaper, where no token-based contrast guarantee can hold — the mechanism design.md §7 relies on assumes a known backdrop | High (it is inherent to the feature, not a bug) | Medium-High (affects every text pair in the app at once, including dense terminal output) | NFR-10's minimum-scrim floor, resolved as Q11 before implementation; "off" is the default and always reachable; primary text readability explicitly outranks the effect |
@@ -346,14 +340,14 @@ User wants a properly installed package from the start (not just running from so
 ---
 
 ## 10. Open Questions
-- [x] [Q1] Key management approach for encryption — **Resolved 2026-07-17: master password**, entered by user on app startup to decrypt data
+- [x] [Q1] Key management approach for encryption — **Resolved 2026-07-17: master password**, entered by user on app startup to decrypt data. **Reversed 2026-08-12 (ADR-0014): encryption removed entirely** — the master-password friction turned out not to be worth it for daily use on a single-user local machine; existing encrypted data migrates to plain automatically, once, on first load
 - [ ] [Q2] Import behavior when syncing config across devices — merge vs. replace — Owner: system-architect / design phase
 - [ ] [Q3] Frontend framework and PTY library choice — Owner: system-architect
 - [ ] [Q4] Tab/pane close UX when a long-running foreground process is active — Owner: ui-ux-designer / design phase
-- [ ] [Q5] Exact format/location of the unencrypted preferences store (FR-13/NFR-8) and the master-password-rotation strategy for the encrypted blob — Owner: system-architect
+- [x] [Q5] Exact format/location of the unencrypted preferences store (FR-13/NFR-8) — **Resolved 2026-07-20: same `app_data_dir()`, plain `settings.json`, ADR-0009.** ~~Master-password-rotation strategy for the encrypted blob~~ — moot, 2026-08-12 (ADR-0014): no master password left to rotate
 - [ ] [Q6] Which specific preset themes ship for FR-13 theme customization — Owner: ui-ux-designer
 - [ ] [Q7] Exact visual treatment distinguishing a "reorder between rows" drop target from a "merge/move into this row or folder" drop target in the sidebar (FR-11) — Owner: ui-ux-designer
-- [ ] [Q8] Data model/schema for folder membership + name within the encrypted project-data blob (FR-11, extends FR-06) — Owner: system-architect
+- [ ] [Q8] Data model/schema for folder membership + name within the project-data file (FR-11) — Owner: system-architect
 - [x] [Q9] **Resolved 2026-07-22 (design.md v1.9 §4.6): app-chrome tokens exclusively; §4.5's terminal presets stay opaque and untouched.** Decided on evidence, not preference — the App Default preset's background *is* `--color-background`, so compositing it over itself returns the identical color at every alpha, making preset translucency inert for the default case. The §4.5 boundary is therefore preserved rather than crossed. Original question: which system owns FR-14's translucency values — `tokens.css` app-chrome tokens, an extension to the FR-13 terminal theme presets, or a third independent axis? `design.md` §4.5 deliberately keeps app-chrome tokens and terminal presets separate so neither drifts by editing the other, but FR-14 applies to surfaces governed by *both*, and each preset defines its own opaque `background` hex. This boundary must be decided explicitly rather than settled by whichever file gets edited first — Owner: ui-ux-designer
 - [x] [Q11] **Resolved 2026-07-22 (design.md v2.1 §4.7): scrim floor α=0.64, computed against a WHITE wallpaper.** The backdrop cannot be measured but it *is* bounded — for light text on dark surfaces the worst case is a pure white wallpaper, and unlike §4.6's discarded model that case is genuinely reachable, since nothing blurs or averages a wallpaper. At the floor `--color-text` holds 4.70:1; `--color-text-muted` does not (1.87:1) and is a knowingly accepted trade, taken with the alternative floor (α=0.90, protecting muted text but yielding an imperceptible 10% see-through) explicitly on the table. Surfaces stack additively, so bounding the root bounds everything above it. Original question: what per-surface opacity floor guarantees §7 contrast against an unmeasurable wallpaper?
 - [x] [Q12] **Resolved 2026-07-22 (design.md v2.1 §4.7, Finding 3) — opposite to the expected answer: FR-14's surface scope does NOT change.** A transparent window does not give the sidebar or terminal panes anything to blur, because `backdrop-filter` samples the *page's own backdrop* and the wallpaper is composited by the window manager outside the document — the same reason blur-behind-the-window is impossible on Linux. §4.6's Findings 1 and 2 stand, now on grounds that no longer depend on the window being opaque. FR-14 and FR-15 compose by stacking alphas; neither feeds the other's blur. Original question: does FR-15 reopen FR-14's surface scope?
@@ -379,6 +373,7 @@ User wants a properly installed package from the start (not just running from so
 ## 13. Changelog
 | Version | Date | Change |
 |---|---|---|
+| 1.12 | 2026-08-12 | **FR-06 (Encrypted Local Storage) removed** — direct product decision (routed via project-navigator → system-architect → ADR-0014), after real-world daily-driver use showed the master-password-every-launch friction (ADR-0005) cost more than the confidentiality guarantee was worth for a single-user local tool. US-05 removed. FR-13's master-password-change sub-feature removed (three settings groups now, not four); US-08 updated to match. NFR-3 rewritten to drop the encryption mandate; NFR-8 marked N/A (no unlock state left). Q1 reversed, Q5's rotation-strategy half made moot. Added a migration risk (§8) and flagged `security-auditor` for a fresh pass, since a previously-verified control was removed. Existing project data is preserved: the app migrates any pre-existing encrypted data file to the new plain format automatically, once, on first load (prompting for the last-used master password one final time only if that legacy file is present). |
 | 1.11 | 2026-07-24 | FR-17 follow-up: the branch shown in a pane's title now refreshes (bypassing FR-17's per-cwd cache) on every focus-gain and via a new manual refresh control next to the title, closing part of the "static-per-mount only" gap v1.10 explicitly deferred. Still not truly realtime by design — a poll timer or a per-pane filesystem watcher were both considered and rejected for cost/complexity reasons now recorded in FR-17's edge cases; a fully realtime version stays future-backlog. Also added the acceptance criterion that the branch text be visually distinct from the path (not both the same muted color). |
 | 1.10 | 2026-07-24 | Added FR-17 (Pane Title Shows Active Git Branch: the existing per-pane path label gets ` · <branch>` appended when the pane's cwd is inside a git repository, detected by reading `.git/HEAD` directly — no `git` subprocess, no `libgit2`), implemented directly given its small scope and reuse of the existing pane-header title bar. |
 | 1.9 | 2026-07-24 | Added FR-16 (Clickable Terminal Links: Ctrl+left-click a detected URL to open it in the system browser), implemented directly given its small scope and reuse of already-granted infrastructure (`xterm.js` link detection, `tauri-plugin-opener`'s existing `opener:default` capability) — no new FR-01-style intake pass needed. |
