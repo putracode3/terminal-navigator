@@ -67,7 +67,7 @@ mod tests {
     fn export_copies_the_data_file() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
-        ProjectStore::load(data_file.clone()).unwrap(); // creates an empty store on disk
+        ProjectStore::load(data_file.clone(), None).unwrap(); // creates an empty store on disk
 
         let destination = dir.path().join("exported.enc");
         export(&data_file, &destination).unwrap();
@@ -98,7 +98,7 @@ mod tests {
 
         // Device A: has one project, exports it.
         let device_a_file = dir.path().join("device-a.enc");
-        let mut store_a = ProjectStore::load(device_a_file.clone()).unwrap();
+        let mut store_a = ProjectStore::load(device_a_file.clone(), None).unwrap();
         store_a
             .add(ProjectInput {
                 name: "from-device-a".into(),
@@ -112,7 +112,7 @@ mod tests {
 
         // Device B: starts with a different project, then imports device A's file.
         let device_b_file = dir.path().join("device-b.enc");
-        let mut store_b = ProjectStore::load(device_b_file.clone()).unwrap();
+        let mut store_b = ProjectStore::load(device_b_file.clone(), None).unwrap();
         store_b
             .add(ProjectInput {
                 name: "from-device-b".into(),
@@ -124,7 +124,7 @@ mod tests {
 
         import(&exported, &device_b_file).unwrap();
 
-        let reopened = ProjectStore::load(device_b_file).unwrap();
+        let reopened = ProjectStore::load(device_b_file, None).unwrap();
         let names: Vec<&str> = reopened
             .entries()
             .iter()

@@ -42,10 +42,21 @@ pub fn run() {
                 }
             }
 
+            // Seeds a fresh (first-run) store with a "Home" project
+            // (project_store::load) so the sidebar is never totally empty
+            // on first launch. Not fatal if this can't be resolved — the
+            // fresh store then just starts empty, same as before this
+            // existed.
+            let home_dir = app.path().home_dir().ok();
+            if home_dir.is_none() {
+                eprintln!("warning: failed to resolve home directory — the sidebar will start empty on first launch");
+            }
+
             app.manage(AppState {
                 store: Mutex::new(None),
                 data_file: data_dir.join("projects.enc"),
                 settings_file: data_dir.join("settings.json"),
+                home_dir,
                 pty_manager: PtyManager::new(),
             });
 

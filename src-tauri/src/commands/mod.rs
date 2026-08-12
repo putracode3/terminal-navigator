@@ -17,16 +17,21 @@ use crate::settings_store::{self, Settings, SidebarPosition, ThemeMode};
 
 /// Shared app state: `None` until `init_store`/`migrate_and_load` populates
 /// it on startup (ADR-0014 — no more lock/unlock state; this is a startup
-/// ordering detail, not a security gate). `data_file` is resolved once at
-/// startup (see lib.rs). `pty_manager` needs no such state — terminal
-/// sessions are runtime-only (architecture.md §5.3) and independent of
-/// whether the project store has loaded. `settings_file` is deliberately
-/// outside `store`'s lifecycle (ADR-0009) — settings commands never check
-/// `store`.
+/// ordering detail, not a security gate). `data_file` and `home_dir` are
+/// resolved once at startup (see lib.rs). `pty_manager` needs no such state
+/// — terminal sessions are runtime-only (architecture.md §5.3) and
+/// independent of whether the project store has loaded. `settings_file` is
+/// deliberately outside `store`'s lifecycle (ADR-0009) — settings commands
+/// never check `store`.
 pub struct AppState {
     pub store: Mutex<Option<ProjectStore>>,
     pub data_file: PathBuf,
     pub settings_file: PathBuf,
+    /// Seeds a fresh (first-run) store with a "Home" project — see
+    /// `ProjectStore::load`. `None` if the platform's home directory
+    /// couldn't be resolved; a fresh store then just starts empty, same as
+    /// before this existed.
+    pub home_dir: Option<PathBuf>,
     pub pty_manager: PtyManager,
 }
 
@@ -212,7 +217,7 @@ impl From<SettingsDto> for Settings {
 /// `migrate_and_load`.
 #[tauri::command]
 pub fn init_store(state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
-    let store = ProjectStore::load(state.data_file.clone())?;
+    let store = ProjectStore::load(state.data_file.clone(), state.home_dir.clone())?;
     let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(entries)
@@ -467,7 +472,10 @@ pub fn get_git_branch(path: String) -> Option<String> {
 #[tauri::command]
 pub fn import_config(source: String, state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
     config_sync::import(&PathBuf::from(source), &state.data_file)?;
-    let store = ProjectStore::load(state.data_file.clone())?;
+    // The imported file always exists (just written by `config_sync::import`
+    // above), so the fresh-store/seeding branch of `load` never runs here —
+    // `None` is a no-op, not a behavior choice.
+    let store = ProjectStore::load(state.data_file.clone(), None)?;
     let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(entries)

@@ -109,13 +109,29 @@ pub struct ProjectStore {
 
 impl ProjectStore {
     /// Loads the store at `data_file`. If it doesn't exist yet, initializes
-    /// a fresh empty store there instead (first run) — no password is ever
-    /// asked (ADR-0014). If the file exists but isn't in the current plain
-    /// format, returns `NeedsMigration` rather than attempting to read it —
-    /// callers must go through `migrate_from_legacy` for that case.
-    pub fn load(data_file: PathBuf) -> Result<Self, ProjectStoreError> {
+    /// a fresh store there instead (first run) — no password is ever asked
+    /// (ADR-0014). A fresh store is seeded with one "Home" project pointing
+    /// at `default_home`, when given and it exists on disk, so a first
+    /// launch never starts on a totally empty sidebar; pass `None` (or a
+    /// path that doesn't exist) to start genuinely empty instead. If the
+    /// file exists but isn't in the current plain format, returns
+    /// `NeedsMigration` rather than attempting to read it — callers must go
+    /// through `migrate_from_legacy` for that case.
+    pub fn load(data_file: PathBuf, default_home: Option<PathBuf>) -> Result<Self, ProjectStoreError> {
         if !data_file.exists() {
-            let store = Self { entries: Vec::new(), data_file };
+            let entries = default_home.filter(|p| p.exists()).map_or_else(Vec::new, |path| {
+                let now = Utc::now();
+                vec![SidebarEntry::Project(Project {
+                    id: Uuid::new_v4(),
+                    name: "Home".to_string(),
+                    path,
+                    setup_commands: Vec::new(),
+                    notes: String::new(),
+                    created_at: now,
+                    updated_at: now,
+                })]
+            });
+            let store = Self { entries, data_file };
             store.persist()?;
             return Ok(store);
         }
@@ -689,10 +705,51 @@ mod tests {
     }
 
     #[test]
-    fn load_creates_empty_store_when_no_file_exists() {
+    fn load_creates_empty_store_when_no_file_exists_and_no_default_home_given() {
         let dir = tempdir().unwrap();
-        let store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn load_seeds_a_home_project_on_a_fresh_store_when_default_home_given() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+
+        let store = ProjectStore::load(dir.path().join("projects.enc"), Some(home.clone())).unwrap();
+
+        assert_eq!(store.entries().len(), 1);
+        let seeded = project_at(&store, 0);
+        assert_eq!(seeded.name, "Home");
+        assert_eq!(seeded.path, home);
+    }
+
+    #[test]
+    fn load_does_not_seed_when_default_home_does_not_exist_on_disk() {
+        let dir = tempdir().unwrap();
+        let missing_home = dir.path().join("does-not-exist");
+
+        let store = ProjectStore::load(dir.path().join("projects.enc"), Some(missing_home)).unwrap();
+
+        assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn load_does_not_seed_when_the_data_file_already_exists() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+
+        // First run: store already exists on disk (e.g. the user already
+        // added/removed projects down to zero) — a later `load` must not
+        // re-seed Home just because the tree is currently empty.
+        ProjectStore::load(data_file.clone(), None).unwrap();
+
+        let reopened = ProjectStore::load(data_file, Some(home)).unwrap();
+
+        assert!(reopened.entries().is_empty(), "an existing (even empty) data file must never be re-seeded");
     }
 
     #[cfg(unix)]
@@ -705,7 +762,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
-        ProjectStore::load(data_file.clone()).unwrap();
+        ProjectStore::load(data_file.clone(), None).unwrap();
 
         let mode = std::fs::metadata(&data_file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "data file must be owner-read/write only, got {mode:o}");
@@ -714,7 +771,7 @@ mod tests {
     #[test]
     fn add_rejects_nonexistent_path() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let result = store.add(input("test", PathBuf::from("/definitely/does/not/exist/xyz")));
         assert!(matches!(result, Err(ProjectStoreError::PathNotFound(_))));
     }
@@ -722,7 +779,7 @@ mod tests {
     #[test]
     fn add_rejects_empty_name() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let result = store.add(input("   ", dir.path().to_path_buf()));
         assert!(matches!(result, Err(ProjectStoreError::EmptyName)));
     }
@@ -730,7 +787,7 @@ mod tests {
     #[test]
     fn add_then_list_returns_the_project() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let created = store.add(input("my-project", dir.path().to_path_buf())).unwrap();
         assert_eq!(store.entries().len(), 1);
         assert_eq!(project_at(&store, 0).id, created.id);
@@ -739,7 +796,7 @@ mod tests {
     #[test]
     fn update_modifies_existing_project() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let created = store.add(input("old-name", dir.path().to_path_buf())).unwrap();
 
         let mut updated_input = input("new-name", dir.path().to_path_buf());
@@ -754,7 +811,7 @@ mod tests {
     #[test]
     fn update_unknown_id_fails() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let result = store.update(Uuid::new_v4(), input("x", dir.path().to_path_buf()));
         assert!(matches!(result, Err(ProjectStoreError::NotFound(_))));
     }
@@ -762,7 +819,7 @@ mod tests {
     #[test]
     fn update_modifies_a_project_nested_inside_a_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         store.merge_or_join(a.id, b.id).unwrap();
@@ -778,7 +835,7 @@ mod tests {
     #[test]
     fn delete_removes_project() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let created = store.add(input("to-delete", dir.path().to_path_buf())).unwrap();
         store.delete(created.id).unwrap();
         assert!(store.entries().is_empty());
@@ -787,7 +844,7 @@ mod tests {
     #[test]
     fn delete_unknown_id_fails() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let result = store.delete(Uuid::new_v4());
         assert!(matches!(result, Err(ProjectStoreError::NotFound(_))));
     }
@@ -795,7 +852,7 @@ mod tests {
     #[test]
     fn deleting_a_folders_last_member_auto_deletes_the_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap();
@@ -816,13 +873,13 @@ mod tests {
         let data_file = dir.path().join("projects.enc");
 
         {
-            let mut store = ProjectStore::load(data_file.clone()).unwrap();
+            let mut store = ProjectStore::load(data_file.clone(), None).unwrap();
             let mut proj_input = input("persisted", dir.path().to_path_buf());
             proj_input.notes = "secret note".into();
             store.add(proj_input).unwrap();
         }
 
-        let reopened = ProjectStore::load(data_file).unwrap();
+        let reopened = ProjectStore::load(data_file, None).unwrap();
         assert_eq!(reopened.entries().len(), 1);
         assert_eq!(project_at(&reopened, 0).name, "persisted");
         assert_eq!(project_at(&reopened, 0).notes, "secret note");
@@ -836,7 +893,7 @@ mod tests {
     fn data_file_on_disk_is_plaintext() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
-        let mut store = ProjectStore::load(data_file.clone()).unwrap();
+        let mut store = ProjectStore::load(data_file.clone(), None).unwrap();
         let mut proj_input = input("visible-project", dir.path().to_path_buf());
         proj_input.notes = "some notes".into();
         store.add(proj_input).unwrap();
@@ -856,7 +913,7 @@ mod tests {
         let (nonce, ciphertext) = crypto::encrypt(&key, b"irrelevant, load never decrypts").unwrap();
         std::fs::write(&data_file, build_legacy_envelope(&salt, &nonce, &ciphertext)).unwrap();
 
-        let result = ProjectStore::load(data_file);
+        let result = ProjectStore::load(data_file, None);
         assert!(matches!(result, Err(ProjectStoreError::NeedsMigration)));
     }
 
@@ -880,7 +937,7 @@ mod tests {
     fn persist_leaves_no_leftover_temp_file() {
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
-        let mut store = ProjectStore::load(data_file.clone()).unwrap();
+        let mut store = ProjectStore::load(data_file.clone(), None).unwrap();
         store.add(input("p", dir.path().to_path_buf())).unwrap();
 
         assert!(!dir.path().join(".projects.enc.tmp").exists());
@@ -891,7 +948,7 @@ mod tests {
     #[test]
     fn merge_or_join_creates_a_new_folder_named_after_the_target() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("frontend-app", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("backend-api", dir.path().to_path_buf())).unwrap();
 
@@ -906,7 +963,7 @@ mod tests {
     #[test]
     fn merge_or_join_rejects_merging_an_entry_with_itself() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
 
         let result = store.merge_or_join(a.id, a.id);
@@ -916,7 +973,7 @@ mod tests {
     #[test]
     fn merge_or_join_onto_a_project_already_in_a_folder_joins_that_folder_instead_of_nesting() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -937,7 +994,7 @@ mod tests {
     #[test]
     fn merge_or_join_dropped_directly_on_a_folder_header_appends_to_the_end() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -959,7 +1016,7 @@ mod tests {
     #[test]
     fn merge_or_join_a_1_member_folders_sole_member_onto_its_own_header_is_a_harmless_no_op() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap(); // members: [b, a]
@@ -983,7 +1040,7 @@ mod tests {
     #[test]
     fn merge_or_join_between_two_members_of_the_same_folder_reorders_in_place() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1002,7 +1059,7 @@ mod tests {
     #[test]
     fn move_project_within_its_own_folder_reorders_without_pruning_it() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap(); // members: [b, a]
@@ -1022,7 +1079,7 @@ mod tests {
     #[test]
     fn move_project_between_two_folders_leaves_a_valid_1_member_folder_behind() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1047,7 +1104,7 @@ mod tests {
     #[test]
     fn move_project_to_top_level_removes_it_from_its_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1063,7 +1120,7 @@ mod tests {
     #[test]
     fn reorder_folder_repositions_it_within_the_top_level() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let c = store.add(input("c", dir.path().to_path_buf())).unwrap();
@@ -1078,7 +1135,7 @@ mod tests {
     #[test]
     fn rename_folder_applies_a_non_empty_name() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap();
@@ -1092,7 +1149,7 @@ mod tests {
     #[test]
     fn rename_folder_with_blank_input_reverts_to_the_previous_name() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         let folder_id = store.merge_or_join(a.id, b.id).unwrap();
@@ -1107,7 +1164,7 @@ mod tests {
     #[test]
     fn find_project_locates_a_project_nested_inside_a_folder() {
         let dir = tempdir().unwrap();
-        let mut store = ProjectStore::load(dir.path().join("projects.enc")).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let a = store.add(input("a", dir.path().to_path_buf())).unwrap();
         let b = store.add(input("b", dir.path().to_path_buf())).unwrap();
         store.merge_or_join(a.id, b.id).unwrap();
@@ -1145,7 +1202,7 @@ mod tests {
         std::fs::write(&data_file, &envelope).unwrap();
 
         // `load` must not attempt to read the legacy file itself.
-        assert!(matches!(ProjectStore::load(data_file.clone()), Err(ProjectStoreError::NeedsMigration)));
+        assert!(matches!(ProjectStore::load(data_file.clone(), None), Err(ProjectStoreError::NeedsMigration)));
 
         let store = ProjectStore::migrate_from_legacy(data_file.clone(), "legacy-pw").unwrap();
 
@@ -1163,7 +1220,7 @@ mod tests {
         assert!(is_plain_format(&raw), "file must be migrated to the plain format on disk");
 
         // And a normal `load` must now succeed directly, no more migration needed.
-        let reopened = ProjectStore::load(data_file).unwrap();
+        let reopened = ProjectStore::load(data_file, None).unwrap();
         assert_eq!(reopened.find_project(legacy_project.id).unwrap().name, "pre-existing-project");
     }
 
