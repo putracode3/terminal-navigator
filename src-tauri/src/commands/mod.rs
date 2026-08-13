@@ -392,10 +392,12 @@ pub fn split_pane(
     cwd: String,
     state: State<AppState>,
 ) -> Result<(), AppError> {
-    // Security audit 2026-07-20, M1: this command doesn't otherwise touch
-    // `state.store` (it needs no project data), so without this check it
-    // was the one command that could spawn a real shell before the app was
-    // ever unlocked — every other stateful command already gates on this.
+    // Not a security gate (ADR-0014, security audit 2026-08-12 L5) —
+    // `split_pane` doesn't otherwise touch `state.store`, so this is purely
+    // defensive null-safety against being called before `init_store` has
+    // run, same as every other command's check. (Originally added, security
+    // audit 2026-07-20 M1, as a real lock-state gate — that framing no
+    // longer applies now that there's no locked state to gate.)
     state.store.lock().unwrap().as_ref().ok_or_else(AppError::not_ready)?;
     let session_id = parse_uuid(&session_id)?;
     let event_name = output_event_name(session_id);
