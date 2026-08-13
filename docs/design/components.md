@@ -58,7 +58,7 @@
 
 ## Input (text field, incl. Path field variant)
 
-**Purpose:** Single-line text entry — project name, manual path entry, master password, setup commands.
+**Purpose:** Single-line text entry — project name, manual path entry, the Migration prompt's legacy password (v3.0 — its only remaining `password`-variant use), setup commands.
 **Use instead:** For multi-line content (notes), use Textarea.
 
 ### Anatomy
@@ -74,7 +74,7 @@
 |---|---|---|
 | default | Free text (name, commands) | as anatomy above, no affixes |
 | path | Project path entry (FR-02) | trailing affix is a `Button` (secondary, sm, label "Browse…") that opens the native OS folder picker and fills the field; field itself stays editable for manual entry |
-| password | Master password (unlock screen) | leading lock icon `--color-text-muted`; text content masked; trailing affix is a ghost icon-button toggling mask/reveal |
+| password | Legacy password (Migration prompt, v3.0 — was "Master password (unlock screen)"; shown conditionally, at most once per installation) | leading lock icon `--color-text-muted`; text content masked; trailing affix is a ghost icon-button toggling mask/reveal |
 
 ### Sizes
 | Size | Height | Padding-x | Font |
@@ -86,14 +86,14 @@
 |---|---|
 | default | bg `--color-surface`, border 1px `--color-border-strong`, text `--color-text` |
 | hover | border color unchanged; cursor text |
-| focus-visible | border 1px `--color-primary`; outer glow `0 0 0 2px` at 20% opacity of `--color-primary` (approximate via a dedicated focus-ring, not `--shadow-glow-primary` which is reserved for the unlock screen's ambient glow) |
+| focus-visible | border 1px `--color-primary`; outer glow `0 0 0 2px` at 20% opacity of `--color-primary` (approximate via a dedicated focus-ring, not `--shadow-glow-primary` which is reserved for the Migration prompt's ambient glow) |
 | filled | same as default, distinguished only by content presence — no separate visual treatment needed |
 | disabled | opacity 0.5; bg `--color-surface`; cursor not-allowed |
 | error | border 1px `--color-danger`; help text area shows the error message in `--color-danger`, `--text-xs` |
 
 ### Behavior
 - The `path` variant validates on blur: if the typed/selected path does not exist, it immediately enters `error` state with message "This path doesn't exist" (FR-02 acceptance criteria).
-- The `password` variant submits on `Enter` (equivalent to clicking the primary Unlock button).
+- The `password` variant submits on `Enter` (equivalent to clicking the Migration prompt's primary "Migrate" button, v3.0 — was "Unlock").
 
 ### Accessibility
 - Label is a real `<label>` (or platform equivalent) programmatically associated with the field — never a floating text block.
@@ -114,8 +114,9 @@
 ### Anatomy
 1. Label
 2. Container — resizable text area
-3. Security indicator — small inline `Security Badge` (see below) pinned top-right of the container, communicating "these notes are encrypted at rest"
-4. Autosave status text — below the field (e.g. "Saved" / "Saving…")
+3. Autosave status text — below the field (e.g. "Saved" / "Saving…")
+
+**v3.0:** previously had a third anatomy item, a `Security Badge` pinned top-right communicating "these notes are encrypted at rest" — removed along with the component (ADR-0014; design.md Principle 3's retirement). Not replaced; there is no longer a differential protection claim to make about this field versus any other.
 
 ### Variants
 | Variant | When to use |
@@ -134,7 +135,7 @@
 | focus-visible | border 1px `--color-primary`, same focus ring as Input |
 | saving | autosave status text reads "Saving…" in `--color-text-muted` |
 | saved | autosave status text reads "Saved" in `--color-text-muted`, fades out after 2s |
-| disabled | opacity 0.5, cursor not-allowed (used only while the app is locked/unlocking) |
+| disabled | opacity 0.5, cursor not-allowed (defined for completeness; not currently triggered by any app state as of v3.0 — its original trigger, the pre-ADR-0014 locked/unlocking state, no longer exists) |
 
 ### Behavior
 - Autosaves on blur and on a debounce (~1s of inactivity) — never requires an explicit "Save" click for notes, since FR-05 treats notes as always-persisted state, not a form to submit.
@@ -145,7 +146,6 @@
 - Autosave status changes are polite live-region announcements, not assertive interruptions.
 
 ### Do / Don't
-- ✅ Do: always show the Security Badge on this component — notes are exactly the kind of place credentials end up (per NFR-3), and the user must never wonder whether a given piece of UI is protected.
 - ❌ Don't: add a manual "Save" button — it contradicts the autosave behavior and creates ambiguity about whether unsaved changes exist.
 
 ---
@@ -382,7 +382,7 @@ Both variants render **identical content** for the same target and share every s
 
 **This component no longer exists.** FR-08 v1.4 removed the horizontal tab-bar widget entirely; the sidebar now owns everything this component used to do (open, switch, close, drag-to-split — see `Sidebar Project List Item` and `Sidebar Session Sub-item`). This section is kept as a stub, not deleted outright, so a search for "Tab" in this document finds an explanation instead of silence — see design.md's changelog (v1.3) for why it existed in the first place.
 
-**Consequence for the signature gradient element:** the active-tab underline was one of the gradient's two exclusive homes (design.md Principle 2). With this component gone, the gradient (`--color-accent-gradient`) now appears in exactly **one** place app-wide: the unlock screen's ambient glow. Sidebar Project List Item's and Sidebar Session Sub-item's `active` states use a **solid** `--color-primary` bar, not the gradient — deliberately not "promoted" to the gradient's old role, to avoid forcing a two-stop diagonal gradient onto a 2px-wide vertical bar where it would barely read as a gradient at all (see those components' States tables). design.md §2/§3/§4.1 are updated accordingly in this same change-set.
+**Consequence for the signature gradient element:** the active-tab underline was one of the gradient's two exclusive homes (design.md Principle 2). With this component gone, the gradient (`--color-accent-gradient`) now appears in exactly **one** place app-wide: the Migration prompt's ambient glow (v3.0 — was "the unlock screen's," see design.md Principle 2's v3.0 re-examination for why it moved there and stayed). Sidebar Project List Item's and Sidebar Session Sub-item's `active` states use a **solid** `--color-primary` bar, not the gradient — deliberately not "promoted" to the gradient's old role, to avoid forcing a two-stop diagonal gradient onto a 2px-wide vertical bar where it would barely read as a gradient at all (see those components' States tables). design.md §2/§3/§4.1 are updated accordingly in this same change-set.
 
 ---
 
@@ -453,7 +453,7 @@ The overlay's highlighted half previews the *resulting* pane's approximate bound
 
 ## Modal / Dialog
 
-**Purpose:** Focused, blocking interaction for a self-contained task: Add/Edit Project form, confirmations (close tab/pane with running process, delete project), Unlock screen is a **full-page** pattern, not a Modal (see Patterns).
+**Purpose:** Focused, blocking interaction for a self-contained task: Add/Edit Project form, confirmations (close tab/pane with running process, delete project). The Migration prompt (v3.0, was "Unlock screen") is a **full-page** pattern, not a Modal (see Patterns).
 
 ### Anatomy
 1. Backdrop — covers the app, dismisses on click for non-destructive dialogs only
@@ -493,44 +493,15 @@ The overlay's highlighted half previews the *resulting* pane's approximate bound
 
 ### Do / Don't
 - ✅ Do: put exactly one primary button in the footer (per the Button spec's rule) — **except** an all-autosave `form` dialog (v1.6: Settings Panel, see Patterns), whose footer holds only a dismiss action since there is no draft state to submit. This is the one documented exception; don't extend it to Add/Edit Project, which is explicitly not autosave (Behavior, above).
-- ❌ Don't: use a `confirm` dialog for the Unlock screen — unlock is a full-page pattern (see Patterns), not a dismissible overlay, since there is nothing behind it to see yet.
+- ❌ Don't: use a `confirm` dialog for the Migration prompt (v3.0, was "Unlock screen") — it's a full-page pattern (see Patterns), not a dismissible overlay, since there is nothing behind it to see yet.
 
 ---
 
-## Security Badge
+## Security Badge — REMOVED in v3.0
 
-**Purpose:** A small, consistent visual signal that the data in view is encrypted/protected — used on the Notes editor, the Unlock screen, and the Add/Edit Project form wherever commands/notes fields appear.
+**This component no longer exists.** ADR-0014 removed master-password encryption entirely (project data is now a plain file, protected only by OS file permissions — the same protection level for every byte this app persists, no field-level distinction left). The badge made a true, specific claim while encryption existed ("this field's contents are encrypted, unlike the rest of the app"); once every field has identical protection, that claim can't be made honestly anymore — showing it everywhere would dilute it to decoration, showing it selectively would be arbitrary. Code already dropped both call sites (`Textarea.svelte`'s Notes field, and the old `UnlockScreen.svelte`) in the same change that removed the component file. This section is kept as a stub, not deleted outright, so a search for "Security Badge" in this document finds an explanation instead of silence — see design.md's Principle 3 (retired in place, same v3.0 change) for the full rationale, and its changelog entry for what else moved in the same pass.
 
-### Anatomy
-1. Icon — lock glyph
-2. Label (optional, omitted in the compact inline variant) — e.g. "Encrypted"
-
-### Variants
-| Variant | When to use | Key differences |
-|---|---|---|
-| inline (icon-only) | Pinned corner of Textarea, form field hints | icon only, `--text-xs` size, `--color-security` |
-| labeled | Unlock screen, empty states, first-run explanation | icon + label, on `--color-security-bg-subtle` pill background, text `--color-on-security` is not used here — use `--color-security` text directly on the subtle bg (verified 7.96:1, see design.md §7) |
-| error | Decryption failed (wrong password, corrupted file) | icon changes to a broken-lock/alert glyph, color `--color-danger`, bg `--color-danger-bg-subtle` |
-
-### Sizes
-| Size | Icon | Font |
-|---|---|---|
-| inline | 12px | `--text-xs` |
-| labeled | 16px | `--text-xs` / `--weight-medium` |
-
-### States
-This is a status indicator, not an interactive control — no hover/focus/active states. It may be wrapped in a tooltip trigger (see Behavior).
-
-### Behavior
-- Hovering/focusing an `inline` badge shows a tooltip: "This field is encrypted at rest" (or the localized equivalent per design.md §6).
-- Never animates except the `error` variant, which may use a single, non-repeating attention pulse on first appearance (respects `prefers-reduced-motion`).
-
-### Accessibility
-- Icon has an accessible label even when the text label is visually omitted (`inline` variant) — the meaning must never depend on color alone.
-
-### Do / Don't
-- ✅ Do: use this exact badge everywhere sensitive data is shown or entered — consistency is what builds the user's trust that "if I don't see this badge, this field might not be protected" (a real, deliberate signal, not decoration).
-- ❌ Don't: introduce a second "security" visual language (e.g. a different icon or color) anywhere in the app — `--color-security` (emerald) is reserved exclusively for this meaning.
+**Consequence for `--color-security`/`--color-security-bg-subtle`:** not removed — repurposed. Their one surviving use in shipped code (`SettingsModal.svelte`'s Data-group export/import success flash) is a positive-confirmation signal now, unrelated to encryption. See design.md §3/§4.1 for the updated token role and why the CSS variable names themselves are deliberately left unchanged (a rename would require a code edit, out of scope for this documentation-only pass).
 
 ---
 
@@ -667,11 +638,14 @@ None for MVP — text-label segments only.
 
 ## Patterns
 
-### Unlock screen (full-page, not a Modal)
-Centered card (max-width 360px) vertically centered in the viewport, background is the plain `--color-background` (no sidebar/chrome visible yet — nothing exists to show until data is decrypted). Composition, top to bottom: app icon/wordmark, `Security Badge` (labeled variant, "Encrypted"), `Input` (password variant), primary `Button` ("Unlock", full-width of the card), error text area (uses Input's error-state message styling) shown only after a failed attempt. The card sits on a very subtle radial application of `--shadow-glow-primary` behind it — as of v1.4, this is the **only** place the signature gradient glow appears anywhere in the app (its other home, the removed Tab component's active-state underline, no longer exists — see `Tab (terminal tab bar) — REMOVED in v1.4`). Vertical rhythm between elements: `--space-6` between the badge and the input, `--space-4` between input and button.
+### Migration prompt (full-page, not a Modal) — v3.0, renamed from "Unlock screen"
+
+**Shown conditionally, not on every launch.** ADR-0014 removed master-password encryption; this screen now appears **at most once, ever, per pre-existing installation** — only when `init_store` reports the data file is still in the pre-ADR-0014 encrypted format. A fresh install, or any machine that's already migrated, goes straight to the project list and never sees this pattern at all. Component: `MigrationPrompt.svelte`.
+
+Centered card (max-width 360px) vertically centered in the viewport, background is the plain `--color-background` (no sidebar/chrome visible yet). Composition, top to bottom: app name ("Terminal Navigator", `--text-2xl`/`--weight-semibold`), an explainer line (`--text-sm`/`--color-text-muted`) stating plainly what's happening and that it's one-time — e.g. "Your existing project data is still in the old encrypted format. Enter your previous master password once to migrate it — you won't be asked again." — `Input` (password variant, label "Previous master password"), primary `Button` ("Migrate", full-width of the card, v3.0 — was "Unlock"), error text shown via Input's own error-state styling after a failed attempt (message "Legacy password is incorrect," per design.md §6). **No `Security Badge`** — removed in v3.0 along with the component (design.md Principle 3). The card sits on a very subtle radial application of `--shadow-glow-primary` behind it — this remains the **only** place the signature gradient glow appears anywhere in the app (design.md Principle 2, re-examined and kept in v3.0 for a new reason: this is now the app's rarest and highest-stakes screen, not its most universal one). Vertical rhythm between elements: `--space-6` between the explainer and the input, `--space-4` between input and button.
 
 ### Add/Edit Project form (Modal, `form` variant)
-Field order top-to-bottom: Name (Input, default), Path (Input, path variant — Browse button per FR-02), Setup commands (Textarea, one command per line), Notes (Textarea, with Security Badge). `--space-6` between fields. Footer: Cancel (secondary) then Save (primary). On open for "Edit", fields are pre-filled; on open for "Add", Path's Browse button is the first focused element (the primary entry method per the user's stated preference) rather than the Name field.
+Field order top-to-bottom: Name (Input, default), Path (Input, path variant — Browse button per FR-02), Setup commands (Textarea, one command per line), Notes (Textarea). `--space-6` between fields. Footer: Cancel (secondary) then Save (primary). On open for "Edit", fields are pre-filled; on open for "Add", Path's Browse button is the first focused element (the primary entry method per the user's stated preference) rather than the Name field.
 
 ### Terminal split grid area (renamed in v1.4 — was "Terminal tab + split grid area")
 No tab bar (removed v1.4). The active tab's `Split Pane Container` fills the *entire* main content area, edge to edge, from the top of the window down. Switching which tab is active (via the sidebar) swaps the entire pane grid instantly (panes belonging to inactive tabs keep their PTY sessions alive in the background per architecture.md §5.3 — switching must never feel like "loading", reinforcing NFR-7). When no tab is open at all (fresh unlock, nothing clicked yet), this area shows an empty state: centered text, `--color-text-muted`, `--text-sm`, e.g. "Select a project from the sidebar to open a terminal here."
@@ -745,17 +719,19 @@ This pattern has no dedicated component of its own — it's existing `Sidebar Pr
 
 ### Settings Panel (v1.6, FR-13 — Modal, `form` variant)
 
-Reuses Modal's existing `form` variant chrome as-is (480px, `--modal-width-form`, scrollable body) — no new modal size needed. Opened from the Title Bar's ⚙ `Button` (v2.8 — was a sidebar footer button through v2.7; see Sidebar layout, above). Six groups (v2.8 — was five since v2.5's Appearance group), top to bottom, each separated by `--space-6` and a `--text-lg`/`--weight-semibold` section heading (same title treatment as the Modal header itself, one step down in the hierarchy):
+Reuses Modal's existing `form` variant chrome as-is (480px, `--modal-width-form`, scrollable body) — no new modal size needed. Opened from the Title Bar's ⚙ `Button` (v2.8 — was a sidebar footer button through v2.7; see Sidebar layout, above). **Five groups (v3.0 — was six; the "Master password" group was removed, ADR-0014)**, top to bottom, each separated by `--space-6` and a `--text-lg`/`--weight-semibold` section heading (same title treatment as the Modal header itself, one step down in the hierarchy):
 
 1. **Appearance** (v2.5) — one `Segmented Control` ("Dark" / "Light" / "System"), design.md §4.1a. Deliberately its own group, not folded into "Theme" below — this controls app-chrome color, §4.5 draws an explicit, load-bearing line between that and the terminal color presets in the next group, and collapsing the two headings would blur a distinction the design system otherwise goes out of its way to keep visible.
 2. **Theme** — a `Theme Preset Card` grid (2 columns), one card per design.md §4.5 preset: App Default, Dracula, Nord, Solarized Dark, Solarized Light, GitHub Light (6 as of v2.6 — grid stays 2-column, see that component's Sizes). This group governs **terminal content** colors only; the Appearance group above governs app chrome. The two are deliberately separate systems (design.md §4.5), with exactly one link between them: App Default's card follows the Appearance setting (§4.5a).
-3. **Master password** — three `Input` (password variant): "Current password", "New password", "Confirm new password" — the confirm field exists specifically because a mistyped new password is unrecoverable (architecture.md ADR-0005/ADR-0010: no backdoor, no recovery), so a retype catches that before it's committed, not after. A `Security Badge` (inline variant) sits beside the section heading — this is the single most security-relevant control in the entire app (it rotates the encryption key itself), and design.md Principle 3 requires the badge everywhere trust-relevant data is touched. Below the fields, a scoped `Button` (primary, "Change password") — the **one** genuine submit action in this modal (see Modal's amended Do/Don't, above). On success: fields clear, inline confirmation text "Password changed" (`--color-text-muted`, fades after 2s, same convention as Textarea's autosave). On failure (wrong current password): the "Current password" `Input` enters its `error` state, message "Current password is incorrect" — the other two fields are untouched, not cleared, so the user doesn't have to retype a new password they already typed correctly.
+3. ~~**Master password**~~ — **removed, v3.0 (ADR-0014).** Previously three `Input` (password variant) fields plus a `Security Badge` and a scoped "Change password" submit button — the app's master password concept no longer exists (ADR-0005/ADR-0010, its architectural basis, are both superseded by ADR-0014), so there's nothing left to rotate here. Kept as a stub line rather than silently renumbered away, so a reader following an old reference to "group 3" finds an explanation instead of a mismatch.
 4. **Keybindings** — a list of 8 `Keybinding Row`s, one per architecture.md §5.6's registry, grouped visually by area (Clipboard: copy/paste; Panes: split-bottom/split-right/move-focus×4) via a `--text-xs`/`--color-text-muted` sub-label, not a second heading level. A single `--text-xs`/`--color-text-muted` helper line under the section heading sets expectations honestly: "Some combinations may be intercepted by your desktop environment before this app sees them" — a plain disclaimer rather than attempting per-combo OS-reserved detection, which isn't reliable enough across platforms to promise (see architecture.md risk #5).
 5. **Sidebar position** — one `Segmented Control` ("Left" / "Right").
-6. **Data** (v2.8, relocated from the sidebar footer — FR-07 export/import, ADR-0008) — two `Button` (secondary, sm), "Export" and "Import", same pairing/order as before. Below them, the same status affordances the sidebar footer used to own, carried over verbatim rather than redesigned: a `--text-xs`/`--color-security` success flash ("Exported" / "Imported — project list replaced", fades after 3s) and an error banner (`--color-danger` text + a ✕ dismiss button, auto-clears after 8s — longer than the success flash, per design.md's v2.4 rule that an error carries a reason that has to be read). **Scoping change from v2.7:** this state now lives inside a modal instead of always-visible chrome, so it resets (clears any pending flash/error) whenever the Settings Panel closes — a stale "Exported" flash or dismissed error should never reappear the next time the modal is reopened.
+6. **Data** (v2.8, relocated from the sidebar footer — FR-07 export/import, ADR-0008) — two `Button` (secondary, sm), "Export" and "Import", same pairing/order as before. Below them, the same status affordances the sidebar footer used to own, carried over verbatim rather than redesigned: a `--text-xs`/`--color-security` success flash ("Exported" / "Imported — project list replaced", fades after 3s — v3.0: `--color-security` here is now a plain positive-confirmation signal, not an encryption-trust one, see design.md §3) and an error banner (`--color-danger` text + a ✕ dismiss button, auto-clears after 8s — longer than the success flash, per design.md's v2.4 rule that an error carries a reason that has to be read). **Scoping change from v2.7:** this state now lives inside a modal instead of always-visible chrome, so it resets (clears any pending flash/error) whenever the Settings Panel closes — a stale "Exported" flash or dismissed error should never reappear the next time the modal is reopened.
 
-**Everything in this modal autosaves per-control** (the Appearance Segmented Control, Theme Preset Card selection, every Keybinding Row capture, the Sidebar position Segmented Control) **except master password change**, which is the one field group with real, hard-to-reverse consequences (rotates the encryption key) and so gets its own explicit, scoped submit button rather than firing on every keystroke. This mirrors the same reasoning the design system already applies to Notes/Textarea (autosave — nothing to "submit") versus Add/Edit Project (explicit Save — a multi-field form with a real invalid/incomplete state mid-edit). **Data's Export/Import buttons are a third category** — not a saved setting at all, just a one-shot triggered action (like a `Button` anywhere else in the app), so "autosave vs. explicit submit" doesn't apply to them.
+(Group numbers 4–6 are kept as originally assigned rather than renumbered down to 3–5, matching the stub convention above — group 3 is a deliberate gap, not a typo.)
 
-**Footer:** a single `Button` (secondary, "Done") — dismiss only, since nothing here needs a global "Save." `Escape` and backdrop-click both close the modal unconditionally (no pristine-check gate, unlike Add/Edit Project) — every applied setting is already saved the instant it was changed, and any half-typed-but-not-submitted master password fields are deliberately low-stakes to discard (nothing was applied yet), so there's no accidental-data-loss risk the pristine gate exists to prevent elsewhere.
+**Every group in this modal autosaves per-control** (the Appearance Segmented Control, Theme Preset Card selection, every Keybinding Row capture, the Sidebar position Segmented Control) — **unconditionally, as of v3.0.** Before ADR-0014, master password change was the one exception (its own explicit, scoped submit button, since it had real hard-to-reverse consequences); with that group gone, the modal is now a clean, single-pattern instance of the autosave philosophy the design system already applies to Notes/Textarea, with no exception left to carve out. **Data's Export/Import buttons remain their own third category** — not a saved setting at all, just a one-shot triggered action (like a `Button` anywhere else in the app), so "autosave vs. explicit submit" doesn't apply to them either way.
+
+**Footer:** a single `Button` (secondary, "Done") — dismiss only, since nothing here needs a global "Save." `Escape` and backdrop-click both close the modal unconditionally (no pristine-check gate, unlike Add/Edit Project) — every applied setting is already saved the instant it was changed, so there's no accidental-data-loss risk the pristine gate exists to prevent elsewhere.
 
 **Escape precedence:** while any `Keybinding Row` is in its `recording` state, `Escape` is consumed by that row (cancels recording) and does not reach the Modal's own Escape-to-close handler — see Keybinding Row's Behavior. Modal's normal Escape-to-close resumes the instant no row is recording.

@@ -56,13 +56,16 @@
   --color-text: var(--white-90);
   --color-text-muted: var(--white-60);
   --color-on-primary: #FFFFFF;
-  --color-on-security: #FFFFFF;
+  --color-on-security: #FFFFFF; /* orphaned as of v3.0/ADR-0014 — nothing references this, see design.md §3 */
 
   --color-primary: var(--green-600);
   --color-primary-hover: var(--green-700);
   --color-primary-active: var(--green-800);
   --color-accent-gradient: linear-gradient(135deg, var(--green-500), var(--cyan-500));
 
+  /* v3.0/ADR-0014: repurposed from "encryption/trust signal" to "positive/confirmation
+     signal" (SettingsModal's export/import success flash is the one remaining consumer).
+     Names kept as-is to avoid a code-touching rename in a docs-only pass — see design.md §3. */
   --color-security: var(--emerald-500);
   --color-security-bg-subtle: var(--emerald-950);
 
