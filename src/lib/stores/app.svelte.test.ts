@@ -76,6 +76,32 @@ describe("appStore", () => {
 		});
 	});
 
+	describe("homeProject — FR-01 seeded entry lookup for launch auto-open", () => {
+		it("returns null when there are no entries yet", () => {
+			expect(appStore.homeProject).toBeNull();
+		});
+
+		it("finds a top-level project named 'Home'", () => {
+			appStore.setEntries([projectEntry({ id: "a", name: "not-home" }), projectEntry({ id: "b", name: "Home" })]);
+			expect(appStore.homeProject?.id).toBe("b");
+		});
+
+		it("finds a 'Home' project nested inside a folder", () => {
+			appStore.setEntries([folderEntry({ members: [project({ id: "b", name: "Home" })] })]);
+			expect(appStore.homeProject?.id).toBe("b");
+		});
+
+		it("returns null once the seeded entry has been deleted (FR-01: not protected afterward)", () => {
+			appStore.setEntries([projectEntry({ id: "a", name: "not-home" })]);
+			expect(appStore.homeProject).toBeNull();
+		});
+
+		it("returns null once the seeded entry has been renamed (FR-01: not specially tracked)", () => {
+			appStore.setEntries([projectEntry({ id: "a", name: "renamed" })]);
+			expect(appStore.homeProject).toBeNull();
+		});
+	});
+
 	describe("upsertProject()", () => {
 		it("appends a brand-new project at top level", () => {
 			appStore.setEntries([projectEntry({ id: "a" })]);

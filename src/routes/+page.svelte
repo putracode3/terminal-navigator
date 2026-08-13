@@ -22,7 +22,10 @@
 	// encrypted format, in which case `MigrationPrompt` takes over.
 	onMount(() => {
 		initStore()
-			.then((entries) => appStore.finishLoading(entries))
+			.then((entries) => {
+				appStore.finishLoading(entries);
+				autoOpenHomeOnLaunch();
+			})
 			.catch((err) => {
 				if (isAppError(err) && err.kind === "needs_migration") {
 					appStore.setNeedsMigration();
@@ -31,6 +34,22 @@
 				}
 			});
 	});
+
+	/** Direct product decision (2026-08-13, routed via project-navigator,
+	 *  no separate PRD pass — see docs/prd-terminal-navigator.md FR-01):
+	 *  opens a terminal on the seeded "Home" entry at launch so the app
+	 *  never starts on an empty terminal area. Runs once, right after the
+	 *  one-time initial load — `terminalStore` holds no cross-restart tab
+	 *  state, so "zero tabs open" is always true here; the guard is
+	 *  defensive, not load-bearing. No-ops (not an error) if the user has
+	 *  already deleted/renamed the Home entry (`appStore.homeProject` is
+	 *  `null`) — same "not protected, not enforced afterward" rule FR-01's
+	 *  seeding itself follows. */
+	function autoOpenHomeOnLaunch() {
+		if (terminalStore.tabs.length > 0) return;
+		const home = appStore.homeProject;
+		if (home) handleOpenProject(home);
+	}
 
 	/** Always opens a fresh tab for `project`, regardless of whether one is
 	 *  already open — FR-08 v1.3's deliberate-duplicate path, reached via

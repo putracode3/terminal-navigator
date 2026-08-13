@@ -89,6 +89,15 @@ class AppStore {
 		return flattenProjects(this.entries);
 	}
 
+	/** The FR-01 seeded "Home" entry, found by name like any other project
+	 *  lookup — it isn't protected or specially tracked (FR-01 edge cases:
+	 *  editable, deletable, renamable like any entry). `null` once the user
+	 *  has deleted or renamed it, which is a normal, non-error state for
+	 *  callers (e.g. launch auto-open) to just no-op on. */
+	get homeProject(): ProjectDto | null {
+		return this.allProjects.find((p) => p.name === "Home") ?? null;
+	}
+
 	toggleSidebar() {
 		this.sidebarHidden = !this.sidebarHidden;
 	}
