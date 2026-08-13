@@ -468,6 +468,46 @@ pub fn get_git_branch(path: String) -> Option<String> {
     crate::git_status::current_branch(std::path::Path::new(&path))
 }
 
+/// The platform home directory, resolved once at startup (`AppState.home_dir`
+/// — the same value FR-01's fresh-store seeding uses). Exposed read-only so
+/// the frontend can fall back to it for the FR-01 launch auto-open when no
+/// "Home" project exists in the sidebar (installs whose data file already
+/// existed before that seeding shipped never get one). `None` if it
+/// couldn't be resolved, same as the seeding path's own fallback.
+#[tauri::command]
+pub fn home_dir(state: State<AppState>) -> Option<String> {
+    state.home_dir.as_ref().map(|p| p.to_string_lossy().to_string())
+}
+
+/// Opens a terminal pane at the platform home directory directly, bypassing
+/// the project store entirely — the FR-01 launch-auto-open fallback for when
+/// no "Home" project exists to reuse `open_terminal`'s project-lookup path.
+/// No setup commands run (there is no `Project` here to have any). Same
+/// event-wiring shape as `open_terminal` otherwise.
+#[tauri::command]
+pub fn open_home_terminal(app: AppHandle, session_id: String, state: State<AppState>) -> Result<(), AppError> {
+    let session_id = parse_uuid(&session_id)?;
+    let home_dir = state
+        .home_dir
+        .clone()
+        .ok_or_else(|| AppError { kind: "not_found", message: "Home directory not resolved".to_string() })?;
+
+    let event_name = output_event_name(session_id);
+    let exit_event_name = exit_event_name(session_id);
+    let exit_app = app.clone();
+    state.pty_manager.spawn(
+        session_id,
+        &home_dir,
+        move |chunk| {
+            let _ = app.emit(&event_name, chunk);
+        },
+        move || {
+            let _ = exit_app.emit(&exit_event_name, ());
+        },
+    )?;
+    Ok(())
+}
+
 /// Imports `source`, replacing all local project data (ADR-0008 — replace,
 /// not merge). Re-loads from the new file afterward so the in-memory list
 /// reflects the import immediately, without requiring an app restart.

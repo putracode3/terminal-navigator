@@ -117,6 +117,21 @@ export function openTerminal(projectId: string, sessionId: string): Promise<void
 	return invoke("open_terminal", { projectId, sessionId });
 }
 
+/** FR-01 launch-auto-open fallback: the platform home directory, or `null`
+ * if it couldn't be resolved. Used when no "Home" project exists in the
+ * sidebar to fall back to (installs whose data file predates FR-01's
+ * seeding never get one). */
+export function homeDir(): Promise<string | null> {
+	return invoke("home_dir");
+}
+
+/** Opens a terminal at the platform home directory directly, bypassing the
+ * project store — the FR-01 fallback counterpart to `openTerminal` for when
+ * there's no "Home" project to open instead. */
+export function openHomeTerminal(sessionId: string): Promise<void> {
+	return invoke("open_home_terminal", { sessionId });
+}
+
 export function splitPane(sessionId: string, cwd: string): Promise<void> {
 	return invoke("split_pane", { sessionId, cwd });
 }

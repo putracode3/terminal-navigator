@@ -96,6 +96,8 @@ pub fn run() {
             commands::reorder_folder,
             commands::rename_folder,
             commands::open_terminal,
+            commands::home_dir,
+            commands::open_home_terminal,
             commands::split_pane,
             commands::write_terminal,
             commands::resize_terminal,
