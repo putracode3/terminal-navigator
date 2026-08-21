@@ -152,6 +152,22 @@
 			e.preventDefault();
 			e.stopPropagation();
 			terminalStore.moveFocus(tabId, "down");
+		} else if (matchesCombo(e, kb["pane.moveLeft"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.movePaneInDirection(tabId, "left");
+		} else if (matchesCombo(e, kb["pane.moveRight"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.movePaneInDirection(tabId, "right");
+		} else if (matchesCombo(e, kb["pane.moveUp"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.movePaneInDirection(tabId, "up");
+		} else if (matchesCombo(e, kb["pane.moveDown"])) {
+			e.preventDefault();
+			e.stopPropagation();
+			terminalStore.movePaneInDirection(tabId, "down");
 		} else if (matchesCombo(e, kb["terminal.closeSession"])) {
 			e.preventDefault();
 			e.stopPropagation();

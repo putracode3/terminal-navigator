@@ -762,6 +762,66 @@ describe("terminalStore — moveFocus / findPaneInDirection (FR-13)", () => {
 	});
 });
 
+describe("terminalStore — movePaneInDirection (keyboard equivalent to drag-to-move, components.md v3.1 / PRD FR-08 v1.17)", () => {
+	function buildTree() {
+		const tab = terminalStore.openTab("proj-1", "a", "/a"); // leaf A
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b"); // row-split[A, B]
+		const idC = terminalStore.splitPane(tab.id, idB, "column", "/c"); // B's slot -> column-split[B, C]
+		return { tabId: tab.id, idA, idB, idC };
+	}
+
+	it("relocates the focused pane, not just its focus — unlike moveFocus, the pane's actual tree position changes", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b"); // row[A, B]
+		terminalStore.focusPane(tab.id, idA);
+
+		terminalStore.movePaneInDirection(tab.id, "right");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(paneCount(refreshed.root)).toBe(2); // reused verbatim, nothing spawned
+		expect(leafIds(refreshed.root).sort()).toEqual([idA, idB].sort());
+		expect(refreshed.focusedPaneId).toBe(idA); // focus stays on the pane that moved
+	});
+
+	it("moves right from a row-split's left sibling into the nested split's first leaf — same geometric neighbor moveFocus would pick", () => {
+		const { tabId, idA, idB, idC } = buildTree();
+		terminalStore.focusPane(tabId, idA);
+
+		terminalStore.movePaneInDirection(tabId, "right");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === tabId)!;
+		expect(refreshed.focusedPaneId).toBe(idA); // still the same pane, just relocated
+		expect(paneCount(refreshed.root)).toBe(3); // reused verbatim, nothing spawned or lost
+		expect(leafIds(refreshed.root).sort()).toEqual([idA, idB, idC].sort());
+	});
+
+	it("is a no-op at the edge of the grid — same 'no neighbor in that direction' rule moveFocus follows", () => {
+		const { tabId, idA } = buildTree();
+		terminalStore.focusPane(tabId, idA);
+		const before = terminalStore.tabs.find((t) => t.id === tabId)!.root;
+
+		terminalStore.movePaneInDirection(tabId, "left"); // A is already the leftmost in its row
+
+		expect(terminalStore.tabs.find((t) => t.id === tabId)!.root).toEqual(before);
+	});
+
+	it("is a no-op when the focused pane is its tab's only one (no neighbor anywhere)", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+
+		terminalStore.movePaneInDirection(tab.id, "right");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(refreshed.root).toMatchObject({ type: "leaf", sessionId: idA });
+	});
+
+	it("is a no-op for an unknown tab id (no throw)", () => {
+		expect(() => terminalStore.movePaneInDirection("not-a-real-tab-id", "right")).not.toThrow();
+	});
+});
+
 describe("terminalStore — cycleActiveTab (FR-13 follow-up, terminal.nextTab/previousTab)", () => {
 	it("cycles to the next tab, wrapping around at the end", () => {
 		const tabA = terminalStore.openTab("proj-a", "a", "/a");

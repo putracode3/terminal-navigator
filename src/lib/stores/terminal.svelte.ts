@@ -394,6 +394,26 @@ class TerminalStore {
 		if (target) this.focusPane(tabId, target);
 	}
 
+	/** Keyboard equivalent to drag-to-move (components.md v3.1's accessibility
+	 *  follow-up, PRD FR-08 v1.17): relocates the currently *focused* pane one
+	 *  step toward `direction`, instead of just moving focus like `moveFocus`
+	 *  above. Reuses `findPaneInDirection` — the exact same geometric-neighbor
+	 *  lookup `moveFocus` already uses — to find the adjacent pane, then
+	 *  `movePaneWithinTab` to perform the same detach-and-graft the drag path
+	 *  uses; no new tree logic. A no-op at the edge of the grid (no neighbor
+	 *  in that direction) and, since `findPaneInDirection` already returns
+	 *  null when the tab has only one pane, also a no-op when the focused
+	 *  pane is its tab's only one — same "not a valid drag source" case
+	 *  `movePaneWithinTab`'s own guards cover for the drag path. */
+	movePaneInDirection(tabId: string, direction: MoveDirection) {
+		const tab = this.tabs.find((t) => t.id === tabId);
+		if (!tab) return;
+		const neighborId = findPaneInDirection(tab.root, tab.focusedPaneId, direction);
+		if (!neighborId) return;
+		const zone: DropZone = direction === "up" ? "top" : direction === "down" ? "bottom" : direction;
+		this.movePaneWithinTab(tabId, tab.focusedPaneId, neighborId, zone);
+	}
+
 	setPaneStatus(sessionId: string, status: PaneStatus, errorMessage?: string) {
 		this.tabs = this.tabs.map((tab) => ({
 			...tab,

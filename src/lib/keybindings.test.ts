@@ -86,8 +86,15 @@ describe("actionLabel", () => {
 });
 
 describe("KEYBINDING_ACTIONS / DEFAULT_KEYBINDINGS", () => {
-	it("has exactly 14 actions, matching architecture.md §5.6's registry", () => {
-		expect(KEYBINDING_ACTIONS).toHaveLength(14);
+	it("has exactly 18 actions, matching architecture.md §5.6's registry", () => {
+		expect(KEYBINDING_ACTIONS).toHaveLength(18);
+	});
+
+	it("pane.move{Left,Right,Up,Down} default to Alt+Shift+Arrow*, pairing with pane.moveFocus*'s plain Alt+Arrow*", () => {
+		expect(DEFAULT_KEYBINDINGS["pane.moveLeft"]).toBe("Alt+Shift+ArrowLeft");
+		expect(DEFAULT_KEYBINDINGS["pane.moveRight"]).toBe("Alt+Shift+ArrowRight");
+		expect(DEFAULT_KEYBINDINGS["pane.moveUp"]).toBe("Alt+Shift+ArrowUp");
+		expect(DEFAULT_KEYBINDINGS["pane.moveDown"]).toBe("Alt+Shift+ArrowDown");
 	});
 
 	it("terminal.closeSession defaults to Ctrl+Shift+W (Tilix/Terminator parity)", () => {

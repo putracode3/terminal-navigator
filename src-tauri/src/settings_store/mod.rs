@@ -108,6 +108,10 @@ fn default_keybindings() -> HashMap<String, String> {
         ("pane.moveFocusRight", "Alt+ArrowRight"),
         ("pane.moveFocusUp", "Alt+ArrowUp"),
         ("pane.moveFocusDown", "Alt+ArrowDown"),
+        ("pane.moveLeft", "Alt+Shift+ArrowLeft"),
+        ("pane.moveRight", "Alt+Shift+ArrowRight"),
+        ("pane.moveUp", "Alt+Shift+ArrowUp"),
+        ("pane.moveDown", "Alt+Shift+ArrowDown"),
         ("terminal.zoomIn", "Ctrl+="),
         ("terminal.zoomOut", "Ctrl+-"),
         ("terminal.closeSession", "Ctrl+Shift+W"),
@@ -144,7 +148,29 @@ pub fn load(path: &Path) -> Result<Settings, SettingsStoreError> {
         return Ok(Settings::default());
     }
     let raw = std::fs::read_to_string(path)?;
-    serde_json::from_str(&raw).map_err(|_| SettingsStoreError::Corrupted)
+    let mut settings: Settings = serde_json::from_str(&raw).map_err(|_| SettingsStoreError::Corrupted)?;
+    backfill_missing_keybindings(&mut settings);
+    Ok(settings)
+}
+
+/// A settings.json written before an action existed in the registry has no
+/// entry for it at all — unlike a whole missing *struct field* (handled by
+/// `#[serde(default)]` on e.g. `theme_mode`/`glass_intensity` above), a
+/// `HashMap<String, String>` only ever deserializes the keys that were
+/// actually persisted, so `#[serde(default)]` on the `keybindings` field
+/// itself can't help here. Without this, every action added to the registry
+/// after a user's first save (this app has no "unbind" — every action always
+/// has exactly one combo, so an absent key can only mean "didn't exist yet
+/// when this file was written," never a deliberate removal to detect and
+/// preserve) would be silently unreachable for them forever: neither this
+/// module's own `validate()` nor the frontend's `settings.svelte.ts`
+/// (`apply()` replaces its keybindings state wholesale from whatever this
+/// function returns, no merge of its own) ever fills the gap. Only adds
+/// missing action ids; never touches one the user already rebound.
+fn backfill_missing_keybindings(settings: &mut Settings) {
+    for (action, combo) in default_keybindings() {
+        settings.keybindings.entry(action).or_insert(combo);
+    }
 }
 
 /// Validates, then atomically writes `settings` to `path` (temp file +
@@ -209,11 +235,15 @@ mod tests {
     }
 
     #[test]
-    fn defaults_include_all_fourteen_registry_actions() {
+    fn defaults_include_all_eighteen_registry_actions() {
         let settings = Settings::default();
-        assert_eq!(settings.keybindings.len(), 14);
+        assert_eq!(settings.keybindings.len(), 18);
         assert_eq!(settings.keybindings.get("clipboard.copy"), Some(&"Ctrl+Shift+C".to_string()));
         assert_eq!(settings.keybindings.get("pane.moveFocusDown"), Some(&"Alt+ArrowDown".to_string()));
+        assert_eq!(settings.keybindings.get("pane.moveLeft"), Some(&"Alt+Shift+ArrowLeft".to_string()));
+        assert_eq!(settings.keybindings.get("pane.moveRight"), Some(&"Alt+Shift+ArrowRight".to_string()));
+        assert_eq!(settings.keybindings.get("pane.moveUp"), Some(&"Alt+Shift+ArrowUp".to_string()));
+        assert_eq!(settings.keybindings.get("pane.moveDown"), Some(&"Alt+Shift+ArrowDown".to_string()));
         assert_eq!(settings.keybindings.get("terminal.zoomIn"), Some(&"Ctrl+=".to_string()));
         assert_eq!(settings.keybindings.get("terminal.zoomOut"), Some(&"Ctrl+-".to_string()));
         assert_eq!(settings.keybindings.get("terminal.closeSession"), Some(&"Ctrl+Shift+W".to_string()));
@@ -245,6 +275,75 @@ mod tests {
         assert_eq!(settings.theme_preset, "dracula");
         assert_eq!(settings.sidebar_position, SidebarPosition::Right);
         assert_eq!(settings.glass_intensity, 0.0, "missing field defaults to fully opaque");
+    }
+
+    /// Regression (components.md v3.1's accessibility follow-up, PRD FR-08
+    /// v1.17): unlike a missing *struct field* (handled above via
+    /// `#[serde(default)]`), a `keybindings` map persisted before an action
+    /// existed in the registry has no entry for that action at all —
+    /// `#[serde(default)]` on the field can't backfill individual missing
+    /// map keys. Without `backfill_missing_keybindings`, every action added
+    /// after a user's first save would be permanently unreachable for them:
+    /// `matchesCombo(event, kb["pane.moveLeft"])` on the frontend would
+    /// compare against `undefined` forever, since neither this module's
+    /// `validate()` nor `settings.svelte.ts`'s `apply()` ever merges in
+    /// defaults for missing entries on their own.
+    #[test]
+    fn load_backfills_keybindings_for_actions_added_after_the_file_was_written() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // Exactly the shape a pre-pane.move* build wrote — none of the four
+        // new actions are present, only a handful of older ones.
+        std::fs::write(
+            &path,
+            r#"{
+                "theme_preset": "dracula",
+                "keybindings": {
+                    "clipboard.copy": "Ctrl+Shift+C",
+                    "pane.moveFocusLeft": "Alt+ArrowLeft"
+                },
+                "sidebar_position": "left"
+            }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path).expect("pre-pane.move* settings file must still load");
+
+        assert_eq!(settings.keybindings.get("pane.moveLeft"), Some(&"Alt+Shift+ArrowLeft".to_string()));
+        assert_eq!(settings.keybindings.get("pane.moveRight"), Some(&"Alt+Shift+ArrowRight".to_string()));
+        assert_eq!(settings.keybindings.get("pane.moveUp"), Some(&"Alt+Shift+ArrowUp".to_string()));
+        assert_eq!(settings.keybindings.get("pane.moveDown"), Some(&"Alt+Shift+ArrowDown".to_string()));
+        // Every other action already in the registry gets backfilled too —
+        // not just the four this session added.
+        assert_eq!(settings.keybindings.get("terminal.zoomIn"), Some(&"Ctrl+=".to_string()));
+        // What the file already had is left completely untouched.
+        assert_eq!(settings.keybindings.get("clipboard.copy"), Some(&"Ctrl+Shift+C".to_string()));
+    }
+
+    /// The flip side of the backfill above: an action the user already
+    /// explicitly rebound must never be silently reset back to its default —
+    /// backfill only fills genuine gaps, it never overwrites.
+    #[test]
+    fn load_does_not_overwrite_an_explicitly_rebound_keybinding() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "theme_preset": "dracula",
+                "keybindings": {"pane.moveLeft": "Ctrl+Alt+H"},
+                "sidebar_position": "left"
+            }"#,
+        )
+        .unwrap();
+
+        let settings = load(&path).unwrap();
+
+        assert_eq!(
+            settings.keybindings.get("pane.moveLeft"),
+            Some(&"Ctrl+Alt+H".to_string()),
+            "the user's own rebind must survive backfill unchanged"
+        );
     }
 
     #[test]

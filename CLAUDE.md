@@ -14,7 +14,7 @@ This project uses the skill suite. Contract documents are law; check them before
 | Design system | `docs/design/` (design.md, tokens.css/json, components.md, HANDOFF.md) | all UI values & component specs |
 | Test plan | `docs/qa/test-plan.md` | coverage-vs-risk matrix, test conventions, manual charters (incl. launch-environment charter — see below) |
 | Runbook | `docs/ops/runbook.md` | build, release, rollback, backup/restore, uninstall |
-| Security audits | `docs/security/audit-YYYY-MM-DD.md` | findings & remediation status (latest: `audit-2026-07-20.md`, 3 Medium open) |
+| Security audits | `docs/security/audit-YYYY-MM-DD.md` | findings & remediation status (latest: `audit-2026-07-20.md` v1.5, 0 open findings — 3 original Medium items fixed-verified, remainder accepted/signed-off) |
 
 ### Not applicable here (with reasons)
 - ➖ **DB schema doc** — storage is a single encrypted local file (ADR-0004), not a relational database.

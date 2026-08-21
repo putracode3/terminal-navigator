@@ -287,6 +287,129 @@ describe("TerminalArea — FR-13 keyboard pane split/move-focus (architecture.md
 	});
 });
 
+describe("TerminalArea — pane.move{Left,Right,Up,Down}: keyboard equivalent to drag-to-move (components.md v3.1's accessibility follow-up, PRD FR-08 v1.17)", () => {
+	function altShiftArrow(code: string, target: Window | Element = window) {
+		return fireEvent.keyDown(target, { altKey: true, shiftKey: true, code });
+	}
+
+	it("Alt+Shift+ArrowLeft/Right relocate the focused pane itself, not just its focus, in a row split", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		await flush();
+		expect(terminalStore.tabs[0].focusedPaneId).toBe(idB); // splitPane focuses the new pane
+
+		await altShiftArrow("ArrowLeft");
+		await flush();
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(refreshed.focusedPaneId).toBe(idB); // still the same pane — relocated, not refocused
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "row" });
+		if (refreshed.root.type === "split") {
+			// B moved to A's left — the opposite order from how splitPane laid them out.
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([idB, idA]);
+		}
+	});
+
+	it("Alt+Shift+ArrowUp/Down relocate the focused pane in a column split", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "column", "/b");
+		await flush();
+		expect(terminalStore.tabs[0].focusedPaneId).toBe(idB);
+
+		await altShiftArrow("ArrowUp");
+		await flush();
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "column" });
+		if (refreshed.root.type === "split") {
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([idB, idA]);
+		}
+	});
+
+	it("does not recreate any pane's xterm.js Terminal when relocated via keyboard (same remount-regression guard as the drag path)", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		await flush();
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		terminalStore.splitPane(tab.id, idA, "row", "/b");
+		await flush();
+		expect(instances).toHaveLength(2);
+		const [instanceA, instanceB] = instances;
+
+		await altShiftArrow("ArrowLeft");
+		await flush();
+
+		expect(instances).toHaveLength(2);
+		expect(instanceA.dispose).not.toHaveBeenCalled();
+		expect(instanceB.dispose).not.toHaveBeenCalled();
+	});
+
+	it("is a no-op at the edge of the grid (no matching neighbor), unlike a mismatched combo which would do nothing anyway", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		await flush(); // single pane — no neighbor in any direction
+
+		await expect(altShiftArrow("ArrowRight")).resolves.not.toThrow();
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(refreshed.root.type).toBe("leaf"); // still just the one pane, unchanged
+	});
+
+	it("does nothing when there is no active tab", async () => {
+		render(TerminalArea);
+
+		await expect(altShiftArrow("ArrowRight")).resolves.not.toThrow();
+	});
+
+	it("regression (B1 bug class): calls stopPropagation on a matched combo, so it can't also reach xterm's own keydown handling", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		terminalStore.splitPane(tab.id, idA, "row", "/b");
+		await flush();
+
+		const event = new KeyboardEvent("keydown", {
+			altKey: true,
+			shiftKey: true,
+			code: "ArrowRight",
+			bubbles: true,
+			cancelable: true,
+		});
+		const stopPropagationSpy = vi.spyOn(event, "stopPropagation");
+		window.dispatchEvent(event);
+		await flush();
+
+		expect(stopPropagationSpy).toHaveBeenCalled();
+	});
+
+	it("rebinding pane.moveLeft to a different combo changes which keys trigger it", async () => {
+		settingsStore.keybindings = { ...settingsStore.keybindings, "pane.moveLeft": "Alt+Shift+H" };
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		await flush();
+		expect(terminalStore.tabs[0].focusedPaneId).toBe(idB);
+
+		await altShiftArrow("ArrowLeft"); // the old default — should no longer relocate
+		await flush();
+		expect(terminalStore.tabs.find((t) => t.id === tab.id)!.root).toMatchObject({
+			type: "split",
+			children: [{ sessionId: idA }, { sessionId: idB }],
+		});
+
+		await fireEvent.keyDown(window, { altKey: true, shiftKey: true, code: "KeyH" }); // the newly-bound combo
+		await flush();
+		expect(terminalStore.tabs.find((t) => t.id === tab.id)!.root).toMatchObject({
+			type: "split",
+			children: [{ sessionId: idB }, { sessionId: idA }],
+		});
+	});
+});
+
 describe("TerminalArea — regression: splitting a tab's only pane used to remount it, losing scrollback (bug report: \"terminal yang satunya jadi tidak bisa scroll\")", () => {
 	it("does not recreate the pre-existing pane's xterm.js Terminal when the tab's single leaf is split", async () => {
 		render(TerminalArea);

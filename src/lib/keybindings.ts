@@ -14,6 +14,10 @@ export type ActionId =
 	| "pane.moveFocusRight"
 	| "pane.moveFocusUp"
 	| "pane.moveFocusDown"
+	| "pane.moveLeft"
+	| "pane.moveRight"
+	| "pane.moveUp"
+	| "pane.moveDown"
 	| "terminal.zoomIn"
 	| "terminal.zoomOut"
 	| "terminal.closeSession"
@@ -27,7 +31,7 @@ export interface KeybindingActionDef {
 	group: "Clipboard" | "Panes" | "Terminal" | "Tabs" | "Sidebar";
 }
 
-/** The 14-action registry (architecture.md §5.6) — order here is the order
+/** The 18-action registry (architecture.md §5.6) — order here is the order
  * rows render in the Settings panel (components.md, Keybinding Row /
  * Settings Panel pattern). */
 export const KEYBINDING_ACTIONS: KeybindingActionDef[] = [
@@ -39,6 +43,15 @@ export const KEYBINDING_ACTIONS: KeybindingActionDef[] = [
 	{ id: "pane.moveFocusRight", label: "Move focus right", group: "Panes" },
 	{ id: "pane.moveFocusUp", label: "Move focus up", group: "Panes" },
 	{ id: "pane.moveFocusDown", label: "Move focus down", group: "Panes" },
+	// Keyboard equivalent to drag-to-move (components.md v3.1's accessibility
+	// follow-up, PRD FR-08 v1.17) — relocates the focused PANE itself, not
+	// just which pane has focus like pane.moveFocus* above. Distinct label
+	// wording ("Move pane ___" vs. "Move focus ___") so the two are never
+	// confused in the Settings list.
+	{ id: "pane.moveLeft", label: "Move pane left", group: "Panes" },
+	{ id: "pane.moveRight", label: "Move pane right", group: "Panes" },
+	{ id: "pane.moveUp", label: "Move pane up", group: "Panes" },
+	{ id: "pane.moveDown", label: "Move pane down", group: "Panes" },
 	{ id: "terminal.zoomIn", label: "Zoom in", group: "Terminal" },
 	{ id: "terminal.zoomOut", label: "Zoom out", group: "Terminal" },
 	{ id: "terminal.closeSession", label: "Close terminal", group: "Terminal" },
@@ -64,6 +77,14 @@ export const DEFAULT_KEYBINDINGS: Record<ActionId, string> = {
 	"pane.moveFocusRight": "Alt+ArrowRight",
 	"pane.moveFocusUp": "Alt+ArrowUp",
 	"pane.moveFocusDown": "Alt+ArrowDown",
+	// Alt+Shift+Arrow pairs with plain Alt+Arrow (pane.moveFocus*) the same
+	// way pane.splitBottom/splitRight's Alt+Shift+D/R already pairs with a
+	// plain-Alt sibling action in this registry — the "stronger" variant of
+	// an existing Alt+<key> binding.
+	"pane.moveLeft": "Alt+Shift+ArrowLeft",
+	"pane.moveRight": "Alt+Shift+ArrowRight",
+	"pane.moveUp": "Alt+Shift+ArrowUp",
+	"pane.moveDown": "Alt+Shift+ArrowDown",
 	"terminal.zoomIn": "Ctrl+=",
 	"terminal.zoomOut": "Ctrl+-",
 	// Closes the *focused pane*, not the whole tab — and the tab goes with it
