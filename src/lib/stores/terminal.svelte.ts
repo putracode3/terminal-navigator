@@ -292,18 +292,23 @@ export function dropZoneToSplit(zone: DropZone): { direction: SplitDirection; pl
 	}
 }
 
-/** A drag currently in progress, sourced from the sidebar (FR-08 v1.4 — the
- *  sidebar is the only drag source now, replacing the removed Tab
- *  component). Two kinds, per components.md's Split Pane Container Behavior:
+/** A drag currently in progress. Sidebar-sourced (FR-08 v1.4 — the sidebar
+ *  is the only drag source there, replacing the removed Tab component), plus
+ *  `move-pane` (v3.1/FR-08 v1.16 — a pane's own header). Per components.md's
+ *  Split Pane Container Behavior:
  *  - `graft`: an existing session (a 1-session `Sidebar Project List Item`
  *    or any `Sidebar Session Sub-item`) is reused verbatim at the drop
  *    target — no new PTY.
  *  - `spawn`: a 0-session `Sidebar Project List Item` has no existing
  *    session to reuse, so a fresh one is spawned directly into the drop
- *    target's pane tree instead. */
+ *    target's pane tree instead.
+ *  - `move-pane`: an already-open pane is being dragged by its own header to
+ *    relocate it within its own tab (Drag to move) — same-tab only, since
+ *    `Split Pane Container` never renders more than the active tab's tree. */
 export type DragSource =
 	| { kind: "graft"; tabId: string }
-	| { kind: "spawn"; projectId: string; projectName: string; cwd: string };
+	| { kind: "spawn"; projectId: string; projectName: string; cwd: string }
+	| { kind: "move-pane"; tabId: string; sessionId: string };
 
 class TerminalStore {
 	tabs = $state<TabState[]>([]);
@@ -480,6 +485,12 @@ class TerminalStore {
 		this.dragSource = { kind: "spawn", projectId, projectName, cwd };
 	}
 
+	/** Drag to move (components.md v3.1, PRD FR-08 v1.16) — the drag source is
+	 *  the pane itself, via its own header, not a sidebar item. */
+	startDraggingPane(tabId: string, sessionId: string) {
+		this.dragSource = { kind: "move-pane", tabId, sessionId };
+	}
+
 	stopDragging() {
 		this.dragSource = null;
 	}
@@ -512,6 +523,37 @@ class TerminalStore {
 			.filter((t) => t.id !== sourceTabId)
 			.map((t) => (t.id === targetTabId ? { ...t, root: graftedRoot, focusedPaneId: newFocusedPaneId } : t));
 		this.activeTabId = targetTabId;
+		this.dragSource = null;
+		return true;
+	}
+
+	/** Drag to move (components.md v3.1, PRD FR-08 v1.16): relocates
+	 *  `sessionId`'s pane within its own tab's tree. Detaches it from its
+	 *  current position — its sibling is promoted to fill the freed space,
+	 *  reusing `removeLeaf`, the exact same collapse `closePane` already
+	 *  performs — then grafts it at `targetSessionId`'s position per `zone`,
+	 *  reusing `insertNode`, the same tree-insert `splitPane`/`graftTab`
+	 *  already use. The leaf (and its session) is reused verbatim; nothing is
+	 *  torn down or respawned. Same-tab only by construction — this is never
+	 *  called across tabs, since `Split Pane Container` only ever renders the
+	 *  active tab's own tree (no cross-tab case exists to guard against
+	 *  here). Returns false (no-op, nothing mutated) for: dropping onto
+	 *  itself, an unknown tab, `sessionId` not found, `sessionId` being the
+	 *  tab's only pane (nothing to detach into — components.md: not a valid
+	 *  drag source in the first place, guarded here too rather than trusting
+	 *  the UI alone), or `targetSessionId` no longer present after detaching. */
+	movePaneWithinTab(tabId: string, sessionId: string, targetSessionId: string, zone: DropZone): boolean {
+		if (sessionId === targetSessionId) return false;
+		const tab = this.tabs.find((t) => t.id === tabId);
+		if (!tab) return false;
+		const movedLeaf = findLeaf(tab.root, sessionId);
+		if (!movedLeaf) return false;
+		const withoutMoved = removeLeaf(tab.root, sessionId);
+		if (!withoutMoved || !findLeaf(withoutMoved, targetSessionId)) return false;
+
+		const { direction, placement } = dropZoneToSplit(zone);
+		const newRoot = insertNode(withoutMoved, targetSessionId, direction, movedLeaf, placement);
+		this.tabs = this.tabs.map((t) => (t.id === tabId ? { ...t, root: newRoot, focusedPaneId: sessionId } : t));
 		this.dragSource = null;
 		return true;
 	}

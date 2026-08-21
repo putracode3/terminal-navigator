@@ -351,6 +351,79 @@ describe("TerminalArea — perpendicular split on an already-split tab reuses th
 	});
 });
 
+// Drag to move (components.md v3.1, PRD FR-08 v1.16): relocating an
+// already-open pane by its own header is a NEW tree-restructuring operation
+// (detach + reinsert), so it risks reopening the exact bug class the two
+// regressions above were fixed for — a leaf's each-block key changing
+// position/nesting without its underlying xterm.js Terminal/PTY subscription
+// surviving. It's protected by the same $lib/terminal-registry mechanism
+// (keyed by sessionId, independent of tree position), but that guarantee is
+// only as good as this test proving it holds for THIS operation too.
+describe("TerminalArea — drag to move a pane (components.md v3.1, PRD FR-08 v1.16)", () => {
+	it("does not recreate any pane's xterm.js Terminal when a pane is moved within its tab (regression-class guard)", async () => {
+		render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		await flush();
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		await flush();
+		expect(instances).toHaveLength(2);
+		const [instanceA, instanceB] = instances;
+
+		terminalStore.movePaneWithinTab(tab.id, idA, idB, "right");
+		await flush();
+
+		expect(instances).toHaveLength(2); // no new Terminal created by the move
+		expect(instanceA.dispose).not.toHaveBeenCalled();
+		expect(instanceB.dispose).not.toHaveBeenCalled();
+
+		// Same double-subscription risk the perpendicular-split regression
+		// above guards against: a remounted (but not torn down) pane must
+		// still have exactly one output/exit listener each, not two.
+		const outputA = listenMock.mock.calls.filter(([name]) => name === `pty://output/${idA}`);
+		const outputB = listenMock.mock.calls.filter(([name]) => name === `pty://output/${idB}`);
+		expect(outputA).toHaveLength(1);
+		expect(outputB).toHaveLength(1);
+	});
+
+	it("end-to-end DOM wiring: dragging a pane's header and dropping it on another pane's body actually calls terminalStore.movePaneWithinTab (TerminalArea's handleDragStartPane/handleDrop)", async () => {
+		const { container } = render(TerminalArea);
+		const tab = terminalStore.openTab("proj-a", "a", "/a");
+		await flush();
+		const idA = (tab.root as { sessionId: string }).sessionId;
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		await flush();
+
+		const leaves = container.querySelectorAll(".leaf");
+		expect(leaves).toHaveLength(2);
+		const sourceHeader = leaves[0].querySelector(".pane-header")!;
+		const targetBody = leaves[1].querySelector(".pane-body")!;
+
+		// dragstart on the SOURCE pane's own header — PaneNodeView's
+		// handlePaneDragStart → onDragStartPane → TerminalArea's
+		// handleDragStartPane → terminalStore.startDraggingPane.
+		const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
+		Object.defineProperty(dragStart, "dataTransfer", { value: { setData: vi.fn(), effectAllowed: "" } });
+		sourceHeader.dispatchEvent(dragStart);
+		expect(terminalStore.dragSource).toEqual({ kind: "move-pane", tabId: tab.id, sessionId: idA });
+
+		// dragover then drop on the TARGET pane's body — PaneNodeView's
+		// handleDragOver/handleDrop → TerminalArea's handleDrop's new
+		// `move-pane` branch → terminalStore.movePaneWithinTab.
+		const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
+		Object.defineProperty(dragOver, "clientX", { value: 10 });
+		Object.defineProperty(dragOver, "clientY", { value: 10 });
+		targetBody.dispatchEvent(dragOver);
+		targetBody.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+		await flush();
+
+		expect(terminalStore.dragSource).toBeNull(); // cleared by a successful move
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(refreshed.focusedPaneId).toBe(idA); // the moved pane gets focus
+		expect(instances).toHaveLength(2); // still no new Terminal, even through the full DOM path
+	});
+});
+
 // FR-13 registry addition (architecture.md §5.6): Ctrl+Shift+W closes the
 // focused pane, and the tab with it only when that was its last pane —
 // mirroring Tilix/Terminator, and reusing the exact path the ✕ affordances

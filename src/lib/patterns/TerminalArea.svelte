@@ -40,6 +40,16 @@
 		terminalStore.resizeSplit(tabId, splitId, sizes);
 	}
 
+	/** Drag to move (components.md v3.1, PRD FR-08 v1.16) — starting a drag
+	 *  from a pane's own header, distinct from the sidebar's drag sources. */
+	function handleDragStartPane(tabId: string, sessionId: string) {
+		terminalStore.startDraggingPane(tabId, sessionId);
+	}
+
+	function handleDragEndPane() {
+		terminalStore.stopDragging();
+	}
+
 	/** components.md pattern "Sidebar drag-to-split". Every open tab's pane
 	 *  tree stays mounted (see the {#each terminalStore.tabs} below — only
 	 *  the active one is visible, the rest are `display:none` so their
@@ -54,6 +64,15 @@
 
 		if (source.kind === "graft") {
 			terminalStore.graftTab(source.tabId, targetTabId, targetSessionId, zone);
+			return;
+		}
+
+		// `move-pane` (v3.1): dragging an already-open pane by its own header
+		// to relocate it — same-tab only (source.tabId is always targetTabId
+		// in practice, since only the active tab's panes are ever visible to
+		// drag onto), reuses the exact session, no IPC call needed.
+		if (source.kind === "move-pane") {
+			terminalStore.movePaneWithinTab(source.tabId, source.sessionId, targetSessionId, zone);
 			return;
 		}
 
@@ -178,6 +197,8 @@
 				onClosePane={(sessionId) => handleClosePane(tab.id, sessionId)}
 				onResizeSplit={(splitId, sizes) => handleResizeSplit(tab.id, splitId, sizes)}
 				onDrop={handleDrop}
+				onDragStartPane={(sessionId) => handleDragStartPane(tab.id, sessionId)}
+				onDragEndPane={handleDragEndPane}
 			/>
 		</div>
 	{/each}

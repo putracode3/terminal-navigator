@@ -13,16 +13,20 @@
 		focusedPaneId,
 		active = true,
 		dragSource,
+		canDragPanes = false,
 		onFocusPane,
 		onSplitPane,
 		onClosePane,
 		onResizeSplit,
 		onDrop,
+		onDragStartPane,
+		onDragEndPane,
 	}: {
 		node: PaneNode;
 		/** The tab this pane tree belongs to — needed only to reject an
-		 *  invalid drop target for a `graft` source (components.md: a tab's
-		 *  tree can't be grafted into itself), not for anything else. */
+		 *  invalid drop target for a `graft`/`move-pane` source (components.md:
+		 *  a tab's tree can't be grafted into itself; a pane-move drop is
+		 *  same-tab only), not for anything else. */
 		tabId: string;
 		focusedPaneId: string;
 		/** Whether `tabId` is the tab currently shown in the terminal area —
@@ -34,11 +38,23 @@
 		 *  terminalStore.dragSource. Threaded as a prop (not read from the
 		 *  store directly) to keep this component prop-driven/testable. */
 		dragSource: DragSource | null;
+		/** Whether this tab has 2+ panes, i.e. whether any of its own panes
+		 *  has a valid same-tab drop target to relocate onto (components.md
+		 *  v3.1: a pane alone in its tab is not a drag source at all).
+		 *  Computed once, at the tab root, from `paneCount(root) > 1` — not
+		 *  per-subtree, since every leaf's drag-source eligibility depends on
+		 *  the whole tab's pane count, not just its own local subtree. */
+		canDragPanes?: boolean;
 		onFocusPane: (sessionId: string) => void;
 		onSplitPane: (sessionId: string, direction: SplitDirection) => void;
 		onClosePane: (sessionId: string) => void;
 		onResizeSplit: (splitId: string, sizes: number[]) => void;
 		onDrop: (targetSessionId: string, zone: DropZone) => void;
+		/** Drag to move (v3.1) — fired when a pane's own header starts a
+		 *  drag, so the caller can set `terminalStore.dragSource` to a
+		 *  `move-pane` source. */
+		onDragStartPane: (sessionId: string) => void;
+		onDragEndPane: () => void;
 	} = $props();
 
 	let containerEl: HTMLDivElement | undefined = $state();
@@ -86,18 +102,23 @@
 	/** `graft` sources are invalid over their own tab's panes (a tree can't
 	 *  be grafted into itself); `spawn` sources have no "self" to collide
 	 *  with, so every pane is a valid target for them (components.md's
-	 *  Drop zones table). */
-	function isValidDropTarget(): boolean {
+	 *  Drop zones table). `move-pane` sources (v3.1) are same-tab only and
+	 *  invalid over the exact pane being dragged (a pane can't be dropped
+	 *  onto itself) — this is the one case that needs the hovered leaf's own
+	 *  sessionId, not just the tab id. */
+	function isValidDropTarget(sessionId: string): boolean {
 		if (!dragSource) return false;
-		return dragSource.kind === "spawn" || dragSource.tabId !== tabId;
+		if (dragSource.kind === "spawn") return true;
+		if (dragSource.kind === "graft") return dragSource.tabId !== tabId;
+		return dragSource.tabId === tabId && dragSource.sessionId !== sessionId;
 	}
 
 	function handleDragOver(e: DragEvent, sessionId: string) {
 		// No preventDefault() → browser shows its native "not-allowed" cursor
 		// and disallows the drop, satisfying the invalid-target spec with zero
-		// extra styling (no drag in progress, or hovering the dragged tab's
-		// own pane).
-		if (!isValidDropTarget()) return;
+		// extra styling (no drag in progress, hovering the dragged tab's own
+		// pane, or — v3.1 — hovering the exact pane being dragged).
+		if (!isValidDropTarget(sessionId)) return;
 		e.preventDefault();
 		if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -110,10 +131,26 @@
 
 	function handleDrop(e: DragEvent, sessionId: string) {
 		e.preventDefault();
-		if (dropZone && dropZone.sessionId === sessionId && isValidDropTarget()) {
+		if (dropZone && dropZone.sessionId === sessionId && isValidDropTarget(sessionId)) {
 			onDrop(sessionId, dropZone.zone);
 		}
 		dropZone = null;
+	}
+
+	/** Drag to move (components.md v3.1) — the pane header itself is the drag
+	 *  source, distinct from the sidebar-sourced drags above. Firefox refuses
+	 *  to start a drag unless setData() is called at least once — same
+	 *  requirement the sidebar's own drag sources already follow
+	 *  (SidebarSessionSubItem.svelte); the actual payload is
+	 *  terminalStore.dragSource (set by onDragStartPane), not this. */
+	function handlePaneDragStart(e: DragEvent, sessionId: string) {
+		e.dataTransfer?.setData("text/plain", sessionId);
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+		onDragStartPane(sessionId);
+	}
+
+	function handlePaneDragEnd() {
+		onDragEndPane();
 	}
 
 	function startDrag(splitNode: Extract<PaneNode, { type: "split" }>, index: number, e: PointerEvent) {
@@ -177,10 +214,25 @@
 	{#each items as child, i (child.type === "leaf" ? child.sessionId : child.id)}
 		<div class="split-child" style:flex="{sizes[i]} 1 0%">
 			{#if child.type === "leaf"}
-				<div class="leaf">
-					<div class="pane-header">
+				<div
+					class="leaf"
+					class:dragging={dragSource?.kind === "move-pane" && dragSource.sessionId === child.sessionId}
+				>
+					<!-- svelte-ignore a11y_no_static_element_interactions -- drag-to-move (components.md v3.1) has no keyboard equivalent yet (flagged ⚠️ TBD there, tracked not silently dropped); `role="group"` here is accurate (this groups the pane's title, not a single click action) rather than `role="button"`, which would falsely imply Enter/Space activates something. -->
+					<div
+						class="pane-header"
+						role="group"
+						draggable={canDragPanes}
+						ondragstart={(e) => handlePaneDragStart(e, child.sessionId)}
+						ondragend={handlePaneDragEnd}
+					>
 						<PaneTitle cwd={child.cwd} focused={child.sessionId === focusedPaneId} />
-						<button class="pane-close" aria-label="Close pane" onclick={() => onClosePane(child.sessionId)}>✕</button>
+						<button
+							class="pane-close"
+							draggable="false"
+							aria-label="Close pane"
+							onclick={() => onClosePane(child.sessionId)}
+						>✕</button>
 					</div>
 					<div
 						class="pane-body"
@@ -222,9 +274,12 @@
 					{focusedPaneId}
 					{active}
 					{dragSource}
+					{canDragPanes}
 					{onFocusPane}
 					{onSplitPane}
 					{onClosePane}
+					{onDragStartPane}
+					{onDragEndPane}
 					{onResizeSplit}
 					{onDrop}
 				/>
@@ -253,6 +308,13 @@
 		flex-direction: column;
 	}
 
+	/* Drag to move (components.md v3.1): opacity 0.4 on the whole pane while
+	   it's the one being dragged — same treatment Sidebar Session Sub-item's
+	   own `dragging` state already uses, reused rather than invented fresh. */
+	.leaf.dragging {
+		opacity: 0.4;
+	}
+
 	.pane-header {
 		flex-shrink: 0;
 		display: flex;
@@ -262,6 +324,17 @@
 		padding: 0 var(--space-2);
 		background: var(--color-surface);
 		border-bottom: var(--border-width-sm) solid var(--color-border);
+	}
+
+	/* Drag handle (v3.1) — only when the tab has 2+ panes (canDragPanes); a
+	   pane alone in its tab has no valid same-tab drop target and stays
+	   non-draggable, with the default (non-grab) cursor. */
+	.pane-header[draggable="true"] {
+		cursor: grab;
+	}
+
+	.leaf.dragging .pane-header[draggable="true"] {
+		cursor: grabbing;
 	}
 
 	.pane-close {

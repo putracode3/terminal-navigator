@@ -394,8 +394,8 @@ Both variants render **identical content** for the same target and share every s
 1. Grid container
 2. Pane(s) — each wraps exactly one terminal instance (rendered by the `xterm.js` component, out of design-system scope beyond its container)
 3. Divider(s) — draggable resize handles between sibling panes
-4. Pane header — **always present** (changed in v1.4; used to appear only when 2+ panes existed). Shows the pane's working directory (mono, truncated) and a small close-pane button. This is now the *only* remaining "which project/session am I looking at" indicator anywhere in the app, since there is no tab bar to show a label — see Do/Don't.
-5. Drop-zone overlay (transient — only exists while a sidebar row or session sub-item is being dragged over a pane, see Behavior — Drag to split)
+4. Pane header — **always present** (changed in v1.4; used to appear only when 2+ panes existed). Shows the pane's working directory (mono, truncated) and a small close-pane button. This is now the *only* remaining "which project/session am I looking at" indicator anywhere in the app, since there is no tab bar to show a label — see Do/Don't. **v3.1:** also the drag handle for relocating the pane itself within its tab (see Behavior — Drag to move), whenever the tab has 2+ panes — carved out from the close-pane button, which keeps its own click behavior.
+5. Drop-zone overlay (transient — only exists while a sidebar row/session sub-item, or another pane's own header, is being dragged over a pane — see Behavior — Drag to split / Drag to move)
 
 ### Variants
 | Variant | When to use |
@@ -414,11 +414,15 @@ N/A — panes fill available space; minimum pane size is `--pane-min-width` × `
 | divider default | 1px `--color-border`, invisible extra hit area `--pane-divider-hit-area` for easier grabbing |
 | divider hover | divider color `--color-border-strong`; cursor becomes resize (row/col-resize per orientation) |
 | divider dragging | divider color `--color-primary` while actively dragged |
-| drop-zone active (a sidebar row/sub-item is being dragged over this pane) | see the dedicated drop-zone table below |
+| drop-zone active (a sidebar row/sub-item, or another pane, is being dragged over this pane) | see the dedicated drop-zone table below |
+| pane header, draggable (v3.1 — its tab has 2+ panes) | cursor `grab` on hover over the header, outside the close-pane button |
+| pane being dragged via its own header (v3.1) | opacity 0.4 on the whole pane while the drag is in progress — same treatment `Sidebar Session Sub-item`'s `dragging` state already uses, reused rather than invented fresh |
 
 ### Drop zones (drag-to-split targeting)
 
 While a sidebar item (a `Sidebar Project List Item` in its 0/1-session mode, or a `Sidebar Session Sub-item`) is being dragged over a pane, that pane is divided by its two diagonals into **four triangular zones** — top, right, bottom, left — with no separate "center" zone. This is a deliberate simplification, not an oversight: this app has no per-pane tab strip for a center-drop ("add as a tab in this group," VS Code's convention) to mean anything — the sidebar itself is the only tab strip there is. Covering the whole pane with exactly four directional zones removes the ambiguous case by construction instead of specifying a dead zone.
+
+**v3.1 — pane-to-pane drag reuses this exact same targeting.** When the drag source is another pane's own header instead of a sidebar item, the same four zones, same overlay treatment, and same directional mapping apply verbatim — see Behavior — Drag to move for what happens on drop (a relocation) instead of what's spawned/grafted.
 
 | Zone | Trigger region | Visual feedback | Result on drop |
 |---|---|---|---|
@@ -427,12 +431,14 @@ While a sidebar item (a `Sidebar Project List Item` in its 0/1-session mode, or 
 | Left | Left triangle | Overlay covers the left half, same treatment | Pane splits `row`; the dragged session becomes the new left sibling |
 | Right | Right triangle | Overlay covers the right half, same treatment | Pane splits `row`; the dragged session becomes the new right sibling |
 | Invalid target (hovering a pane that belongs to the exact tab being dragged) | — | No overlay appears at all; cursor shows the platform's "not-allowed" affordance | Drop is rejected; the sidebar item returns to its normal state. Only applies when the drag source already has a live session (0-session sources have no "self" to collide with — every pane is a valid target for them) |
+| Invalid target — dragging a pane onto itself (v3.1) | any zone of the pane currently being dragged | No overlay appears at all; cursor shows the platform's "not-allowed" affordance | Drop is rejected; the pane returns to its normal state. Only relevant to pane-sourced drags — a sidebar item never collides with itself this way |
 
 The overlay's highlighted half previews the *resulting* pane's approximate bounds (half of the target pane), not the whole tab area — this stays accurate for a fresh split; when the drop lands on a pane that's already part of a same-direction split (auto-flatten, per `terminal.svelte.ts`'s `splitPane`), the preview still communicates "roughly here," which is sufficient given the actual final share is visible immediately after drop.
 
 ### Behavior
 - Splitting a pane (via toolbar button, shortcut, or drag-to-split) divides it along the chosen axis; each resulting pane spawns its own independent PTY session — **except** drag-to-split from a source that already had a live session (a `Sidebar Project List Item` with 1 open session, or any `Sidebar Session Sub-item`), which reuses that exact session verbatim (nothing reconnects or flickers). Dragging a `Sidebar Project List Item` with **0** open sessions is the one case where drag-to-split *does* spawn a fresh session directly into the new pane — there's nothing existing to reuse (FR-08 v1.4).
 - **Drag to split**: dropping a dragged sidebar item on a pane grafts (or spawns, per above) the session into the target tab's tree at the drop position (see the drop-zone table above for which edge maps to which split direction). If the source was a `Sidebar Project List Item` with exactly 1 session, that project's row updates to reflect it's now `active` wherever the graft landed. If the source was a `Sidebar Session Sub-item`, only that one sub-item's session moves — its siblings are unaffected. Dropping outside any pane is a no-op — no confirmation needed since nothing changed.
+- **Drag to move (v3.1):** dragging a pane's own header (not a sidebar item) onto another pane relocates it. The dragged pane detaches from its current position in the tree — its sibling is promoted to fill the freed space, identical to the collapse that already happens when that pane is closed (see below) — then grafts at the drop position per the same directional zone mapping `Drag to split` uses. The exact PTY session moves with it; nothing reconnects or respawns, same guarantee sidebar-sourced drags with a live session already make. Because `Split Pane Container` only ever renders the active tab's own pane tree, this is inherently confined to panes within that one tab — there is no cross-tab case to define, unlike sidebar-sourced drags (which can already target any pane in the active tab regardless of which tab the dragged *session* itself belongs to). A pane that is the sole pane in its tab (the `single` variant) has no other same-tab pane to drop onto and is therefore not a drag source at all — same "no drag source with zero possible outcomes" rule `Sidebar Project List Item` already applies to its `grouped` mode. Dropping outside any pane, or back onto the position it started from, is a no-op.
 - Dragging a divider resizes its two adjacent panes proportionally; other panes in the grid are unaffected.
 - Closing a pane with a live foreground process shows a confirmation before closing (PRD FR-08 edge case, exact confirmation copy is a `⚠️ TBD` in the PRD — use the Modal spec until that copy is finalized). If it's the tab's last remaining pane, closing it closes the tab itself, same as using Menu's "Close terminal" or a `Sidebar Session Sub-item`'s close button.
 - Only one pane can be "focused" at a time; clicking anywhere in a pane (including its terminal content) focuses it.
@@ -441,13 +447,17 @@ The overlay's highlighted half previews the *resulting* pane's approximate bound
 - Pane focus state must be visually unambiguous even for a user glancing quickly — this is a UI component conveying essential information (which pane receives keystrokes), so its 3:1 non-text contrast requirement is verified in design.md §7.
 - Dividers are keyboard-operable: focus a divider (`Tab`), resize with `Arrow` keys in fixed increments.
 - Drag-to-split has no keyboard equivalent — acceptable only because every outcome it can produce is also reachable via the toolbar split buttons (for splitting) or Menu/`Sidebar Session Sub-item` actions (for opening/switching/closing), which remain the accessible path.
+- ⚠️ TBD (v3.1): drag-to-move has no keyboard equivalent, and — unlike drag-to-split above — no existing action already reaches its outcome either: `pane.moveFocus*` (Alt+Arrow, architecture.md) only changes which pane holds keyboard focus, never its position in the tree. Needs a non-drag equivalent (e.g. new `pane.moveRight`/`moveLeft`/`moveUp`/`moveDown` keybindings in the same `layout_manager` registry, swapping the focused pane's tree position the way this drag does) before this ships — flagged the same way `Sidebar Folder`'s drag-only outcomes are, resolved during backend-implementer/design-implementer's pass, not silently dropped.
 
 ### Do / Don't
 - ✅ Do: always show which pane is focused, even with only one pane in the tab (subtle is fine, but never absent) — consistency prevents the user from having to "hunt" for focus when they do split later.
 - ✅ Do: always render the pane header (v1.4) — it is load-bearing now, not decorative; without a tab bar, it's the only place a project/path is visible once you're looking at the terminal area.
+- ✅ Do (v3.1): reuse the exact same 4-zone drop overlay and "not-allowed" invalid-target treatment for pane-sourced drags as sidebar-sourced ones — one drop-zone vocabulary for the whole component, not a second invented for the new source type.
 - ❌ Don't: let a pane shrink below its minimum size via drag — clamp the drag instead of allowing a pane to become unusably small.
 - ❌ Don't: show a drop-zone overlay when the hovered pane belongs to the exact tab currently being dragged — that operation is invalid (a tree can't be grafted into itself) and must look unavailable, not just fail silently on drop.
 - ❌ Don't: invent a fifth "center = move without splitting" zone — that reintroduces the per-pane-tab-strip concept this app doesn't have. If that capability is ever wanted, it's a new pattern to design deliberately, not a corner case to bolt on here.
+- ❌ Don't (v3.1): let a single-pane tab's lone pane initiate a drag — it has no valid same-tab target, and a drag affordance with zero possible outcomes is worse than none (same rule `Sidebar Project List Item`'s `grouped` mode already follows).
+- ❌ Don't (v3.1): let the pane-header drag handle swallow clicks meant for the close-pane button — carve it out of the draggable region exactly as sidebar rows already carve out their trailing controls.
 
 ---
 

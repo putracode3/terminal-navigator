@@ -1,6 +1,6 @@
 <script lang="ts">
 	import PaneNodeView from "./PaneNodeView.svelte";
-	import type { PaneNode, SplitDirection, DropZone, DragSource } from "$lib/stores/terminal.svelte";
+	import { paneCount, type PaneNode, type SplitDirection, type DropZone, type DragSource } from "$lib/stores/terminal.svelte";
 
 	// Renders the "single" variant when `root` is a leaf (no dividers, pane
 	// header always shown — components.md v1.4) and the "split" variant
@@ -16,6 +16,8 @@
 		onClosePane,
 		onResizeSplit,
 		onDrop,
+		onDragStartPane,
+		onDragEndPane,
 	}: {
 		tabId: string;
 		root: PaneNode;
@@ -31,7 +33,15 @@
 		onClosePane: (sessionId: string) => void;
 		onResizeSplit: (splitId: string, sizes: number[]) => void;
 		onDrop: (targetSessionId: string, zone: DropZone) => void;
+		/** Drag to move (v3.1) — see PaneNodeView's own prop docs. */
+		onDragStartPane: (sessionId: string) => void;
+		onDragEndPane: () => void;
 	} = $props();
+
+	// components.md v3.1: a pane alone in its tab has no other same-tab pane
+	// to drop onto, so it isn't a drag source at all — computed once here, at
+	// the tab root, not per-subtree (see PaneNodeView's own doc on why).
+	const canDragPanes = $derived(paneCount(root) > 1);
 </script>
 
 <div class="grid">
@@ -41,11 +51,14 @@
 		{focusedPaneId}
 		{active}
 		{dragSource}
+		{canDragPanes}
 		{onFocusPane}
 		{onSplitPane}
 		{onClosePane}
 		{onResizeSplit}
 		{onDrop}
+		{onDragStartPane}
+		{onDragEndPane}
 	/>
 </div>
 

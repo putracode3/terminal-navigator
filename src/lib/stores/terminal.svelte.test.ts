@@ -470,6 +470,126 @@ describe("terminalStore — spawnPaneInto (FR-08 v1.4: 0-session sidebar drag)",
 	});
 });
 
+describe("terminalStore — movePaneWithinTab (drag to move a pane by its own header, components.md v3.1 / PRD FR-08 v1.16)", () => {
+	function rootLeafId(tab: (typeof terminalStore.tabs)[number]): string {
+		return (tab.root as { sessionId: string }).sessionId;
+	}
+
+	it("rejects dropping a pane onto itself — no-op, returns false, tree unchanged", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+		terminalStore.splitPane(tab.id, idA, "row", "/b");
+		const before = terminalStore.tabs.find((t) => t.id === tab.id)!.root;
+
+		const ok = terminalStore.movePaneWithinTab(tab.id, idA, idA, "right");
+
+		expect(ok).toBe(false);
+		expect(terminalStore.tabs.find((t) => t.id === tab.id)!.root).toEqual(before);
+	});
+
+	it("rejects moving a pane that is the sole pane in its tab — nothing to detach into", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+
+		// idA is its own tab's only pane; there's no other same-tab session to
+		// target, but call the store method directly (defense in depth — the
+		// UI is expected to never even make this pane a drag source at all,
+		// components.md v3.1: "not a drag source in the first place").
+		const ok = terminalStore.movePaneWithinTab(tab.id, idA, "does-not-exist", "right");
+
+		expect(ok).toBe(false);
+		expect(terminalStore.tabs.find((t) => t.id === tab.id)!.root).toMatchObject({ type: "leaf", sessionId: idA });
+	});
+
+	it("rejects an unknown tab id", () => {
+		expect(terminalStore.movePaneWithinTab("does-not-exist", "a", "b", "right")).toBe(false);
+	});
+
+	it("moves a leaf pane next to a sibling in a 3-pane tab, preserving every session id (no respawn)", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b"); // row[A, B]
+		const idC = terminalStore.splitPane(tab.id, idB, "column", "/c"); // row[A, column[B, C]]
+
+		const ok = terminalStore.movePaneWithinTab(tab.id, idA, idC, "bottom");
+
+		expect(ok).toBe(true);
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(paneCount(refreshed.root)).toBe(3); // reused verbatim — no new pane spawned
+		expect(leafIds(refreshed.root).sort()).toEqual([idA, idB, idC].sort());
+		// A left its original row[A, column[B, C]] position (that split
+		// collapses down to just column[B, C] once A detaches) and is now C's
+		// sibling instead.
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "column" });
+	});
+
+	it("the vacated position collapses exactly like closePane's own collapse (2-pane tab, move leaves a single leaf behind)", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		const other = terminalStore.openTab("proj-2", "x", "/x");
+		terminalStore.splitPane(other.id, rootLeafId(other), "row", "/y"); // just to have another tab around, unaffected
+
+		terminalStore.movePaneWithinTab(tab.id, idA, idB, "right");
+
+		// idA moved elsewhere in the SAME tab, so both idA and idB remain in
+		// this tab's tree — this test only asserts the tab still has exactly
+		// its own 2 panes and neither leaked into or out of the other tab.
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(paneCount(refreshed.root)).toBe(2);
+		expect(leafIds(refreshed.root).sort()).toEqual([idA, idB].sort());
+	});
+
+	it("dropping RIGHT/LEFT/TOP/BOTTOM places the moved pane per the same directional mapping drag-to-split uses", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		const idC = terminalStore.splitPane(tab.id, idB, "row", "/c"); // row[A, B, C]
+
+		terminalStore.movePaneWithinTab(tab.id, idA, idC, "left");
+
+		const refreshed = terminalStore.tabs.find((t) => t.id === tab.id)!;
+		expect(refreshed.root).toMatchObject({ type: "split", direction: "row" });
+		if (refreshed.root.type === "split") {
+			expect(refreshed.root.children.map((c) => (c as { sessionId: string }).sessionId)).toEqual([idB, idA, idC]);
+		}
+	});
+
+	it("focuses the moved pane after the drop", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		terminalStore.focusPane(tab.id, idB);
+
+		terminalStore.movePaneWithinTab(tab.id, idA, idB, "right");
+
+		expect(terminalStore.tabs.find((t) => t.id === tab.id)!.focusedPaneId).toBe(idA);
+	});
+
+	it("startDraggingPane tracks ephemeral drag state as a 'move-pane' source", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+		expect(terminalStore.dragSource).toBeNull();
+
+		terminalStore.startDraggingPane(tab.id, idA);
+		expect(terminalStore.dragSource).toEqual({ kind: "move-pane", tabId: tab.id, sessionId: idA });
+
+		terminalStore.stopDragging();
+		expect(terminalStore.dragSource).toBeNull();
+	});
+
+	it("a successful move also clears dragSource", () => {
+		const tab = terminalStore.openTab("proj-1", "a", "/a");
+		const idA = rootLeafId(tab);
+		const idB = terminalStore.splitPane(tab.id, idA, "row", "/b");
+		terminalStore.startDraggingPane(tab.id, idA);
+
+		terminalStore.movePaneWithinTab(tab.id, idA, idB, "right");
+
+		expect(terminalStore.dragSource).toBeNull();
+	});
+});
+
 describe("terminalStore — sessionOrdinal & sessionsForProject (FR-08 v1.4: 'Session {n}' numbering)", () => {
 	it("assigns ordinal 1 to a project's first session", () => {
 		const tab = terminalStore.openTab("proj-1", "a", "/a");

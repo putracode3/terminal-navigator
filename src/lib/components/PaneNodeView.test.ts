@@ -53,11 +53,14 @@ function baseProps(overrides: Partial<Record<string, unknown>> = {}) {
 		tabId: "tab-1",
 		focusedPaneId: "pane-1",
 		dragSource: null as DragSource | null,
+		canDragPanes: false,
 		onFocusPane: vi.fn(),
 		onSplitPane: vi.fn(),
 		onClosePane: vi.fn(),
 		onResizeSplit: vi.fn(),
 		onDrop: vi.fn(),
+		onDragStartPane: vi.fn(),
+		onDragEndPane: vi.fn(),
 		...overrides,
 	};
 }
@@ -190,5 +193,112 @@ describe("PaneNodeView — drag-to-split target validity (components.md, Split P
 		paneBody.dispatchEvent(event);
 
 		expect(event.defaultPrevented).toBe(true);
+	});
+});
+
+describe("PaneNodeView — drag to move (components.md v3.1, PRD FR-08 v1.16)", () => {
+	it("pane header is draggable only when canDragPanes is true (a pane alone in its tab has no valid same-tab target)", () => {
+		const { container: single } = render(PaneNodeView, baseProps({ canDragPanes: false }));
+		expect(single.querySelector(".pane-header")).toHaveAttribute("draggable", "false");
+
+		const { container: multi } = render(PaneNodeView, baseProps({ canDragPanes: true }));
+		expect(multi.querySelector(".pane-header")).toHaveAttribute("draggable", "true");
+	});
+
+	it("the close-pane button is carved out of the draggable region (draggable=false), even when the header itself is draggable", () => {
+		const { getByRole } = render(PaneNodeView, baseProps({ canDragPanes: true }));
+		expect(getByRole("button", { name: "Close pane" })).toHaveAttribute("draggable", "false");
+	});
+
+	it("dragging the header calls onDragStartPane with the leaf's sessionId, and onDragEndPane on dragend", () => {
+		const onDragStartPane = vi.fn();
+		const onDragEndPane = vi.fn();
+		const { container } = render(
+			PaneNodeView,
+			baseProps({ node: leaf("pane-1"), canDragPanes: true, onDragStartPane, onDragEndPane }),
+		);
+		const header = container.querySelector(".pane-header")!;
+
+		const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
+		Object.defineProperty(dragStart, "dataTransfer", { value: { setData: vi.fn(), effectAllowed: "" } });
+		header.dispatchEvent(dragStart);
+		expect(onDragStartPane).toHaveBeenCalledWith("pane-1");
+
+		header.dispatchEvent(new Event("dragend", { bubbles: true }));
+		expect(onDragEndPane).toHaveBeenCalled();
+	});
+
+	it("rejects a 'move-pane' drag source from a different tab (same-tab only)", () => {
+		const { container } = render(
+			PaneNodeView,
+			baseProps({ tabId: "tab-1", dragSource: { kind: "move-pane", tabId: "tab-2", sessionId: "other-pane" } }),
+		);
+		const paneBody = container.querySelector(".pane-body")!;
+		const event = new Event("dragover", { bubbles: true, cancelable: true });
+		Object.defineProperty(event, "clientX", { value: 50 });
+		Object.defineProperty(event, "clientY", { value: 50 });
+		paneBody.dispatchEvent(event);
+
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it("rejects a 'move-pane' drag source hovering the exact pane being dragged (can't drop onto itself)", () => {
+		const { container } = render(
+			PaneNodeView,
+			baseProps({
+				node: leaf("pane-1"),
+				tabId: "tab-1",
+				dragSource: { kind: "move-pane", tabId: "tab-1", sessionId: "pane-1" },
+			}),
+		);
+		const paneBody = container.querySelector(".pane-body")!;
+		const event = new Event("dragover", { bubbles: true, cancelable: true });
+		Object.defineProperty(event, "clientX", { value: 50 });
+		Object.defineProperty(event, "clientY", { value: 50 });
+		paneBody.dispatchEvent(event);
+
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it("accepts a 'move-pane' drag source from the same tab, hovering a different pane", () => {
+		const { container } = render(
+			PaneNodeView,
+			baseProps({
+				node: leaf("pane-2"),
+				tabId: "tab-1",
+				dragSource: { kind: "move-pane", tabId: "tab-1", sessionId: "pane-1" },
+			}),
+		);
+		const paneBody = container.querySelector(".pane-body")!;
+		const event = new Event("dragover", { bubbles: true, cancelable: true });
+		Object.defineProperty(event, "clientX", { value: 50 });
+		Object.defineProperty(event, "clientY", { value: 50 });
+		paneBody.dispatchEvent(event);
+
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("dims the pane being dragged (opacity via .dragging class) — same treatment as Sidebar Session Sub-item's dragging state", () => {
+		const { container } = render(
+			PaneNodeView,
+			baseProps({
+				node: leaf("pane-1"),
+				tabId: "tab-1",
+				dragSource: { kind: "move-pane", tabId: "tab-1", sessionId: "pane-1" },
+			}),
+		);
+		expect(container.querySelector(".leaf")).toHaveClass("dragging");
+	});
+
+	it("does not dim a pane that is not the one being dragged", () => {
+		const { container } = render(
+			PaneNodeView,
+			baseProps({
+				node: leaf("pane-2"),
+				tabId: "tab-1",
+				dragSource: { kind: "move-pane", tabId: "tab-1", sessionId: "pane-1" },
+			}),
+		);
+		expect(container.querySelector(".leaf")).not.toHaveClass("dragging");
 	});
 });
