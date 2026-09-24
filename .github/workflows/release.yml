@@ -4,26 +4,33 @@ name: Release
 # Flow: pre-flight gate (same 3 commands as docs/ops/runbook.md §2) must pass
 # before any platform build starts; then Linux/macOS/Windows installers are
 # built and attached to a draft GitHub Release for manual publish.
+# Actions are pinned to full commit SHAs (the trailing comment is the tag/branch
+# each was resolved from); bump them deliberately, re-resolving with
+# `git ls-remote https://github.com/<owner>/<repo> <ref>`.
 on:
   push:
     tags:
       - "v*.*.*"
 
+# Least privilege (security audit 2026-09-24, L10): the workflow-wide token is
+# read-only; only the job that creates the draft Release gets write access.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   pre-flight:
     name: Pre-flight gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
 
       - name: Install Linux system dependencies
         run: |
@@ -46,6 +53,8 @@ jobs:
   build-and-release:
     name: Build (${{ matrix.platform }})
     needs: pre-flight
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -55,13 +64,15 @@ jobs:
           - platform: windows-latest
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-latest'
@@ -72,7 +83,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

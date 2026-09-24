@@ -468,8 +468,12 @@ pub fn path_exists(path: String) -> bool {
 /// The current git branch (or a detached-HEAD short hash) for `path`, shown
 /// after the cwd in a pane's title (FR-17). `None` — not an error — when
 /// `path` isn't inside a git repository. Read-only, same minimal-surface
-/// shape as `path_exists`.
-#[tauri::command]
+/// shape as `path_exists`. `async` on purpose (security audit 2026-09-24, L8):
+/// a plain `pub fn` command runs on the main thread, and this touches the
+/// filesystem of directories that may not be trustworthy — it must never be
+/// able to stall the UI (the read itself is also type- and size-bounded, see
+/// `git_status`).
+#[tauri::command(async)]
 pub fn get_git_branch(path: String) -> Option<String> {
     crate::git_status::current_branch(std::path::Path::new(&path))
 }
