@@ -85,6 +85,13 @@ pub enum ProjectStoreError {
     NotFound(Uuid),
     #[error("cannot merge or move an entry with/into itself")]
     SelfMerge,
+    /// FR-01 (amended): the "Home" entry is the sidebar's permanent default
+    /// and can never be deleted — matched by name, the same lookup FR-01's
+    /// launch auto-open already uses to find it, since there's no separate
+    /// identity field on `Project` to flag it with instead. Renaming it away
+    /// from "Home" first makes it an ordinary, deletable entry.
+    #[error("the \"Home\" entry can't be deleted — it's the sidebar's default")]
+    ProtectedEntry,
     #[error(transparent)]
     Crypto(#[from] CryptoError),
     #[error("failed to read/write data file")]
@@ -107,6 +114,9 @@ pub struct ProjectStore {
     data_file: PathBuf,
 }
 
+/// The seeded default entry's name — see `ProjectStoreError::ProtectedEntry`.
+const HOME_ENTRY_NAME: &str = "Home";
+
 impl ProjectStore {
     /// Loads the store at `data_file`. If it doesn't exist yet, initializes
     /// a fresh store there instead (first run) — no password is ever asked
@@ -123,7 +133,7 @@ impl ProjectStore {
                 let now = Utc::now();
                 vec![SidebarEntry::Project(Project {
                     id: Uuid::new_v4(),
-                    name: "Home".to_string(),
+                    name: HOME_ENTRY_NAME.to_string(),
                     path,
                     setup_commands: Vec::new(),
                     notes: String::new(),
@@ -292,8 +302,13 @@ impl ProjectStore {
 
     /// Deletes a project wherever it lives (top-level or inside a folder),
     /// auto-pruning an emptied folder as a side effect of `remove_project_by_id`
-    /// (FR-11's "deleting a folder's last member" edge case).
+    /// (FR-11's "deleting a folder's last member" edge case). Rejects the
+    /// "Home" entry outright (FR-01) — checked before any removal happens, so
+    /// a rejected delete never touches `entries` or persists anything.
     pub fn delete(&mut self, id: Uuid) -> Result<(), ProjectStoreError> {
+        if self.find_project(id).is_some_and(|p| p.name == HOME_ENTRY_NAME) {
+            return Err(ProjectStoreError::ProtectedEntry);
+        }
         self.remove_project_by_id(id).ok_or(ProjectStoreError::NotFound(id))?;
         self.persist()?;
         Ok(())
@@ -847,6 +862,65 @@ mod tests {
         let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
         let result = store.delete(Uuid::new_v4());
         assert!(matches!(result, Err(ProjectStoreError::NotFound(_))));
+    }
+
+    #[test]
+    fn delete_rejects_the_seeded_home_entry() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), Some(home)).unwrap();
+        let seeded = project_at(&store, 0).id;
+
+        let result = store.delete(seeded);
+
+        assert!(matches!(result, Err(ProjectStoreError::ProtectedEntry)));
+        assert_eq!(store.entries().len(), 1, "a rejected delete must leave the entry in place");
+    }
+
+    #[test]
+    fn delete_rejects_a_user_created_entry_also_named_home() {
+        // The guard matches by name (FR-01's existing lookup convention, no
+        // separate identity field exists) — so it applies uniformly to
+        // whichever entry currently holds that name, seeded or not.
+        let dir = tempdir().unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), None).unwrap();
+        let created = store.add(input("Home", dir.path().to_path_buf())).unwrap();
+
+        let result = store.delete(created.id);
+
+        assert!(matches!(result, Err(ProjectStoreError::ProtectedEntry)));
+    }
+
+    #[test]
+    fn renaming_the_home_entry_away_makes_it_deletable() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), Some(home)).unwrap();
+        let seeded = project_at(&store, 0).id;
+        let mut renamed_input = input("My Home Dir", dir.path().to_path_buf());
+        renamed_input.path = dir.path().to_path_buf();
+        store.update(seeded, renamed_input).unwrap();
+
+        store.delete(seeded).unwrap();
+
+        assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn delete_rejects_the_home_entry_even_nested_inside_a_folder() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let mut store = ProjectStore::load(dir.path().join("projects.enc"), Some(home)).unwrap();
+        let seeded = project_at(&store, 0).id;
+        let other = store.add(input("other", dir.path().to_path_buf())).unwrap();
+        store.merge_or_join(seeded, other.id).unwrap();
+
+        let result = store.delete(seeded);
+
+        assert!(matches!(result, Err(ProjectStoreError::ProtectedEntry)));
     }
 
     #[test]

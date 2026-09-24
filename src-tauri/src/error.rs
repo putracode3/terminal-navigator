@@ -36,6 +36,7 @@ impl From<ProjectStoreError> for AppError {
             | ProjectStoreError::PathNotFound(_)
             | ProjectStoreError::SelfMerge => "invalid_input",
             ProjectStoreError::NotFound(_) => "not_found",
+            ProjectStoreError::ProtectedEntry => "protected_entry",
             ProjectStoreError::Crypto(_) => "crypto",
             ProjectStoreError::Io(_) => "io",
             ProjectStoreError::Corrupted => "corrupted",

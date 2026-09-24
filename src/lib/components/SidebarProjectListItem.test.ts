@@ -276,6 +276,19 @@ describe("SidebarProjectListItem — Menu (right-click context + overflow anchor
 		expect(screen.queryByRole("menu")).toBeNull();
 		document.body.removeChild(outside);
 	});
+
+	// FR-01 (amended): the "Home" entry can't be deleted — the backend
+	// (project_store::delete) is the actual enforcement; this just confirms
+	// the menu doesn't offer an action it would reject anyway.
+	it("the Home entry's menu has no Delete option", async () => {
+		const homeProject: ProjectDto = { ...project, name: "Home" };
+		render(SidebarProjectListItem, baseProps({ project: homeProject }));
+
+		await fireEvent.contextMenu(screen.getByText("Home"));
+
+		expect(screen.getByRole("menuitem", { name: "Edit" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Delete" })).toBeNull();
+	});
 });
 
 describe("SidebarProjectListItem — FR-11 sidebar drop bands (reorder/merge, components.md Sidebar Folder)", () => {

@@ -89,6 +89,11 @@
 	const isActive = $derived(!!singleSession && singleSession.id === activeTabId);
 	const hasOpenTab = $derived(mode === "single");
 	const draggable = $derived(mode !== "grouped" && !invalid);
+	/** FR-01 (amended): the "Home" entry is the sidebar's permanent default —
+	 *  matched by name, mirroring the backend's own guard in
+	 *  `project_store::delete` (the actual enforcement; this only keeps the
+	 *  menu from offering an action the backend would reject anyway). */
+	const isHomeEntry = $derived(project.name === "Home");
 	/** FR-11: this row is a valid *target* for sidebar drag-drop regardless
 	 *  of session count/invalid-path — those restrictions gate whether this
 	 *  row can be a drag *source* (see `draggable` above), not whether other
@@ -105,7 +110,7 @@
 		{ label: "Open in new tab", onSelect: onForceNewTab },
 		...(mode === "single" ? [{ label: "Close terminal", onSelect: onCloseTerminal }] : []),
 		{ label: "Edit", onSelect: onEdit },
-		{ label: "Delete", onSelect: onDelete, danger: true },
+		...(isHomeEntry ? [] : [{ label: "Delete", onSelect: onDelete, danger: true }]),
 	]);
 
 	function handleClick() {
