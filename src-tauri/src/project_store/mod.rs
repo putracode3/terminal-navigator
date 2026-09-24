@@ -120,29 +120,20 @@ const HOME_ENTRY_NAME: &str = "Home";
 impl ProjectStore {
     /// Loads the store at `data_file`. If it doesn't exist yet, initializes
     /// a fresh store there instead (first run) — no password is ever asked
-    /// (ADR-0014). A fresh store is seeded with one "Home" project pointing
-    /// at `default_home`, when given and it exists on disk, so a first
-    /// launch never starts on a totally empty sidebar; pass `None` (or a
-    /// path that doesn't exist) to start genuinely empty instead. If the
-    /// file exists but isn't in the current plain format, returns
-    /// `NeedsMigration` rather than attempting to read it — callers must go
-    /// through `migrate_from_legacy` for that case.
+    /// (ADR-0014). Either way, the result always holds a "Home" project
+    /// pointing at `default_home` (see `ensure_home_entry`), provided it's
+    /// given and exists on disk; pass `None` (or a path that doesn't exist)
+    /// to skip that. If the file exists but isn't in the current plain
+    /// format, returns `NeedsMigration` rather than attempting to read it —
+    /// callers must go through `migrate_from_legacy` for that case.
     pub fn load(data_file: PathBuf, default_home: Option<PathBuf>) -> Result<Self, ProjectStoreError> {
         if !data_file.exists() {
-            let entries = default_home.filter(|p| p.exists()).map_or_else(Vec::new, |path| {
-                let now = Utc::now();
-                vec![SidebarEntry::Project(Project {
-                    id: Uuid::new_v4(),
-                    name: HOME_ENTRY_NAME.to_string(),
-                    path,
-                    setup_commands: Vec::new(),
-                    notes: String::new(),
-                    created_at: now,
-                    updated_at: now,
-                })]
-            });
-            let store = Self { entries, data_file };
-            store.persist()?;
+            let mut store = Self { entries: Vec::new(), data_file };
+            // Seeding persists; when there's nothing to seed, still create
+            // the (empty) file so a later load takes the existing-file path.
+            if !store.ensure_home_entry(default_home)? {
+                store.persist()?;
+            }
             return Ok(store);
         }
 
@@ -151,7 +142,55 @@ impl ProjectStore {
             return Err(ProjectStoreError::NeedsMigration);
         }
         let entries = decode_plain_file(&raw)?;
-        Ok(Self { entries, data_file })
+        let mut store = Self { entries, data_file };
+        // Best-effort: the heal is a convenience, so failing to persist it
+        // (e.g. a read-only data directory) must not make the app
+        // unlaunchable. `ensure_home_entry` inserts before it persists, so
+        // the entry still shows for this session and is retried next load.
+        if let Err(e) = store.ensure_home_entry(default_home) {
+            eprintln!("warning: couldn't persist the restored \"Home\" entry: {e}");
+        }
+        Ok(store)
+    }
+
+    /// FR-01 (amended v1.19): guarantees the sidebar has a "Home" project
+    /// pointing at `default_home`, inserting one at the top when no project
+    /// named "Home" exists anywhere in the tree (top level or inside a
+    /// folder — the same by-name lookup the delete protection and the launch
+    /// auto-open use). Runs on every load, not just a first run: seeding once
+    /// left every install whose data file predates the Home-seed (2026-08-12)
+    /// without the entry the sidebar treats as its permanent default.
+    /// Renaming Home away is therefore not an opt-out — the next load
+    /// restores it. No-op when `default_home` is `None` or doesn't exist on
+    /// disk. Persists only when it actually added something; returns whether
+    /// it did. On a persist failure the entry is still in memory (`load`
+    /// treats that error as non-fatal).
+    pub fn ensure_home_entry(&mut self, default_home: Option<PathBuf>) -> Result<bool, ProjectStoreError> {
+        let Some(path) = default_home.filter(|p| p.exists()) else {
+            return Ok(false);
+        };
+        let has_home = self.entries.iter().any(|e| match e {
+            SidebarEntry::Project(p) => p.name == HOME_ENTRY_NAME,
+            SidebarEntry::Folder(f) => f.members.iter().any(|p| p.name == HOME_ENTRY_NAME),
+        });
+        if has_home {
+            return Ok(false);
+        }
+        let now = Utc::now();
+        self.entries.insert(
+            0,
+            SidebarEntry::Project(Project {
+                id: Uuid::new_v4(),
+                name: HOME_ENTRY_NAME.to_string(),
+                path,
+                setup_commands: Vec::new(),
+                notes: String::new(),
+                created_at: now,
+                updated_at: now,
+            }),
+        );
+        self.persist()?;
+        Ok(true)
     }
 
     /// One-time migration (ADR-0014): decrypts a pre-existing AES-GCM-encrypted
@@ -750,21 +789,157 @@ mod tests {
         assert!(store.entries().is_empty());
     }
 
+    /// Builds a data file the way an install predating FR-01's Home-seed
+    /// (2026-08-12) has one: real projects, no "Home" entry.
+    fn write_pre_seed_store(data_file: &Path, project_dir: &Path) -> Uuid {
+        let mut store = ProjectStore::load(data_file.to_path_buf(), None).unwrap();
+        store.add(input("existing", project_dir.to_path_buf())).unwrap().id
+    }
+
     #[test]
-    fn load_does_not_seed_when_the_data_file_already_exists() {
+    fn load_adds_home_to_an_existing_data_file_that_has_none() {
+        // Regression test (debugger session 2026-09-24): installs whose data
+        // file predates the Home-seed never got a "Home" entry, because
+        // seeding only ran when the file didn't exist yet — so the sidebar's
+        // "permanent default" simply wasn't there for them.
         let dir = tempdir().unwrap();
         let data_file = dir.path().join("projects.enc");
         let home = dir.path().join("home");
         std::fs::create_dir(&home).unwrap();
+        let existing_id = write_pre_seed_store(&data_file, dir.path());
 
-        // First run: store already exists on disk (e.g. the user already
-        // added/removed projects down to zero) — a later `load` must not
-        // re-seed Home just because the tree is currently empty.
+        let reopened = ProjectStore::load(data_file.clone(), Some(home.clone())).unwrap();
+
+        assert_eq!(reopened.entries().len(), 2);
+        let healed = project_at(&reopened, 0);
+        assert_eq!(healed.name, "Home", "Home goes first, as the sidebar's default entry");
+        assert_eq!(healed.path, home);
+        assert_eq!(project_at(&reopened, 1).id, existing_id, "existing entries are untouched and keep their order");
+
+        // Persisted, not just in memory — and not re-added on the next load.
+        let again = ProjectStore::load(data_file, Some(home)).unwrap();
+        assert_eq!(again.entries().len(), 2);
+        assert_eq!(project_at(&again, 0).id, healed.id, "the healed entry is stable across loads");
+    }
+
+    #[test]
+    fn load_adds_home_to_an_existing_but_empty_data_file() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
         ProjectStore::load(data_file.clone(), None).unwrap();
 
         let reopened = ProjectStore::load(data_file, Some(home)).unwrap();
 
-        assert!(reopened.entries().is_empty(), "an existing (even empty) data file must never be re-seeded");
+        assert_eq!(reopened.entries().len(), 1);
+        assert_eq!(project_at(&reopened, 0).name, "Home");
+    }
+
+    #[test]
+    fn load_does_not_duplicate_home_when_one_already_exists_top_level() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        ProjectStore::load(data_file.clone(), Some(home.clone())).unwrap();
+
+        let reopened = ProjectStore::load(data_file, Some(home)).unwrap();
+
+        assert_eq!(reopened.entries().len(), 1);
+    }
+
+    #[test]
+    fn load_does_not_duplicate_home_when_it_lives_inside_a_folder() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let mut store = ProjectStore::load(data_file.clone(), Some(home.clone())).unwrap();
+        let home_id = project_at(&store, 0).id;
+        let other = store.add(input("other", dir.path().to_path_buf())).unwrap().id;
+        store.merge_or_join(other, home_id).unwrap();
+        assert_eq!(store.entries().len(), 1, "precondition: Home is now a folder member, no top-level Home");
+
+        let reopened = ProjectStore::load(data_file, Some(home)).unwrap();
+
+        assert_eq!(reopened.entries().len(), 1, "a folder-nested Home counts — no second one is added");
+        assert!(reopened.find_project(home_id).is_some());
+    }
+
+    #[test]
+    fn load_re_adds_home_after_the_user_renamed_it_away() {
+        // v1.19 decision: Home is the sidebar's permanent default, so a
+        // rename-away is not a way to opt out — the next load restores it.
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let mut store = ProjectStore::load(data_file.clone(), Some(home.clone())).unwrap();
+        let seeded = project_at(&store, 0).id;
+        store.update(seeded, input("Renamed", home.clone())).unwrap();
+
+        let reopened = ProjectStore::load(data_file, Some(home)).unwrap();
+
+        assert_eq!(reopened.entries().len(), 2);
+        assert_eq!(project_at(&reopened, 0).name, "Home");
+        assert_eq!(project_at(&reopened, 1).name, "Renamed");
+    }
+
+    #[test]
+    fn load_does_not_add_home_to_an_existing_file_when_default_home_is_unavailable() {
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        write_pre_seed_store(&data_file, dir.path());
+
+        let none_given = ProjectStore::load(data_file.clone(), None).unwrap();
+        assert_eq!(none_given.entries().len(), 1);
+
+        let missing = ProjectStore::load(data_file, Some(dir.path().join("does-not-exist"))).unwrap();
+        assert_eq!(missing.entries().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_still_succeeds_with_home_in_memory_when_the_heal_cannot_be_persisted() {
+        // Code review m1: the heal is a convenience, so a data directory
+        // that can't be written to (read-only) must not make the app
+        // unlaunchable — `load` degrades to an in-memory Home for the session.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        let data_file = data_dir.join("projects.enc");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        write_pre_seed_store(&data_file, dir.path());
+
+        std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let writable_anyway = std::fs::File::create(data_dir.join("probe")).is_ok();
+        let result = ProjectStore::load(data_file, Some(home));
+        std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        if writable_anyway {
+            return; // running as root: can't simulate an unwritable directory
+        }
+
+        let store = result.expect("an unpersistable heal must not fail the load");
+        assert_eq!(store.entries().len(), 2);
+        assert_eq!(project_at(&store, 0).name, "Home");
+    }
+
+    #[test]
+    fn ensure_home_entry_reports_whether_it_added_one() {
+        // Also the hook the legacy-migration IPC path uses, since
+        // `migrate_from_legacy` has no default-home parameter of its own.
+        let dir = tempdir().unwrap();
+        let data_file = dir.path().join("projects.enc");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let mut store = ProjectStore::load(data_file, None).unwrap();
+
+        assert!(store.ensure_home_entry(Some(home.clone())).unwrap());
+        assert!(!store.ensure_home_entry(Some(home)).unwrap(), "second call is a no-op");
+        assert_eq!(store.entries().len(), 1);
     }
 
     #[cfg(unix)]

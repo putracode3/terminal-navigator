@@ -231,7 +231,10 @@ pub fn init_store(state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppErr
 /// path directly.
 #[tauri::command]
 pub fn migrate_and_load(legacy_password: String, state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
-    let store = ProjectStore::migrate_from_legacy(state.data_file.clone(), &legacy_password)?;
+    let mut store = ProjectStore::migrate_from_legacy(state.data_file.clone(), &legacy_password)?;
+    // The migrated file is by definition pre-ADR-0014 — it predates the
+    // Home-seed too — so give it the "Home" entry `init_store` would have.
+    store.ensure_home_entry(state.home_dir.clone())?;
     let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(entries)
@@ -514,10 +517,10 @@ pub fn open_home_terminal(app: AppHandle, session_id: String, state: State<AppSt
 #[tauri::command]
 pub fn import_config(source: String, state: State<AppState>) -> Result<Vec<SidebarEntryDto>, AppError> {
     config_sync::import(&PathBuf::from(source), &state.data_file)?;
-    // The imported file always exists (just written by `config_sync::import`
-    // above), so the fresh-store/seeding branch of `load` never runs here —
-    // `None` is a no-op, not a behavior choice.
-    let store = ProjectStore::load(state.data_file.clone(), None)?;
+    // An imported file (e.g. exported from a device that predates the
+    // Home-seed) may lack the "Home" entry; `load` restores it, same as
+    // `init_store` would on the next launch.
+    let store = ProjectStore::load(state.data_file.clone(), state.home_dir.clone())?;
     let entries = store.entries().iter().map(SidebarEntryDto::from).collect();
     *state.store.lock().unwrap() = Some(store);
     Ok(entries)

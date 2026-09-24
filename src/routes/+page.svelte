@@ -57,9 +57,8 @@
 
 	/** Debugger session fallback (2026-08-13): installs whose data file
 	 *  already existed before FR-01's Home-seeding shipped (2026-08-12)
-	 *  never get a "Home" project — seeding only fires on a brand-new store
-	 *  (`project_store::load_does_not_seed_when_the_data_file_already_exists`),
-	 *  never retroactively — so `autoOpenHomeOnLaunch` above has nothing to
+	 *  never got a "Home" project — seeding then only fired on a brand-new
+	 *  store — so `autoOpenHomeOnLaunch` above had nothing to
 	 *  open for them and the app kept starting on the empty-state
 	 *  placeholder despite `568e118`. Opens a terminal at the platform home
 	 *  directory directly, bypassing the project store entirely, so nothing
