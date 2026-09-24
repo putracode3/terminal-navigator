@@ -8,7 +8,8 @@
 	import { appStore } from "$lib/stores/app.svelte";
 	import { terminalStore } from "$lib/stores/terminal.svelte";
 	import { settingsStore } from "$lib/stores/settings.svelte";
-	import { initStore, openTerminal, homeDir, openHomeTerminal, errorMessage, isAppError, type ProjectDto } from "$lib/api";
+	import { autoOpenHomeOnLaunch } from "$lib/launch";
+	import { initStore, openTerminal, errorMessage, isAppError, type ProjectDto } from "$lib/api";
 
 	// FR-13: settings load independently of the project store — must be
 	// ready even at the migration prompt (theme/sidebar-position apply
@@ -24,7 +25,7 @@
 		initStore()
 			.then((entries) => {
 				appStore.finishLoading(entries);
-				autoOpenHomeOnLaunch();
+				autoOpenHomeOnLaunch().catch((err) => console.error("launch auto-open failed:", errorMessage(err)));
 			})
 			.catch((err) => {
 				if (isAppError(err) && err.kind === "needs_migration") {
@@ -34,50 +35,6 @@
 				}
 			});
 	});
-
-	/** Direct product decision (2026-08-13, routed via project-navigator,
-	 *  no separate PRD pass — see docs/prd-terminal-navigator.md FR-01):
-	 *  opens a terminal on the seeded "Home" entry at launch so the app
-	 *  never starts on an empty terminal area. Runs once, right after the
-	 *  one-time initial load — `terminalStore` holds no cross-restart tab
-	 *  state, so "zero tabs open" is always true here; the guard is
-	 *  defensive, not load-bearing. Falls back to `openHomeDirTerminal`
-	 *  when there's no "Home" entry to open — see that function's doc for
-	 *  why that's a distinct, more common case than the deleted/renamed
-	 *  one it was originally written for. */
-	function autoOpenHomeOnLaunch() {
-		if (terminalStore.tabs.length > 0) return;
-		const home = appStore.homeProject;
-		if (home) {
-			handleOpenProject(home);
-		} else {
-			openHomeDirTerminal();
-		}
-	}
-
-	/** Debugger session fallback (2026-08-13): installs whose data file
-	 *  already existed before FR-01's Home-seeding shipped (2026-08-12)
-	 *  never got a "Home" project — seeding then only fired on a brand-new
-	 *  store — so `autoOpenHomeOnLaunch` above had nothing to
-	 *  open for them and the app kept starting on the empty-state
-	 *  placeholder despite `568e118`. Opens a terminal at the platform home
-	 *  directory directly, bypassing the project store entirely, so nothing
-	 *  is added to the sidebar. No-ops if the home directory itself can't be
-	 *  resolved (same edge case FR-01's seeding already documents for that
-	 *  failure). */
-	async function openHomeDirTerminal() {
-		const path = await homeDir();
-		if (!path) return;
-		const tab = terminalStore.openTab(null, "Home", path);
-		if (tab.root.type !== "leaf") return;
-		const sessionId = tab.root.sessionId;
-		try {
-			await openHomeTerminal(sessionId);
-			terminalStore.setPaneStatus(sessionId, "ready");
-		} catch (e) {
-			terminalStore.setPaneStatus(sessionId, "error", errorMessage(e));
-		}
-	}
 
 	/** Always opens a fresh tab for `project`, regardless of whether one is
 	 *  already open — FR-08 v1.3's deliberate-duplicate path, reached via

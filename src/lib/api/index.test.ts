@@ -15,6 +15,7 @@ import {
 	deleteProject,
 	openTerminal,
 	splitPane,
+	openPlainTerminal,
 	writeTerminal,
 	resizeTerminal,
 	closeTerminal,
@@ -85,6 +86,11 @@ describe("api/index — IPC command mapping", () => {
 
 	it("splitPane() camelCases sessionId and passes cwd", () => {
 		splitPane("sess-1", "/some/path");
+		expect(invokeMock).toHaveBeenCalledWith("split_pane", { sessionId: "sess-1", cwd: "/some/path" });
+	});
+
+	it("openPlainTerminal() maps to split_pane (a plain shell — never open_terminal, which runs setup commands)", () => {
+		openPlainTerminal("sess-1", "/some/path");
 		expect(invokeMock).toHaveBeenCalledWith("split_pane", { sessionId: "sess-1", cwd: "/some/path" });
 	});
 

@@ -294,6 +294,18 @@ describe("SettingsModal — Data group — import (FR-07, ADR-0008 replace-only)
 		expect(importConfigMock).not.toHaveBeenCalled();
 	});
 
+	it("import confirmation warns that setup commands run when a terminal is opened, and that launch auto-open doesn't run them", async () => {
+		// Security audit 2026-09-24, L7 — keeps the warning honest about *when*
+		// imported setup commands execute.
+		openDialogMock.mockResolvedValue("/tmp/incoming.enc");
+		render(SettingsModal, { open: true, onClose: vi.fn() });
+
+		await fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+		expect(await screen.findByText(/setup commands will run automatically each time you open their terminal/i)).toBeInTheDocument();
+		expect(screen.getByText(/never runs setup commands/i)).toBeInTheDocument();
+	});
+
 	it("cancelling the confirmation does not call importConfig", async () => {
 		openDialogMock.mockResolvedValue("/tmp/incoming.enc");
 		render(SettingsModal, { open: true, onClose: vi.fn() });

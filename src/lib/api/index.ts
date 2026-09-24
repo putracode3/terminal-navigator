@@ -136,6 +136,15 @@ export function splitPane(sessionId: string, cwd: string): Promise<void> {
 	return invoke("split_pane", { sessionId, cwd });
 }
 
+/** Spawns a plain shell at `cwd` — no project lookup, no setup commands.
+ * Same IPC command as `splitPane` (`split_pane`: "a plain shell at this
+ * working directory"); a separate name so call sites that need the
+ * *no-setup-commands* guarantee (the FR-01 launch auto-open, security audit
+ * 2026-09-24 L7) say so explicitly instead of borrowing "split" wording. */
+export function openPlainTerminal(sessionId: string, cwd: string): Promise<void> {
+	return invoke("split_pane", { sessionId, cwd });
+}
+
 export function writeTerminal(sessionId: string, data: string): Promise<void> {
 	return invoke("write_terminal", { sessionId, data });
 }

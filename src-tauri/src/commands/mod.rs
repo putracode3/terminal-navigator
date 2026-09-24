@@ -388,6 +388,9 @@ pub fn open_terminal(
 
 /// Splits a new pane at `cwd`, with no project/setup-commands attached — a
 /// plain shell at the same working directory (components.md, Split Pane Container).
+/// Also the IPC behind the frontend's `openPlainTerminal`, which the FR-01
+/// launch auto-open uses for the "Home" entry precisely *because* this never
+/// runs setup commands (security audit 2026-09-24, L7) — keep it that way.
 #[tauri::command]
 pub fn split_pane(
     app: AppHandle,
