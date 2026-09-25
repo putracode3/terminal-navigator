@@ -1,6 +1,6 @@
 {
   "name": "terminal-navigator",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Project launcher + terminal for local projects",
   "type": "module",
   "scripts": {

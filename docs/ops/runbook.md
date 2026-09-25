@@ -1,6 +1,6 @@
 # Runbook — Terminal Navigator
 
-> Version 1.9 · 2026-09-25 · Infra: none — local desktop app (Tauri), daily-driver install is still a manually built `.deb` on the author's own Debian 12 machine. No server, no staging, no remote users. A GitHub remote now exists (`git@github.com:putracode3/terminal-navigator.git`) with a CI workflow (`.github/workflows/release.yml`) that builds tagged releases — see §2's new "GitHub Release" subsection. §9's former "no CI" gap is now partially closed; local build/install (above) remains the actual daily-driver mechanism.
+> Version 1.10 · 2026-09-25 · Infra: none — local desktop app (Tauri), daily-driver install is still a manually built `.deb` on the author's own Debian 12 machine. No server, no staging, no remote users. A GitHub remote now exists (`git@github.com:putracode3/terminal-navigator.git`) with a CI workflow (`.github/workflows/release.yml`) that builds tagged releases — see §2's new "GitHub Release" subsection. §9's former "no CI" gap is now partially closed; local build/install (above) remains the actual daily-driver mechanism.
 > Rehearsal log: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–4, predating the FR-13 Settings step 5 added in v1.1) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · restore (config export/import) ✅ 2026-07-20 — **predates ADR-0014 (2026-08-12); the restore mechanism itself changed (no password step) — re-rehearse before relying on this log entry, see §5** · rollback — not yet rehearsed · §2 step 5 (Settings smoke-check) — not yet rehearsed, added in v1.1 · GitHub Release workflow — not yet rehearsed (added v1.2, no tag pushed yet; Windows/macOS build legs are unverified since the author only runs Debian — see caveat in §2) · §2 step 7 (window drag/resize/controls smoke-check) — not yet rehearsed, added in v1.3 for v2.8/ADR-0013's native-decorations removal; **blocks this build becoming the daily driver until run** (§2's own rule)
 
 This app has no server-side deployment. "Deploy" here means: build a `.deb` locally, verify it, and install it to replace the copy you use every day — that local process is unchanged. Sections below are scoped to that reality, plus the separate/optional GitHub Release path for sharing builds publicly — see §9 for what a normal server runbook would have that doesn't apply here, and why.
@@ -32,6 +32,10 @@ Bump the version number in all three places together (they must match — nothin
 - `package.json` → `"version"`
 - `src-tauri/tauri.conf.json` → `"version"`
 - `src-tauri/Cargo.toml` → `version =`
+
+The lockfiles carry the app's own version too — update them in the same commit (found 2026-09-25: `package-lock.json`'s root entries were still at 0.1.0 two releases later):
+- `src-tauri/Cargo.lock` → the `terminal-navigator` package entry (any `cargo build` rewrites it)
+- `package-lock.json` → the top-level `"version"` and `packages[""].version`
 
 Then tag the commit so this exact build state is always recoverable:
 ```bash
@@ -176,6 +180,7 @@ These exist in the standard runbook template but don't apply at this project's c
 
 | Version | Date | Change |
 |---|---|---|
+| 1.10 | 2026-09-25 | §2 *Versioning*: the two lockfiles are listed alongside the three manifests (the release to 0.2.1 found `package-lock.json` still at 0.1.0). |
 | 1.9 | 2026-09-25 | §2 *Verify* step 6 wording updated for design v3.4 (padding 0 only while a TUI runs). No procedure change. |
 | 1.8 | 2026-09-25 | §2 *Verify* step 6 wording updated for design v3.3 (terminal pane padding removed). No procedure change. |
 | 1.7 | 2026-09-25 | §2 *Verify* step 6: also check the TUI in both halves of a split (a column-capacity bug showed only there). No procedure change. |
