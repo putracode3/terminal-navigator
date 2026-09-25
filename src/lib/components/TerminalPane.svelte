@@ -8,7 +8,7 @@
 	import { WebLinksAddon } from "@xterm/addon-web-links";
 	import "@xterm/xterm/css/xterm.css";
 	import { openUrl } from "@tauri-apps/plugin-opener";
-	import { writeTerminal, resizeTerminal } from "$lib/api";
+	import { writeTerminal, resizeTerminal, attachTerminal } from "$lib/api";
 	import { getThemePreset, withWindowTransparency, paneBackground } from "$lib/theme-presets";
 	// design.md §9 rule 11: App Default is theme-aware, so every preset lookup
 	// here needs the RESOLVED chrome theme (not settingsStore.themeMode, which
@@ -202,7 +202,15 @@
 
 			newTerm.onData((data) => queueWrite(data));
 
-			listen<string>(`pty://output/${sessionId}`, (event) => {
+			// Both listeners must exist before the backend is told to release the
+			// output it has been holding for this session (`attachTerminal`):
+			// events emitted with no listener registered are not queued, so
+			// anything a program printed in its first moments used to be lost
+			// (and a shell that died that early never closed its pane). The
+			// backend gates output *and* exit until this call, then flushes in
+			// order. Only here — the first mount of a session; a remount reuses
+			// the handle, and the gate is per session and already open.
+			const outputReady = listen<string>(`pty://output/${sessionId}`, (event) => {
 				getTerminalHandle(sessionId)?.term.write(event.payload);
 			}).then((fn) => {
 				const h = getTerminalHandle(sessionId);
@@ -213,12 +221,16 @@
 			// user typed `exit`, the shell crashed, etc.) — there's no more
 			// output coming and nothing to replay, so react exactly as if the
 			// user had clicked this pane's own "Close pane" button.
-			listen(`pty://exit/${sessionId}`, () => {
+			const exitReady = listen(`pty://exit/${sessionId}`, () => {
 				onExit();
 			}).then((fn) => {
 				const h = getTerminalHandle(sessionId);
 				if (h) h.unlistenExit = fn;
 			});
+
+			Promise.all([outputReady, exitReady])
+				.then(() => attachTerminal(sessionId))
+				.catch((err) => console.error(`attachTerminal(${sessionId}) failed:`, err));
 		} else {
 			handle = existing;
 		}

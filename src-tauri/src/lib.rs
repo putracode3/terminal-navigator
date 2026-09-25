@@ -99,6 +99,7 @@ pub fn run() {
             commands::home_dir,
             commands::open_home_terminal,
             commands::split_pane,
+            commands::attach_terminal,
             commands::write_terminal,
             commands::resize_terminal,
             commands::close_terminal,

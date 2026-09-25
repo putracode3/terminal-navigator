@@ -136,6 +136,15 @@ export function splitPane(sessionId: string, cwd: string): Promise<void> {
 	return invoke("split_pane", { sessionId, cwd });
 }
 
+/** Tells the backend this session's output and exit listeners are registered,
+ * so it can release the output it held back (and stream live from then on).
+ * Without it, whatever a program printed before the pane's `listen()` calls
+ * resolved would be lost — see `pty_manager`'s `OutputGate`. Idempotent; safe
+ * to call before the session exists (the backend remembers it). */
+export function attachTerminal(sessionId: string): Promise<void> {
+	return invoke("attach_terminal", { sessionId });
+}
+
 /** Spawns a plain shell at `cwd` — no project lookup, no setup commands.
  * Same IPC command as `splitPane` (`split_pane`: "a plain shell at this
  * working directory"); a separate name so call sites that need the

@@ -422,6 +422,24 @@ pub fn split_pane(
     Ok(())
 }
 
+/// The pane's output and exit listeners are registered: release the output
+/// (and exit notification) `pty_manager` has been holding for this session and
+/// stream live from now on (ADR-0007 addendum). Idempotent, and deliberately
+/// not an error for a session that doesn't exist *yet* — the frontend fires
+/// `open_terminal` and this concurrently, so this can win the race; the
+/// request is remembered and applied when the session appears. Takes only a
+/// session id and touches no project data, same class as `write_terminal`.
+/// `async` on purpose: it may flush held output while holding the session's
+/// output-gate lock, and a plain `pub fn` command runs on the main thread —
+/// which must never be what an emitting reader thread could be waiting for
+/// (see `pty_manager::OutputGate`).
+#[tauri::command(async)]
+pub fn attach_terminal(session_id: String, state: State<AppState>) -> Result<(), AppError> {
+    let session_id = parse_uuid(&session_id)?;
+    state.pty_manager.attach(session_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn write_terminal(session_id: String, data: String, state: State<AppState>) -> Result<(), AppError> {
     let session_id = parse_uuid(&session_id)?;

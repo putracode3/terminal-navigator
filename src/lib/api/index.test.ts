@@ -16,6 +16,7 @@ import {
 	openTerminal,
 	splitPane,
 	openPlainTerminal,
+	attachTerminal,
 	writeTerminal,
 	resizeTerminal,
 	closeTerminal,
@@ -92,6 +93,11 @@ describe("api/index — IPC command mapping", () => {
 	it("openPlainTerminal() maps to split_pane (a plain shell — never open_terminal, which runs setup commands)", () => {
 		openPlainTerminal("sess-1", "/some/path");
 		expect(invokeMock).toHaveBeenCalledWith("split_pane", { sessionId: "sess-1", cwd: "/some/path" });
+	});
+
+	it("attachTerminal() maps to attach_terminal with the camelCased sessionId", () => {
+		attachTerminal("sess-1");
+		expect(invokeMock).toHaveBeenCalledWith("attach_terminal", { sessionId: "sess-1" });
 	});
 
 	it("writeTerminal() passes sessionId and data", () => {

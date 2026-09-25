@@ -92,9 +92,11 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 
 const resizeTerminalMock = vi.fn();
 const writeTerminalMock = vi.fn();
+const attachTerminalMock = vi.fn();
 vi.mock("$lib/api", () => ({
 	resizeTerminal: (...args: unknown[]) => resizeTerminalMock(...args),
 	writeTerminal: (...args: unknown[]) => writeTerminalMock(...args),
+	attachTerminal: (...args: unknown[]) => attachTerminalMock(...args),
 }));
 
 import TerminalPane from "./TerminalPane.svelte";
@@ -139,6 +141,9 @@ beforeEach(() => {
 	pasteMock.mockClear();
 	refreshMock.mockClear();
 	listenMock.mockClear();
+	listenMock.mockResolvedValue(() => {});
+	attachTerminalMock.mockReset();
+	attachTerminalMock.mockResolvedValue(undefined);
 	openUrlMock.mockClear();
 	openUrlMock.mockReset();
 	openUrlMock.mockResolvedValue(undefined);
@@ -774,5 +779,60 @@ describe("TerminalPane — padding follows the active screen (design v3.4: 4px i
 		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
 		await vi.runAllTimersAsync();
 		expect(container.querySelector(".pane")!.classList.contains("alt-screen")).toBe(true);
+	});
+});
+
+describe("TerminalPane — attach after the listeners exist (debugger session 2026-09-25: PTY output emitted before the frontend's listen() registered was dropped; the backend now holds it until attach_terminal)", () => {
+	const flush = async () => {
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+	};
+
+	it("calls attachTerminal once, only after BOTH the output and the exit listener are registered", async () => {
+		const pending: Array<(fn: () => void) => void> = [];
+		listenMock.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await flush();
+		expect(attachTerminalMock).not.toHaveBeenCalled();
+
+		expect(pending).toHaveLength(2); // pty://output/s1 and pty://exit/s1
+		pending[0](() => {});
+		await flush();
+		expect(attachTerminalMock).not.toHaveBeenCalled(); // one listener isn't enough
+
+		pending[1](() => {});
+		await flush();
+		expect(attachTerminalMock).toHaveBeenCalledTimes(1);
+		expect(attachTerminalMock).toHaveBeenCalledWith("s1");
+	});
+
+	it("registers the output listener for this session before attaching", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await flush();
+		const names = listenMock.mock.calls.map(([name]) => name);
+		expect(names).toContain("pty://output/s1");
+		expect(names).toContain("pty://exit/s1");
+		expect(attachTerminalMock).toHaveBeenCalledWith("s1");
+	});
+
+	it("does not attach again when the same session's pane is remounted (the backend gate is per session and already open)", async () => {
+		const first = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await flush();
+		first.unmount();
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await flush();
+		expect(attachTerminalMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("survives a failed attach (logged; the backend opens the gate by itself after its timeout)", async () => {
+		attachTerminalMock.mockRejectedValue(new Error("ipc down"));
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		expect(attachTerminalMock).toHaveBeenCalledWith("s1");
+		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("attachTerminal(s1) failed"), expect.anything());
+		errorSpy.mockRestore();
 	});
 });

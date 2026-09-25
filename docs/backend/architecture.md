@@ -1,6 +1,6 @@
 # System Architecture — Terminal Navigator
 
-> Version 1.22 · 2026-09-25 · Status: approved
+> Version 1.23 · 2026-09-25 · Status: approved
 > Package: architecture.md (this file) · adr/ (decision records)
 > Downstream: db-schema-designer → §5 (optional/light-touch — see note) · backend-implementer → all · design-implementer → §5.7 + §7 (frontend structure)
 > Source PRD: docs/prd-terminal-navigator.md (v1.23)
@@ -70,6 +70,7 @@ graph TB
 - **Responsibility:** Spawn and track one PTY session per open pane; stream I/O between each PTY and its frontend pane over Tauri events, including notifying the frontend when the shell exits on its own (`pty://exit/{session_id}`, no payload — user typed `exit`, shell crashed, etc.), so the pane can close itself the same way a user-initiated "Close pane" would.
 - **Owns entities:** `PtySession` (id, working_dir, process handle) — runtime-only, never persisted.
 - **Depends on:** `command_runner` (to feed auto-run commands into a freshly spawned session).
+- **Output gate (v1.23, ADR-0007 addendum):** a session's output chunks and its exit notification are held inside an `OutputGate` until the frontend calls `attach_terminal(session_id)` (once per session, after both its event listeners are registered), then flushed in order and streamed live. Bounded at 1 MiB (oldest whole chunks dropped), opens itself after 10 s if no attach ever arrives (`attach_terminal` is an `async` command), and an attach that beats its `spawn` is remembered (bounded) and applied by `spawn`. Fixes early output being dropped before the frontend's `listen()` existed.
 - **Notes:** Closing a pane tears down exactly its own `PtySession`; sessions are fully independent of each other. A session whose shell exited on its own is *not* torn down by `pty_manager` itself — it stays registered (inert) until the frontend reacts to the exit event by calling the normal close IPC command, same cleanup path either way. See ADR-0003, ADR-0007.
 
 ### 5.4 command_runner (Rust)
@@ -221,6 +222,7 @@ You are working within this architecture. Follow these rules:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.23 | 2026-09-25 | Bugfix (early PTY output dropped, docs/qa/test-plan.md): §5.3 `pty_manager` gains the output gate and the `attach_terminal` IPC command — see the new bullet and the ADR-0007 addendum. No module-boundary change. |
 | 1.22 | 2026-09-25 | Bugfix, second round (debugger session): §5.7 `terminal_view` column capacity now uses xterm's device cell width and rounding instead of a cell width derived from the rounded `.xterm-screen` width — see the amended bullet and PRD v1.23. No boundary/ADR change. |
 | 1.21 | 2026-09-25 | Bugfix (debugger session): §5.7 `terminal_view` grid sizing via `fitTerminal` (alternate-buffer aware) instead of a bare `fitAddon.fit()` — see the amended bullet and PRD v1.22. No boundary/ADR change. |
 | 1.20 | 2026-09-24 | Security hardening (audit v1.7 L8): §5.6a `git_status` reads only bounded regular files and sanitizes the branch name; `get_git_branch` becomes an async command. Also records that the Tauri capability file (`src-tauri/capabilities/default.json`) is now least-privilege (audit L9) — no module boundary or ADR change. |
