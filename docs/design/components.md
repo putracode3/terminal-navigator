@@ -418,6 +418,22 @@ N/A — panes fill available space; minimum pane size is `--pane-min-width` × `
 | pane header, draggable (v3.1 — its tab has 2+ panes) | cursor `grab` on hover over the header, outside the close-pane button |
 | pane being dragged via its own header (v3.1) | opacity 0.4 on the whole pane while the drag is in progress — same treatment `Sidebar Session Sub-item`'s `dragging` state already uses, reused rather than invented fresh |
 
+### Pane body (terminal area) — v3.3
+
+The pane's own box, around the `xterm.js` grid. Specified for the first time in v3.3; before it, the code used `--space-1` (4px) padding and `--radius-sm` corners with no spec behind them.
+
+| Property | Value | Why |
+|---|---|---|
+| padding | **0** on all sides, on both the normal shell screen and a full-screen TUI's alternate screen | Full-screen TUIs (opencode, vim, htop) paint their own background into every cell. Any padding shows as a frame of a different colour around them, and over a translucent pane (FR-15) that frame shows the window behind it. One rule for both screens, because a TUI switches screens without the pane knowing ahead of time. |
+| border | `--pane-divider-width` solid; `transparent` by default, `--color-primary` when focused (unchanged, see States) | The focus indicator stays on the pane's outer edge. The terminal grid starts directly inside it. |
+| border-radius | **0** (square corners) | With no padding, a rounded corner would cut into the TUI's corner cells or leave a gap between the square grid and the rounded border. Terminal content is a rectangle, so the pane is one too. Other surfaces (menus, modals, sidebar rows) keep their radius tokens. |
+| background | the terminal theme's background, carrying FR-15's window transparency (unchanged) | Stays on the pane, not on the grid. It paints the sub-cell remainder below. |
+| sub-cell remainder | left at the **right and bottom** edges (grid anchored top-left), painted by the pane background | The grid holds whole character cells only. The pane is almost never an exact multiple of the cell size, so up to one cell width stays on the right and up to one line height at the bottom. The grid is not centred: that would put a gap on all four sides instead of two, and add alignment work for no clear gain. The remainder is not a margin to eliminate; the column count is already the largest that fits (FR-08 v1.23). |
+
+**Trade-off accepted:** on the normal shell screen, the first column of text now starts right at the pane's inner edge (inside the 1px border) instead of 4px in. Most terminal emulators add a small inset here. It is dropped deliberately, because a full-bleed TUI matters more to this app's user than a breathing gap next to the prompt. If that ever changes, bring back an inset **only on the normal screen**; never add padding that also applies to the alternate screen.
+
+**Pane header controls** (split ⬌ / ⬍ at the pane's top-right) keep floating over the terminal content as before. With no padding they now sit directly over the TUI's top-right cells, which is unchanged in kind (they already overlapped). They stay small and translucent enough not to hide content permanently. Don't move them into a reserved strip, because that would bring the margin back.
+
 ### Drop zones (drag-to-split targeting)
 
 While a sidebar item (a `Sidebar Project List Item` in its 0/1-session mode, or a `Sidebar Session Sub-item`) is being dragged over a pane, that pane is divided by its two diagonals into **four triangular zones** — top, right, bottom, left — with no separate "center" zone. This is a deliberate simplification, not an oversight: this app has no per-pane tab strip for a center-drop ("add as a tab in this group," VS Code's convention) to mean anything — the sidebar itself is the only tab strip there is. Covering the whole pane with exactly four directional zones removes the ambiguous case by construction instead of specifying a dead zone.
@@ -453,6 +469,7 @@ The overlay's highlighted half previews the *resulting* pane's approximate bound
 - ✅ Do: always show which pane is focused, even with only one pane in the tab (subtle is fine, but never absent) — consistency prevents the user from having to "hunt" for focus when they do split later.
 - ✅ Do: always render the pane header (v1.4) — it is load-bearing now, not decorative; without a tab bar, it's the only place a project/path is visible once you're looking at the terminal area.
 - ✅ Do (v3.1): reuse the exact same 4-zone drop overlay and "not-allowed" invalid-target treatment for pane-sourced drags as sidebar-sourced ones — one drop-zone vocabulary for the whole component, not a second invented for the new source type.
+- ❌ Don't (v3.3): add padding or a border-radius to the terminal pane body, or reserve a strip for the pane header controls. Each brings back the margin/frame around full-screen TUIs that v3.3 removed. See Pane body.
 - ❌ Don't: let a pane shrink below its minimum size via drag — clamp the drag instead of allowing a pane to become unusably small.
 - ❌ Don't: show a drop-zone overlay when the hovered pane belongs to the exact tab currently being dragged — that operation is invalid (a tree can't be grafted into itself) and must look unavailable, not just fail silently on drop.
 - ❌ Don't: invent a fifth "center = move without splitting" zone — that reintroduces the per-pane-tab-strip concept this app doesn't have. If that capability is ever wanted, it's a new pattern to design deliberately, not a corner case to bolt on here.

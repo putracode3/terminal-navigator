@@ -422,7 +422,7 @@ describe("TerminalPane — App Default follows the chrome theme (design.md §4.5
 });
 
 describe("TerminalPane — FR-15 pane background placement (regression: the pane's own padding band rendered fully see-through to the desktop, showing as a transparent gutter between the focus outline and the terminal content — the FR-15 work moved the background onto the inner .xterm-container, but `.pane` is the element that carries `padding` and the border, so the padding band it created was left unpainted by anything)", () => {
-	it("paints the background on the element that owns the padding and border, not on an inner child", () => {
+	it("paints the background on the bordered .pane (which also covers the sub-cell remainder now that padding is 0, design v3.3), not on an inner child", () => {
 		settingsStore.themePreset = "dracula";
 		settingsStore.windowTransparency = 0;
 		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
@@ -437,7 +437,7 @@ describe("TerminalPane — FR-15 pane background placement (regression: the pane
 		expect(xtermContainer.style.backgroundColor).toBe("");
 	});
 
-	it("carries the alpha through to the padded element when transparency is on", () => {
+	it("carries the alpha through to the bordered .pane when transparency is on", () => {
 		settingsStore.themePreset = "dracula";
 		settingsStore.windowTransparency = 1;
 		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });

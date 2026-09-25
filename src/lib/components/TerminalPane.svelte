@@ -405,11 +405,13 @@
      flattens a translucent theme background against black and paints it
      opaque (see theme-presets.ts), so the alpha has to live here.
 
-     It must sit on `.pane` specifically — the element that owns the padding
-     and the (transparent-when-unfocused) border. Painting an inner child
-     instead leaves that padding band unpainted by anything, which under
-     FR-15's transparent window reads as a see-through gutter between the
-     focus outline and the terminal content. -->
+     It must sit on `.pane` specifically — the element inside the
+     (transparent-when-unfocused) border. The pane has no padding
+     (components.md → Split Pane Container → Pane body, v3.3), but the grid
+     holds whole character cells only, so up to one cell width on the right
+     and one line height at the bottom are left over; `.pane`'s background
+     is what paints that remainder. Painting an inner child instead would
+     leave it see-through under FR-15's transparent window. -->
 <div
 	class="pane"
 	class:focused
@@ -431,9 +433,12 @@
 		width: 100%;
 		min-width: var(--pane-min-width);
 		min-height: var(--pane-min-height);
-		padding: var(--space-1);
+		/* components.md → Split Pane Container → Pane body (v3.3): no padding
+		   and square corners, so a full-screen TUI's own background reaches
+		   the border instead of sitting inside a frame of pane colour. */
+		padding: 0;
 		border: var(--pane-divider-width) solid transparent;
-		border-radius: var(--radius-sm);
+		border-radius: 0;
 	}
 
 	.pane.focused {
