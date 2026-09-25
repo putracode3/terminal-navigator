@@ -8,12 +8,14 @@ import { render } from "@testing-library/svelte";
 // manually verifying the actual rendered terminal fills its pane.
 
 const fitMock = vi.fn();
+const proposeDimensionsMock = vi.fn();
 const openMock = vi.fn();
 const disposeMock = vi.fn();
 let onDataCallback: ((data: string) => void) | undefined;
 let keyEventHandler: ((event: KeyboardEvent) => boolean) | undefined;
 let wheelEventHandler: ((event: WheelEvent) => boolean) | undefined;
 let resizeObserverCallback: (() => void) | undefined;
+let onBufferChangeCallback: (() => void) | undefined;
 const getSelectionMock = vi.fn();
 const pasteMock = vi.fn();
 const refreshMock = vi.fn();
@@ -37,6 +39,17 @@ const termInstance = {
 	paste: pasteMock,
 	rows: 24,
 	cols: 80,
+	resize: vi.fn(),
+	// `buffer.active.type` is what `fitTerminal` branches on (normal shell vs
+	// a full-screen TUI on the alternate screen); `onBufferChange` is how the
+	// pane learns the buffer flipped and the grid needs refitting.
+	buffer: {
+		active: { type: "normal" as "normal" | "alternate" },
+		onBufferChange: vi.fn((cb: () => void) => {
+			onBufferChangeCallback = cb;
+			return { dispose: vi.fn() };
+		}),
+	},
 	options: {} as { theme?: unknown; fontSize?: number },
 };
 
@@ -48,7 +61,7 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
 	FitAddon: vi.fn(function FitAddon() {
-		return { fit: fitMock };
+		return { fit: fitMock, proposeDimensions: proposeDimensionsMock };
 	}),
 }));
 
@@ -103,6 +116,12 @@ beforeEach(() => {
 	(Terminal as unknown as ReturnType<typeof vi.fn>).mockClear();
 	termInstance.loadAddon.mockClear();
 	fitMock.mockClear();
+	proposeDimensionsMock.mockReset();
+	proposeDimensionsMock.mockReturnValue({ cols: 80, rows: 24 });
+	termInstance.resize.mockClear();
+	termInstance.buffer.onBufferChange.mockClear();
+	termInstance.buffer.active.type = "normal";
+	onBufferChangeCallback = undefined;
 	openMock.mockClear();
 	resizeTerminalMock.mockClear();
 	resizeTerminalMock.mockReset();
@@ -687,5 +706,42 @@ describe("TerminalPane — shell exit (regression: the pane used to stay open fo
 		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit });
 
 		expect(onExit).not.toHaveBeenCalled();
+	});
+});
+
+describe("TerminalPane — refit when a full-screen TUI enters/leaves the alternate screen (debugger session 2026-09-25: FitAddon reserved 14px for a scrollbar the TUI doesn't have, leaving a wide band of pane colour beside it)", () => {
+	it("subscribes to buffer changes when the terminal is created", () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		expect(termInstance.buffer.onBufferChange).toHaveBeenCalledOnce();
+	});
+
+	it("refits and reports the new size to the backend when the buffer flips to the alternate screen", async () => {
+		render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync(); // settle the initial fit
+		resizeTerminalMock.mockClear();
+		fitMock.mockClear();
+
+		termInstance.buffer.active.type = "alternate";
+		onBufferChangeCallback!();
+		await vi.runAllTimersAsync();
+
+		// On the alternate buffer `fitTerminal` takes the addon's proposal and
+		// resizes the grid itself (measurement is null under jsdom, so it falls
+		// back to the addon's own fit()) — either way a refit ran and the PTY
+		// was told the resulting size.
+		expect(fitMock.mock.calls.length + termInstance.resize.mock.calls.length).toBeGreaterThan(0);
+		expect(resizeTerminalMock).toHaveBeenCalledWith("s1", 24, 80);
+	});
+
+	it("does not refit on a buffer change while its tab is backgrounded (display:none must not resize the PTY)", async () => {
+		const { rerender } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn(), active: true });
+		await vi.runAllTimersAsync();
+		await rerender({ sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn(), active: false });
+		resizeTerminalMock.mockClear();
+
+		onBufferChangeCallback!();
+		await vi.runAllTimersAsync();
+
+		expect(resizeTerminalMock).not.toHaveBeenCalled();
 	});
 });

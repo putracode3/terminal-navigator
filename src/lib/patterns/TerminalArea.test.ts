@@ -20,6 +20,7 @@ type FakeTerm = {
 	paste: ReturnType<typeof vi.fn>;
 	rows: number;
 	cols: number;
+	buffer: { active: { type: string }; onBufferChange: ReturnType<typeof vi.fn> };
 	options: { theme?: unknown };
 };
 let instances: FakeTerm[] = [];
@@ -40,6 +41,8 @@ vi.mock("@xterm/xterm", () => ({
 			paste: vi.fn(),
 			rows: 24,
 			cols: 80,
+			// `buffer` is what TerminalPane's `fitTerminal` + buffer-change refit read.
+			buffer: { active: { type: "normal" }, onBufferChange: vi.fn(() => ({ dispose: vi.fn() })) },
 			options: {},
 		};
 		instances.push(inst);

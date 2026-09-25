@@ -4,6 +4,7 @@
 	import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 	import { Terminal } from "@xterm/xterm";
 	import { FitAddon } from "@xterm/addon-fit";
+	import { fitTerminal } from "$lib/terminal-fit";
 	import { WebLinksAddon } from "@xterm/addon-web-links";
 	import "@xterm/xterm/css/xterm.css";
 	import { openUrl } from "@tauri-apps/plugin-opener";
@@ -91,7 +92,7 @@
 		fontSize = next;
 		handle.fontSize = next;
 		term.options.fontSize = fontSize;
-		fitAddon.fit();
+		fitTerminal(term, fitAddon);
 		resizeTerminal(sessionId, term.rows, term.cols).catch((err) =>
 			console.error(`resizeTerminal(${sessionId}) failed:`, err),
 		);
@@ -180,6 +181,19 @@
 			};
 			handle = newHandle;
 			registerTerminalHandle(sessionId, handle);
+
+			// A full-screen TUI (opencode, vim, htop…) switches to the alternate
+			// screen buffer, which has no scrollbar — `fitTerminal` gives the
+			// grid the strip FitAddon reserves for one, so the TUI reaches the
+			// pane's edge instead of leaving a band of pane colour beside it.
+			// That means the grid width depends on the buffer, so refit when it
+			// flips. Deferred to a microtask: this fires from inside xterm's
+			// parser, and resizing the terminal from within a parse would be
+			// re-entrant. Goes through the handle's `reportResize` field (not a
+			// closure) for the same remount reason as the ResizeObserver above.
+			newTerm.buffer.onBufferChange(() => {
+				queueMicrotask(() => newHandle.reportResize());
+			});
 
 			newTerm.onData((data) => queueWrite(data));
 
@@ -319,7 +333,7 @@
 		// true again.
 		function reportResize() {
 			if (!fitAddon || !term || !active || !handle) return;
-			fitAddon.fit();
+			fitTerminal(term, fitAddon);
 			resizeTerminal(sessionId, term.rows, term.cols)
 				.catch((err) => console.error(`resizeTerminal(${sessionId}) failed:`, err))
 				.finally(() => {
