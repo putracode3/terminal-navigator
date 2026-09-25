@@ -68,6 +68,13 @@ export interface TerminalHandle {
 	 *  function closing over its own `active` prop/`containerEl`, but the
 	 *  `ResizeObserver` instance calling it is shared and never recreated. */
 	reportResize: () => void;
+	/** Called when the terminal switches between its normal and alternate
+	 *  screen (a full-screen TUI starting or quitting). Same indirection as
+	 *  `reportResize`: the one `onBufferChange` subscription is made at the
+	 *  session's first mount, and every mount overwrites this field so the
+	 *  *current* `<TerminalPane>` updates its padding (design v3.4) and
+	 *  refits. */
+	onScreenChange: () => void;
 }
 
 const registry = new Map<string, TerminalHandle>();

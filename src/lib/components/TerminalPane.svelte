@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from "svelte";
+	import { onDestroy, onMount, tick } from "svelte";
 	import { listen } from "@tauri-apps/api/event";
 	import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 	import { Terminal } from "@xterm/xterm";
@@ -45,6 +45,9 @@
 	} = $props();
 
 	let containerEl: HTMLDivElement | undefined = $state();
+	/** True while a full-screen TUI has the terminal on its alternate screen
+	 *  — the pane drops its padding then (components.md → Pane body, v3.4). */
+	let altScreen = $state(false);
 	let term: Terminal | undefined;
 	let fitAddon: FitAddon | undefined;
 	/** The session's persistent resources (xterm.js `Terminal`, its
@@ -178,6 +181,10 @@
 				initialResizeDone: false,
 				fontSize,
 				reportResize: () => {}, // overwritten below on every mount
+				// Overwritten below on every mount, like reportResize. Deferred
+				// to a microtask: it fires from inside xterm's parser, and
+				// resizing the terminal from within a parse would be re-entrant.
+				onScreenChange: () => queueMicrotask(() => newHandle.reportResize()),
 			};
 			handle = newHandle;
 			registerTerminalHandle(sessionId, handle);
@@ -191,9 +198,7 @@
 			// parser, and resizing the terminal from within a parse would be
 			// re-entrant. Goes through the handle's `reportResize` field (not a
 			// closure) for the same remount reason as the ResizeObserver above.
-			newTerm.buffer.onBufferChange(() => {
-				queueMicrotask(() => newHandle.reportResize());
-			});
+			newTerm.buffer.onBufferChange(() => newHandle.onScreenChange());
 
 			newTerm.onData((data) => queueWrite(data));
 
@@ -349,6 +354,19 @@
 		// Every mount overwrites this — see the field's own doc comment.
 		handle.reportResize = reportResize;
 
+		// A full-screen TUI (opencode, vim, htop…) switches to the alternate
+		// screen. The pane then drops its padding (design v3.4) and
+		// `fitTerminal` gives the grid the strip FitAddon reserves for a
+		// scrollbar the alternate screen doesn't have — both change the grid
+		// size, so refit. `tick()` first: the refit must measure the pane
+		// after Svelte has applied the new padding, and the wait also takes
+		// the resize out of xterm's parser, which is where this event fires.
+		altScreen = term.buffer.active.type === "alternate";
+		handle.onScreenChange = () => {
+			altScreen = term?.buffer.active.type === "alternate";
+			tick().then(() => handle?.reportResize());
+		};
+
 		requestAnimationFrame(() => {
 			requestAnimationFrame(reportResize);
 		});
@@ -406,8 +424,9 @@
      opaque (see theme-presets.ts), so the alpha has to live here.
 
      It must sit on `.pane` specifically — the element inside the
-     (transparent-when-unfocused) border. The pane has no padding
-     (components.md → Split Pane Container → Pane body, v3.3), but the grid
+     (transparent-when-unfocused) border, which also owns the normal-screen
+     padding (components.md → Split Pane Container → Pane body, v3.4). The
+     grid
      holds whole character cells only, so up to one cell width on the right
      and one line height at the bottom are left over; `.pane`'s background
      is what paints that remainder. Painting an inner child instead would
@@ -415,6 +434,7 @@
 <div
 	class="pane"
 	class:focused
+	class:alt-screen={altScreen}
 	role="presentation"
 	style:background-color={paneBackground(
 		getThemePreset(settingsStore.themePreset, themeStore.resolved).theme,
@@ -433,12 +453,20 @@
 		width: 100%;
 		min-width: var(--pane-min-width);
 		min-height: var(--pane-min-height);
-		/* components.md → Split Pane Container → Pane body (v3.3): no padding
-		   and square corners, so a full-screen TUI's own background reaches
-		   the border instead of sitting inside a frame of pane colour. */
-		padding: 0;
+		/* components.md → Split Pane Container → Pane body (v3.4): an inset on
+		   the normal screen keeps the prompt off the border; square corners on
+		   both screens. Never transition padding — every frame would resize
+		   the terminal grid. */
+		padding: var(--space-1);
 		border: var(--pane-divider-width) solid transparent;
 		border-radius: 0;
+	}
+
+	/* A full-screen TUI on the alternate screen: no padding, so its own
+	   background reaches the border instead of sitting inside a frame of
+	   pane colour. */
+	.pane.alt-screen {
+		padding: 0;
 	}
 
 	.pane.focused {

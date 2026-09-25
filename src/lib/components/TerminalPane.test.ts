@@ -745,3 +745,34 @@ describe("TerminalPane — refit when a full-screen TUI enters/leaves the altern
 		expect(resizeTerminalMock).not.toHaveBeenCalled();
 	});
 });
+
+describe("TerminalPane — padding follows the active screen (design v3.4: 4px inset on the normal screen, 0 while a TUI is on the alternate screen)", () => {
+	it("starts without the alt-screen class on the normal screen", async () => {
+		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		expect(container.querySelector(".pane")!.classList.contains("alt-screen")).toBe(false);
+	});
+
+	it("adds the class when a TUI switches to the alternate screen, and removes it when it quits", async () => {
+		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		const pane = container.querySelector(".pane")!;
+
+		termInstance.buffer.active.type = "alternate";
+		onBufferChangeCallback!();
+		await vi.runAllTimersAsync();
+		expect(pane.classList.contains("alt-screen")).toBe(true);
+
+		termInstance.buffer.active.type = "normal";
+		onBufferChangeCallback!();
+		await vi.runAllTimersAsync();
+		expect(pane.classList.contains("alt-screen")).toBe(false);
+	});
+
+	it("reflects the alternate screen immediately on a remount (a split while a TUI is running)", async () => {
+		termInstance.buffer.active.type = "alternate";
+		const { container } = render(TerminalPane, { sessionId: "s1", onFocus: vi.fn(), onExit: vi.fn() });
+		await vi.runAllTimersAsync();
+		expect(container.querySelector(".pane")!.classList.contains("alt-screen")).toBe(true);
+	});
+});
