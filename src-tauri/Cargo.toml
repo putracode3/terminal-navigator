@@ -36,3 +36,13 @@ tauri-plugin-clipboard-manager = "2"
 [dev-dependencies]
 tempfile = "3"
 
+# Strip debug symbols from the release binary: 18.2 MB -> 11.7 MB, no extra
+# build time, same runtime memory (measured 2026-09-29; RAM is dominated by
+# the WebKit process, not the binary). `lto` + `codegen-units = 1` would reach
+# 9.0 MB but turn a ~1 min release build into ~7 min (2.5 min incremental),
+# and bring no RAM gain either, so they are deliberately left off. `panic`
+# stays `unwind`: a panic ends only its own thread (one pane's PTY reader, one
+# IPC command) and `OutputGate` is written to survive that; `abort` would
+# close the whole window and every open terminal with it.
+[profile.release]
+strip = true

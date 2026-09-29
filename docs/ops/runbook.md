@@ -1,6 +1,6 @@
 # Runbook — Terminal Navigator
 
-> Version 1.11 · 2026-09-25 · Infra: none — local desktop app (Tauri), daily-driver install is still a manually built `.deb` on the author's own Debian 12 machine. No server, no staging, no remote users. A GitHub remote now exists (`git@github.com:putracode3/terminal-navigator.git`) with a CI workflow (`.github/workflows/release.yml`) that builds tagged releases — see §2's new "GitHub Release" subsection. §9's former "no CI" gap is now partially closed; local build/install (above) remains the actual daily-driver mechanism.
+> Version 1.12 · 2026-09-29 · Infra: none — local desktop app (Tauri), daily-driver install is still a manually built `.deb` on the author's own Debian 12 machine. No server, no staging, no remote users. A GitHub remote now exists (`git@github.com:putracode3/terminal-navigator.git`) with a CI workflow (`.github/workflows/release.yml`) that builds tagged releases — see §2's new "GitHub Release" subsection. §9's former "no CI" gap is now partially closed; local build/install (above) remains the actual daily-driver mechanism.
 > Rehearsal log: **0.2.1 release ✅ 2026-09-25** — pre-flight gate (521 vitest / 109 cargo / `npm run check`) + `tauri build -- --bundles deb`, previous build saved to `~/terminal-navigator-releases/`, installed, and §2 verify steps 1–8 passed from the GNOME launcher per the author (incl. step 8's capability smoke-test and step 6's TUI/split checks) · earlier: pre-flight gate + build ✅ 2026-07-20 (all 3 gate commands + `tauri build -- --bundles deb` run clean, produced `Terminal Navigator_0.1.0_amd64.deb`) · install + dual-launch verify (§2 steps 3–4, predating the FR-13 Settings step 5 added in v1.1) ✅ 2026-07-20, done directly by the author while diagnosing the TERM bug this runbook documents · restore (config export/import) ✅ 2026-07-20 — **predates ADR-0014 (2026-08-12); the restore mechanism itself changed (no password step) — re-rehearse before relying on this log entry, see §5** · rollback — not yet rehearsed · §2 step 5 (Settings smoke-check) — not yet rehearsed, added in v1.1 · GitHub Release workflow — not yet rehearsed (added v1.2, no tag pushed yet; Windows/macOS build legs are unverified since the author only runs Debian — see caveat in §2) · §2 step 7 (window drag/resize/controls smoke-check) — not yet rehearsed, added in v1.3 for v2.8/ADR-0013's native-decorations removal; **blocks this build becoming the daily driver until run** (§2's own rule)
 
 This app has no server-side deployment. "Deploy" here means: build a `.deb` locally, verify it, and install it to replace the copy you use every day — that local process is unchanged. Sections below are scoped to that reality, plus the separate/optional GitHub Release path for sharing builds publicly — see §9 for what a normal server runbook would have that doesn't apply here, and why.
@@ -66,6 +66,8 @@ git push origin v<X.Y.Z>
 npm run tauri build -- --bundles deb
 ```
 Output: `src-tauri/target/release/bundle/deb/*.deb`. This runs a **release** Rust build (`cargo build --release` under the hood) — meaningfully faster/different runtime characteristics than `tauri dev`'s debug build. Don't treat a `tauri dev` session as equivalent verification of a release build; test the actual `.deb` (see below).
+
+The release binary is built with `strip = true` (`src-tauri/Cargo.toml` `[profile.release]`, 2026-09-29): 18.2 → 11.7 MB, with no extra build time and no change in runtime memory. The trade-off is that a panic backtrace from the installed build has no function names. See §6 item 5 for how to get a symbolized build when debugging.
 
 ### Before installing: save the current build as your rollback point
 ```bash
@@ -144,7 +146,8 @@ There's no "site down" here — the closest equivalents:
 2. **A terminal pane shows garbled/wrong input after a normal-looking build** → this is the bug class fixed in `ec19eff`. First check: does it happen when launched from a terminal AND from the desktop launcher? If only from the launcher, suspect the process environment again (compare `env` between the two launch methods, same technique used to find the TERM issue) before assuming a code regression.
 3. **A terminal pane goes blank and stops accepting input, specifically when running a full-screen program (vim, htop, an AI CLI, ...)** → check whether it also happens under `npm run tauri dev`. If it only happens in the actual built `.deb`/binary, this is the bug class found 2026-07-22 (`docs/qa/test-plan.md` §5.1a — a Vite/esbuild production-minifier bug corrupting `@xterm/xterm`, worked around by minifying with **terser** instead of esbuild in `vite.config.js`). If a similar symptom recurs after a future Vite/esbuild/`@xterm/xterm` upgrade, first rebuild once with `minify: false` in `vite.config.js`: if that makes it work, it's a minifier-corruption pattern again (compare the minified `requestMode` in the built bundle against the `minify:false` output) rather than an app-code regression.
 4. **Build fails** → re-run the pre-flight gate (§2) individually (`cargo test`, `vitest run`, `svelte-check`) to isolate which one is red; don't force a build past a failing gate.
-5. **Something else looks broken** → superpowers:systematic-debugging / the `debugger` skill, not this runbook.
+5. **The installed build panics or crashes and the backtrace is only addresses** → expected: the release binary is stripped (§2 *Build*). Rebuild the same commit unstripped with `CARGO_PROFILE_RELEASE_STRIP=false npm run tauri build -- --no-bundle` (a full rebuild, ~4–5 min; the next normal build is full again), then reproduce with `RUST_BACKTRACE=1 src-tauri/target/release/terminal-navigator` (launch it from a terminal).
+6. **Something else looks broken** → superpowers:systematic-debugging / the `debugger` skill, not this runbook.
 
 ## 7. Routine operations
 
@@ -180,6 +183,7 @@ These exist in the standard runbook template but don't apply at this project's c
 
 | Version | Date | Change |
 |---|---|---|
+| 1.12 | 2026-09-29 | §2 *Build*: the release profile now strips debug symbols (18.2 → 11.7 MB). Measured against the unprofiled build: runtime PSS the same within noise (3 alternating isolated launches each), incremental release rebuild 44 s. Full LTO + `codegen-units = 1` (9.0 MB) was measured and rejected: no RAM gain, ~7 min full / 2.5 min incremental builds. `panic` stays `unwind` (see the comment in `Cargo.toml`). §6 gains item 5, getting a symbolized build for a crash. |
 | 1.11 | 2026-09-25 | Rehearsal log: first full §2 release pass since 0.1.0 recorded (0.2.1, all eight verify steps passed from the launcher). |
 | 1.10 | 2026-09-25 | §2 *Versioning*: the two lockfiles are listed alongside the three manifests (the release to 0.2.1 found `package-lock.json` still at 0.1.0). |
 | 1.9 | 2026-09-25 | §2 *Verify* step 6 wording updated for design v3.4 (padding 0 only while a TUI runs). No procedure change. |
