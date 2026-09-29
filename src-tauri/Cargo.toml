@@ -1,6 +1,6 @@
 [package]
 name = "terminal-navigator"
-version = "0.2.1"
+version = "0.2.2"
 description = "Project launcher + terminal for local projects"
 authors = ["Denny Setia Wisnugraha"]
 edition = "2021"
