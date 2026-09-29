@@ -196,6 +196,67 @@ impl GateInner {
     }
 }
 
+/// Decodes the pty's byte stream into text across reads. A read can end in
+/// the middle of a multi-byte UTF-8 character; decoding each read on its own
+/// turned both halves into U+FFFD. The incomplete tail (at most 3 bytes) is
+/// held back and completed by the next read instead. Bytes that are invalid
+/// whatever follows are still replaced with U+FFFD, as before.
+#[derive(Default)]
+struct Utf8StreamDecoder {
+    /// Start of a character the previous read cut off.
+    tail: Vec<u8>,
+}
+
+impl Utf8StreamDecoder {
+    fn decode(&mut self, bytes: &[u8]) -> String {
+        if self.tail.is_empty() {
+            let (text, tail) = decode_until_incomplete_tail(bytes);
+            self.tail.extend_from_slice(tail);
+            return text;
+        }
+        let mut joined = std::mem::take(&mut self.tail);
+        joined.extend_from_slice(bytes);
+        let (text, tail) = decode_until_incomplete_tail(&joined);
+        self.tail.extend_from_slice(tail);
+        text
+    }
+
+    /// The stream has ended: a character still incomplete never will be.
+    fn finish(&mut self) -> String {
+        if self.tail.is_empty() {
+            return String::new();
+        }
+        self.tail.clear();
+        '\u{FFFD}'.to_string()
+    }
+}
+
+/// Lossily decodes `bytes`, except for an incomplete character at the very
+/// end, which is returned undecoded.
+fn decode_until_incomplete_tail(mut bytes: &[u8]) -> (String, &[u8]) {
+    let mut text = String::with_capacity(bytes.len());
+    loop {
+        match std::str::from_utf8(bytes) {
+            Ok(valid) => {
+                text.push_str(valid);
+                return (text, &[]);
+            }
+            Err(e) => {
+                let (valid, after) = bytes.split_at(e.valid_up_to());
+                // `valid_up_to` marks a prefix that is valid UTF-8.
+                text.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                match e.error_len() {
+                    Some(len) => {
+                        text.push('\u{FFFD}');
+                        bytes = &after[len..];
+                    }
+                    None => return (text, after),
+                }
+            }
+        }
+    }
+}
+
 struct Session {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -279,12 +340,23 @@ impl PtyManager {
         let reader_gate = Arc::clone(&gate);
         thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            let mut decoder = Utf8StreamDecoder::default();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
-                    Ok(n) => reader_gate.push(&String::from_utf8_lossy(&buf[..n])),
+                    Ok(n) => {
+                        // Empty when the read held only the start of a character.
+                        let text = decoder.decode(&buf[..n]);
+                        if !text.is_empty() {
+                            reader_gate.push(&text);
+                        }
+                    }
                     Err(_) => break,
                 }
+            }
+            let rest = decoder.finish();
+            if !rest.is_empty() {
+                reader_gate.push(&rest);
             }
             reader_gate.finish();
         });
@@ -624,6 +696,72 @@ mod tests {
         manager.close(session_id).unwrap();
     }
 
+
+    // Debugger session 2026-09-29: each pty read was decoded on its own with
+    // `from_utf8_lossy`, so a multi-byte character straddling two reads
+    // reached the terminal as U+FFFD replacement characters.
+
+    #[test]
+    fn multi_byte_characters_split_across_reads_arrive_intact() {
+        let manager = PtyManager::new();
+        let dir = tempdir().unwrap();
+        let session_id = Uuid::new_v4();
+        let (tx, rx) = mpsc::channel::<String>();
+        manager
+            .spawn(session_id, dir.path(), move |chunk| { let _ = tx.send(chunk.to_string()); }, || {})
+            .unwrap();
+        manager.attach(session_id);
+
+        // 60 KB of 2- and 3-byte characters with a 6-byte period. A full pty
+        // read is 4095 bytes on Linux, which a 5-byte period divides evenly —
+        // every read would end on a character boundary and hide the bug.
+        // Octal escapes keep the characters out of the shell's echo of the command.
+        manager
+            .write(session_id, "yes \"$(printf '\\303\\251\\342\\202\\254x')\" | head -n 10000 | tr -d '\\n'; printf '\\nutf8-%s\\n' done\n")
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut all = String::new();
+        while Instant::now() < deadline && !all.contains("utf8-done") {
+            if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(200)) {
+                all.push_str(&chunk);
+            }
+        }
+        manager.close(session_id).unwrap();
+
+        assert!(all.contains("utf8-done"), "command finished");
+        assert_eq!(all.matches('\u{FFFD}').count(), 0, "no character may be torn apart");
+        assert_eq!(all.matches("é€x").count(), 10000);
+    }
+
+    #[test]
+    fn utf8_stream_decoder_carries_a_split_character_to_the_next_read() {
+        let mut decoder = Utf8StreamDecoder::default();
+        let euro = "€".as_bytes(); // e2 82 ac
+        assert_eq!(decoder.decode(&[b'a', euro[0]]), "a");
+        assert_eq!(decoder.decode(&euro[1..2]), "");
+        assert_eq!(decoder.decode(&[euro[2], b'b']), "€b");
+    }
+
+    #[test]
+    fn utf8_stream_decoder_still_replaces_genuinely_invalid_bytes() {
+        let mut decoder = Utf8StreamDecoder::default();
+        // A lone continuation byte and a truncated sequence cut off by
+        // ASCII are invalid no matter what follows: replaced, not held.
+        assert_eq!(decoder.decode(&[b'a', 0x80, b'b']), "a\u{FFFD}b");
+        assert_eq!(decoder.decode(&[0xe2, 0x82, b'c']), "\u{FFFD}c");
+        // A held prefix that the next read proves invalid is replaced too.
+        assert_eq!(decoder.decode(&[0xe2]), "");
+        assert_eq!(decoder.decode(b"d"), "\u{FFFD}d");
+    }
+
+    #[test]
+    fn utf8_stream_decoder_replaces_a_character_cut_off_by_the_end_of_the_stream() {
+        let mut decoder = Utf8StreamDecoder::default();
+        assert_eq!(decoder.decode(&[b'a', 0xe2, 0x82]), "a");
+        assert_eq!(decoder.finish(), "\u{FFFD}");
+        assert_eq!(decoder.finish(), "", "nothing left after finishing");
+    }
 
     // ---- OutputGate in isolation (no PTY, no timing luck) -----------------
 
